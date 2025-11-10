@@ -1,0 +1,21 @@
+[package]
+name = "mping"
+version = "0.1.0"
+authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
+description = "Multi-pinger utility written in Rust"
+readme = "README.md"
+repository = "https://github.com/Ukko-Ylijumala/mping-rs"
+license = "MIT OR Apache-2.0"
+categories = ["network-programming"]
+keywords = ["icmp", "ping", "networking", "ncurses", "async"]
+publish = false
+edition = "2024"
+
+[dependencies]
+surge-ping = "0.8.3"
+ncurses = "5.101"
+ctrlc = "3.5"
+rand = "0.9"
+futures = "0.3"
+tokio = { version = "1.48", features = ["full"] }
+#tracing = "0.1"
