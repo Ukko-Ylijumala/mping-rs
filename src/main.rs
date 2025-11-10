@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Licensed under the MIT License or the Apache License, Version 2.0.
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use futures::future::join_all;
 use ncurses::*;
 use rand::random;
@@ -53,6 +57,7 @@ struct PingTarget {
     data: Mutex<PingTargetInner>,
 }
 
+/// Parse command line arguments into a vector of IP addresses.
 fn parse_ip_addrs(args: &[String]) -> Vec<IpAddr> {
     let mut ips: Vec<IpAddr> = Vec::new();
 
@@ -66,6 +71,7 @@ fn parse_ip_addrs(args: &[String]) -> Vec<IpAddr> {
     ips
 }
 
+/// Create PingTarget instances for each IP address.
 fn make_targets(addrs: Vec<IpAddr>) -> Vec<Arc<PingTarget>> {
     addrs
         .into_iter()
@@ -83,6 +89,7 @@ fn make_targets(addrs: Vec<IpAddr>) -> Vec<Arc<PingTarget>> {
         .collect()
 }
 
+/// Send a ping and update statistics.
 async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16) {
     let mut pinger = pinger.lock().await;
     match pinger.ping(PingSequence(seq), &PING_DATA).await {
@@ -105,7 +112,8 @@ async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16) {
     };
 }
 
-async fn ping_loop(tgt: Arc<PingTarget>, client: Client, quit: Arc<AtomicBool>) {
+/// Set up a ping loop for each target.
+async fn ping_loop(tgt: Arc<PingTarget>, client: Arc<Client>, quit: Arc<AtomicBool>) {
     let id: PingIdentifier = PingIdentifier(random());
     let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
     pinger.timeout(PING_TIMEOUT);
@@ -126,7 +134,7 @@ async fn ping_loop(tgt: Arc<PingTarget>, client: Client, quit: Arc<AtomicBool>) 
             stats.sent += 1;
             // calculate the 16-bit sequence number from sent count,
             // since 2^16 is the max for ICMP sequence numbers
-            (sent % u16::MAX as u64) as u16
+            (sent % 65536) as u16
         };
         tokio::spawn(ping(pinger.clone(), tgt.clone(), seq));
         sleep(PING_INTERVAL).await;
@@ -163,8 +171,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
     // Pinger clients
-    let client_v4: Client = Client::new(&Config::default())?;
-    let client_v6: Client = Client::new(&Config::builder().kind(ICMP::V6).build())?;
+    let client_v4: Arc<Client> = Client::new(&Config::default())?.into();
+    let client_v6: Arc<Client> = Client::new(&Config::builder().kind(ICMP::V6).build())?.into();
 
     // Spawn ping tasks
     for tgt in &targets {
