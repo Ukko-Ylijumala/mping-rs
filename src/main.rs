@@ -6,15 +6,15 @@ mod args;
 mod structs;
 use crate::{
     args::MpConfig,
-    structs::{PingStatus, PingTarget, PingTargetInner},
+    structs::{PingStatus, PingTarget, PingTargetInner, StatsWindow},
 };
 
 use futures::future::join_all;
 use ncurses::*;
 use rand::random;
 use std::{
-    collections::VecDeque,
     net::IpAddr,
+    panic,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use surge_ping::{Client, Config, ICMP, PingIdentifier, PingSequence, Pinger, SurgeError};
-use tokio::{sync::Mutex, time::sleep};
+use tokio::{sync::Mutex, time, time::Interval};
 
 const PING_DATA: &[u8] = &[0; 32];
 
@@ -36,7 +36,7 @@ fn make_targets(addrs: &Vec<IpAddr>, histsize: usize) -> Vec<Arc<PingTarget>> {
                 data: Mutex::new(PingTargetInner {
                     sent: 0,
                     recv: 0,
-                    rtts: VecDeque::with_capacity(histsize),
+                    rtts: StatsWindow::new(histsize),
                     status: PingStatus::None,
                 }),
             })
@@ -45,20 +45,17 @@ fn make_targets(addrs: &Vec<IpAddr>, histsize: usize) -> Vec<Arc<PingTarget>> {
 }
 
 /// Send a ping and update statistics.
-async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16, histsize: u32) {
+async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16) {
     let mut pinger = pinger.lock().await;
-    match pinger.ping(PingSequence(seq), &PING_DATA).await {
+    let res = pinger.ping(PingSequence(seq), &PING_DATA).await;
+    let mut stats = tgt.data.lock().await;
+    match res {
         Ok((_, dur)) => {
-            let mut stats = tgt.data.lock().await;
             stats.recv += 1;
-            stats.rtts.push_back(dur.as_micros() as u32);
-            if stats.rtts.len() > histsize as usize {
-                stats.rtts.pop_front();
-            }
+            stats.rtts.push(dur.as_micros() as u32);
             stats.status = PingStatus::Ok;
         }
         Err(e) => {
-            let mut stats = tgt.data.lock().await;
             stats.status = match e {
                 SurgeError::Timeout { .. } => PingStatus::Timeout,
                 _ => PingStatus::Error,
@@ -79,11 +76,10 @@ async fn ping_loop(
     pinger.timeout(conf.timeout);
     // Wrap pinger in Arc<Mutex<>> for shared async access
     let pinger: Arc<Mutex<Pinger>> = Arc::new(Mutex::new(pinger));
+    let mut ticker: Interval = time::interval(conf.interval);
 
-    loop {
-        if quit.load(Ordering::Relaxed) {
-            break;
-        }
+    while !quit.load(Ordering::Relaxed) {
+        ticker.tick().await;
 
         let seq: u16 = {
             let mut stats = tgt.data.lock().await;
@@ -96,8 +92,7 @@ async fn ping_loop(
             // since 2^16 is the max for ICMP sequence numbers
             (sent % 65536) as u16
         };
-        tokio::spawn(ping(pinger.clone(), tgt.clone(), seq, conf.histsize));
-        sleep(conf.interval).await;
+        tokio::spawn(ping(pinger.clone(), tgt.clone(), seq));
     }
 }
 
@@ -105,9 +100,15 @@ async fn ping_loop(
 fn setup_signal_handler(quit: Arc<AtomicBool>) {
     ctrlc::set_handler(move || {
         quit.store(true, Ordering::Relaxed);
-        println!("\nInterrupted. Exiting...");
+        eprintln!("Interrupted. Exiting...");
     })
     .expect("Error setting Ctrl-C handler");
+}
+
+/// Panic handler to restore the console to a sane state
+fn panic_handler(info: &std::panic::PanicHookInfo) {
+    setup_curses(true);
+    eprintln!("Application panic: {}", info);
 }
 
 /// Set up or tear down the ncurses environment
@@ -119,6 +120,7 @@ fn setup_curses(quit: bool) {
             endwin();
         }
         false => {
+            eprintln!("Initializing ncurses UI...");
             initscr();
             noecho();
             curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
@@ -156,10 +158,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Curses initialization
     setup_signal_handler(quit.clone());
+    panic::set_hook(Box::new(panic_handler));
     setup_curses(false);
 
     // Main display loop
+    let mut ui_tick: Interval = time::interval(Duration::from_millis(500));
     while !quit.load(Ordering::Relaxed) {
+        ui_tick.tick().await;
         mvprintw(
             0,
             0,
@@ -167,44 +172,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         for (row, tgt) in targets.iter().enumerate() {
-            let stats = tgt.data.lock().await;
+            // Snapshot data under lock; compute outside.
+            let (addr, sent, recv, latest, mean, min, max, status) = {
+                let stats = tgt.data.lock().await;
 
-            let (latest, mean, min, max) = if stats.rtts.is_empty() {
+                let (latest_s, mean_s, min_s, max_s) = if stats.rtts.is_empty() {
+                    (
+                        "-".to_string(),
+                        "-".to_string(),
+                        "-".to_string(),
+                        "-".to_string(),
+                    )
+                } else {
+                    let last: f64 = stats.rtts.latest_ms().unwrap();
+                    let (m, mi, ma) = stats.rtts.mean_min_max_ms().unwrap();
+                    (
+                        format!("{:.2}", last),
+                        format!("{:.2}", m),
+                        format!("{:.2}", mi),
+                        format!("{:.2}", ma),
+                    )
+                };
+
                 (
-                    "-".to_string(),
-                    "-".to_string(),
-                    "-".to_string(),
-                    "-".to_string(),
-                )
-            } else {
-                let last: f64 = *stats.rtts.back().unwrap() as f64 / 1e3; // convert to ms
-                let sum: f64 = stats.rtts.iter().map(|&x| (x as f64 / 1e3)).sum();
-                let m: f64 = sum / stats.rtts.len() as f64;
-                let min_v: f64 = *stats.rtts.iter().min().unwrap() as f64 / 1e3;
-                let max_v: f64 = *stats.rtts.iter().max().unwrap() as f64 / 1e3;
-                (
-                    format!("{:.2}", last),
-                    format!("{:.2}", m),
-                    format!("{:.2}", min_v),
-                    format!("{:.2}", max_v),
+                    format!("{}", tgt.addr),
+                    stats.sent,
+                    stats.recv,
+                    latest_s,
+                    mean_s,
+                    min_s,
+                    max_s,
+                    format!("{}", stats.status),
                 )
             };
 
-            mvprintw(
-                (row + 1) as i32,
-                0,
-                &format!(
-                    "{:<12}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                    tgt.addr, stats.sent, stats.recv, latest, mean, min, max, stats.status
-                ),
+            let line = format!(
+                "{:<12}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                addr, sent, recv, latest, mean, min, max, status
             );
+            mvprintw((row + 1) as i32, 0, &line);
         }
 
         refresh();
-        sleep(Duration::from_millis(500)).await;
     }
 
-    join_all(tasks).await;
     setup_curses(true);
+    join_all(tasks).await;
     Ok(())
 }
