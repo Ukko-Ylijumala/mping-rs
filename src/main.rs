@@ -168,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mvprintw(
             0,
             0,
-            "Address\t\tSent\tRecv\tLatest\tMean\tMin\tMax\tStatus",
+            "Address\t\tSent\tRecv\tLoss\tLatest\tMean\tMin\tMax\tStatus",
         );
 
         for (row, tgt) in targets.iter().enumerate() {
@@ -206,9 +206,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
             };
 
-            let line = format!(
-                "{:<12}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                addr, sent, recv, latest, mean, min, max, status
+            let loss_pct: String = if sent == 0 {
+                "-".to_string()
+            } else if sent - recv == 1 {
+                // catch the common case of one receive missing (probably in transit)
+                "0.0%".to_string()
+            } else {
+                format!("{:.1}%", 100.0 * (sent as f64 - recv as f64) / sent as f64)
+            };
+
+            let line: String = format!(
+                "{:<12}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                addr, sent, recv, loss_pct, latest, mean, min, max, status
             );
             mvprintw((row + 1) as i32, 0, &line);
         }
