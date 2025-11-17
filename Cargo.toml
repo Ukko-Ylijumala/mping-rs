@@ -1,6 +1,6 @@
 [package]
 name = "mping"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Multi-pinger utility written in Rust"
 readme = "README.md"
@@ -17,5 +17,12 @@ ncurses = "5.101"
 ctrlc = "3.5"
 rand = "0.9"
 futures = "0.3"
-tokio = { version = "1.48", features = ["full"] }
 #tracing = "0.1"
+
+[dependencies.tokio]
+version = "1.48"
+features = ["full"]
+
+[dependencies.clap]
+version = "4.5"
+features = ["cargo", "derive"]

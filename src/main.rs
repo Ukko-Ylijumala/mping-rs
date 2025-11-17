@@ -2,14 +2,19 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+mod args;
+mod structs;
+use crate::{
+    args::MpConfig,
+    structs::{PingStatus, PingTarget, PingTargetInner},
+};
+
 use futures::future::join_all;
 use ncurses::*;
 use rand::random;
 use std::{
     collections::VecDeque,
-    fmt::Display,
     net::IpAddr,
-    process::exit,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -19,69 +24,19 @@ use std::{
 use surge_ping::{Client, Config, ICMP, PingIdentifier, PingSequence, Pinger, SurgeError};
 use tokio::{sync::Mutex, time::sleep};
 
-const MAX_HISTORY: usize = 65536;
-const PING_INTERVAL: Duration = Duration::from_secs(1);
-const PING_TIMEOUT: Duration = Duration::from_millis(900);
 const PING_DATA: &[u8] = &[0; 32];
 
-#[derive(Debug)]
-enum PingStatus {
-    Ok,
-    Timeout,
-    Error,
-    None,
-}
-
-impl Display for PingStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PingStatus::Ok => write!(f, "OK"),
-            PingStatus::Timeout => write!(f, "timeout"),
-            PingStatus::Error => write!(f, "err"),
-            PingStatus::None => write!(f, "-"),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct PingTargetInner {
-    sent: u64,
-    recv: u64,
-    rtts: VecDeque<u32>, // RTTs in microseconds
-    status: PingStatus,
-}
-
-#[derive(Debug)]
-struct PingTarget {
-    addr: IpAddr,
-    data: Mutex<PingTargetInner>,
-}
-
-/// Parse command line arguments into a vector of IP addresses.
-fn parse_ip_addrs(args: &[String]) -> Vec<IpAddr> {
-    let mut ips: Vec<IpAddr> = Vec::new();
-
-    for arg in args.iter().skip(1) {
-        if let Ok(ip) = arg.parse::<IpAddr>() {
-            ips.push(ip);
-        } else {
-            eprintln!("Invalid IP address: {}", arg);
-        }
-    }
-    ips
-}
-
 /// Create PingTarget instances for each IP address.
-fn make_targets(addrs: Vec<IpAddr>) -> Vec<Arc<PingTarget>> {
+fn make_targets(addrs: &Vec<IpAddr>, histsize: usize) -> Vec<Arc<PingTarget>> {
     addrs
         .into_iter()
         .map(|addr| {
             Arc::new(PingTarget {
-                addr,
+                addr: *addr,
                 data: Mutex::new(PingTargetInner {
                     sent: 0,
                     recv: 0,
-                    rtts: VecDeque::with_capacity(MAX_HISTORY),
+                    rtts: VecDeque::with_capacity(histsize),
                     status: PingStatus::None,
                 }),
             })
@@ -90,14 +45,14 @@ fn make_targets(addrs: Vec<IpAddr>) -> Vec<Arc<PingTarget>> {
 }
 
 /// Send a ping and update statistics.
-async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16) {
+async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16, histsize: u32) {
     let mut pinger = pinger.lock().await;
     match pinger.ping(PingSequence(seq), &PING_DATA).await {
         Ok((_, dur)) => {
             let mut stats = tgt.data.lock().await;
             stats.recv += 1;
             stats.rtts.push_back(dur.as_micros() as u32);
-            if stats.rtts.len() > MAX_HISTORY {
+            if stats.rtts.len() > histsize as usize {
                 stats.rtts.pop_front();
             }
             stats.status = PingStatus::Ok;
@@ -113,10 +68,15 @@ async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16) {
 }
 
 /// Set up a ping loop for each target.
-async fn ping_loop(tgt: Arc<PingTarget>, client: Arc<Client>, quit: Arc<AtomicBool>) {
+async fn ping_loop(
+    tgt: Arc<PingTarget>,
+    client: Arc<Client>,
+    quit: Arc<AtomicBool>,
+    conf: Arc<MpConfig>,
+) {
     let id: PingIdentifier = PingIdentifier(random());
     let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
-    pinger.timeout(PING_TIMEOUT);
+    pinger.timeout(conf.timeout);
     // Wrap pinger in Arc<Mutex<>> for shared async access
     let pinger: Arc<Mutex<Pinger>> = Arc::new(Mutex::new(pinger));
 
@@ -136,8 +96,8 @@ async fn ping_loop(tgt: Arc<PingTarget>, client: Arc<Client>, quit: Arc<AtomicBo
             // since 2^16 is the max for ICMP sequence numbers
             (sent % 65536) as u16
         };
-        tokio::spawn(ping(pinger.clone(), tgt.clone(), seq));
-        sleep(PING_INTERVAL).await;
+        tokio::spawn(ping(pinger.clone(), tgt.clone(), seq, conf.histsize));
+        sleep(conf.interval).await;
     }
 }
 
@@ -145,28 +105,34 @@ async fn ping_loop(tgt: Arc<PingTarget>, client: Arc<Client>, quit: Arc<AtomicBo
 fn setup_signal_handler(quit: Arc<AtomicBool>) {
     ctrlc::set_handler(move || {
         quit.store(true, Ordering::Relaxed);
-        curs_set(CURSOR_VISIBILITY::CURSOR_VISIBLE);
-        echo();
-        endwin();
-        println!("Exiting, Ctrl-C pressed...");
+        println!("\nInterrupted. Exiting...");
     })
     .expect("Error setting Ctrl-C handler");
 }
 
+/// Set up or tear down the ncurses environment
+fn setup_curses(quit: bool) {
+    match quit {
+        true => {
+            curs_set(CURSOR_VISIBILITY::CURSOR_VISIBLE);
+            echo();
+            endwin();
+        }
+        false => {
+            initscr();
+            noecho();
+            curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+            keypad(stdscr(), true);
+            nodelay(stdscr(), true);
+            clear();
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        let msg: String = format!("Usage: {} <IP1> [IP2] ...", args[0]);
-        eprintln!("{}", msg);
-        exit(1)
-    }
-
-    let addrs: Vec<IpAddr> = parse_ip_addrs(&args);
-    if addrs.is_empty() {
-        return Err("No valid IP addresses provided.".into());
-    }
-    let targets: Vec<Arc<PingTarget>> = make_targets(addrs);
+    let conf: Arc<MpConfig> = MpConfig::parse().into();
+    let targets: Vec<Arc<PingTarget>> = make_targets(&conf.addrs, conf.histsize as usize);
     let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
@@ -180,21 +146,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             IpAddr::V4(_) => client_v4.clone(),
             IpAddr::V6(_) => client_v6.clone(),
         };
-        tasks.push(tokio::spawn(ping_loop(tgt.clone(), client, quit.clone())))
+        tasks.push(tokio::spawn(ping_loop(
+            tgt.clone(),
+            client,
+            quit.clone(),
+            conf.clone(),
+        )));
     }
 
     // Curses initialization
-    initscr();
-    noecho();
-    curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
     setup_signal_handler(quit.clone());
+    setup_curses(false);
 
     // Main display loop
-    loop {
-        if quit.load(Ordering::Relaxed) {
-            break;
-        }
-        clear();
+    while !quit.load(Ordering::Relaxed) {
         mvprintw(
             0,
             0,
@@ -236,9 +201,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         refresh();
-        sleep(Duration::from_millis(200)).await;
+        sleep(Duration::from_millis(500)).await;
     }
 
     join_all(tasks).await;
+    setup_curses(true);
     Ok(())
 }
