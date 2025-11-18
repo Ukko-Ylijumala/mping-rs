@@ -6,9 +6,11 @@
 
 mod args;
 mod structs;
+mod utils;
 use crate::{
     args::MpConfig,
     structs::{PingStatus, PingTarget, PingTargetInner, StatsWindow},
+    utils::{nice_permission_error, panic_handler, setup_curses, setup_signal_handler},
 };
 
 use futures::future::join_all;
@@ -23,7 +25,9 @@ use std::{
     },
     time::Duration,
 };
-use surge_ping::{Client, Config, ICMP, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError};
+use surge_ping::{
+    Client, Config, ICMP, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError,
+};
 use tokio::{sync::Mutex, time, time::Interval};
 
 const PING_DATA: &[u8] = &[0; 32];
@@ -114,61 +118,42 @@ async fn ping_loop(
     }
 }
 
-/// Set up the signal handler to catch Ctrl-C
-fn setup_signal_handler(quit: Arc<AtomicBool>) {
-    ctrlc::set_handler(move || {
-        quit.store(true, Ordering::Relaxed);
-        eprintln!("Interrupted. Exiting...");
-    })
-    .expect("Error setting Ctrl-C handler");
-}
-
-/// Panic handler to restore the console to a sane state
-fn panic_handler(info: &std::panic::PanicHookInfo) {
-    setup_curses(true);
-    eprintln!("Application panic: {}", info);
-}
-
-/// Set up or tear down the ncurses environment
-fn setup_curses(quit: bool) {
-    match quit {
-        true => {
-            curs_set(CURSOR_VISIBILITY::CURSOR_VISIBLE);
-            echo();
-            endwin();
-        }
-        false => {
-            eprintln!("Initializing ncurses UI...");
-            initscr();
-            noecho();
-            curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
-            keypad(stdscr(), true);
-            nodelay(stdscr(), true);
-            clear();
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
+
+    // Pinger clients
+    // sharing a client across multiple targets is safe and allows socket reuse
+    let client_v4: Option<Arc<Client>> = if conf.addrs.iter().any(|a| a.is_ipv4()) {
+        match Client::new(&Config::default()) {
+            Ok(c) => Some(Arc::new(c)),
+            Err(e) => nice_permission_error(&e, "v4"),
+        }
+    } else {
+        None
+    };
+    let client_v6: Option<Arc<Client>> = if conf.addrs.iter().any(|a| a.is_ipv6()) {
+        let cfg: Config = Config::builder().kind(ICMP::V6).build();
+        match Client::new(&cfg) {
+            Ok(c) => Some(Arc::new(c)),
+            Err(e) => nice_permission_error(&e, "v6"),
+        }
+    } else {
+        None
+    };
+
+    // Spawn ping tasks
     let targets: Vec<Arc<PingTarget>> = make_targets(&conf.addrs, conf.histsize as usize);
     let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-
-    // Pinger clients
-    let client_v4: Arc<Client> = Client::new(&Config::default())?.into();
-    let client_v6: Arc<Client> = Client::new(&Config::builder().kind(ICMP::V6).build())?.into();
-
-    // Spawn ping tasks
     for tgt in &targets {
         let client = match tgt.addr {
-            IpAddr::V4(_) => client_v4.clone(),
-            IpAddr::V6(_) => client_v6.clone(),
+            IpAddr::V4(_) => client_v4.as_ref().expect("IPv4 client missing"),
+            IpAddr::V6(_) => client_v6.as_ref().expect("IPv6 client missing"),
         };
         tasks.push(tokio::spawn(ping_loop(
             tgt.clone(),
-            client,
+            client.clone(),
             quit.clone(),
             conf.clone(),
         )));
@@ -180,14 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_curses(false);
 
     // Main display loop
-    let mut ui_tick: Interval = time::interval(Duration::from_millis(500));
+    let mut ui_tick: Interval = time::interval(Duration::from_millis(250));
+    let header: &str = "Address\t\tSent\tRecv\tLoss\tLatest\tMean\tMin\tMax\tStatus";
     while !quit.load(Ordering::Relaxed) {
         ui_tick.tick().await;
-        mvprintw(
-            0,
-            0,
-            "Address\t\tSent\tRecv\tLoss\tLatest\tMean\tMin\tMax\tStatus",
-        );
+        mvprintw(0, 0, header);
 
         for (row, tgt) in targets.iter().enumerate() {
             // Snapshot data under lock; compute outside.
@@ -241,9 +223,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         refresh();
+        if getch() == 'q' as i32 {
+            quit.store(true, Ordering::Relaxed);
+        }
     }
 
     setup_curses(true);
+    eprintln!("Interrupted. Exiting...");
     join_all(tasks).await;
     Ok(())
 }
