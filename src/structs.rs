@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::{collections::VecDeque, fmt::Display, net::IpAddr};
+use surge_ping::SurgeError;
 use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub(crate) enum PingStatus {
     Ok,
     Timeout,
-    Error,
+    Error(SurgeError),
     //Laggy,
     None,
 }
@@ -19,7 +20,7 @@ impl Display for PingStatus {
         match self {
             PingStatus::Ok => write!(f, "OK"),
             PingStatus::Timeout => write!(f, "timeout"),
-            PingStatus::Error => write!(f, "err"),
+            PingStatus::Error(e) => write!(f, "{e}"),
             //PingStatus::Laggy => write!(f, "laggy"),
             PingStatus::None => write!(f, "-"),
         }

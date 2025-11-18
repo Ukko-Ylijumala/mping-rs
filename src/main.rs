@@ -70,7 +70,7 @@ async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Durat
         Err(e) => {
             stats.status = match e {
                 SurgeError::Timeout { .. } => PingStatus::Timeout,
-                _ => PingStatus::Error,
+                _ => PingStatus::Error(e),
             };
         }
     };
