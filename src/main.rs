@@ -2,6 +2,8 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+#![allow(dead_code)]
+
 mod args;
 mod structs;
 use crate::{
@@ -21,7 +23,7 @@ use std::{
     },
     time::Duration,
 };
-use surge_ping::{Client, Config, ICMP, PingIdentifier, PingSequence, Pinger, SurgeError};
+use surge_ping::{Client, Config, ICMP, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError};
 use tokio::{sync::Mutex, time, time::Interval};
 
 const PING_DATA: &[u8] = &[0; 32];
@@ -45,9 +47,15 @@ fn make_targets(addrs: &Vec<IpAddr>, histsize: usize) -> Vec<Arc<PingTarget>> {
 }
 
 /// Send a ping and update statistics.
-async fn ping(pinger: Arc<Mutex<Pinger>>, tgt: Arc<PingTarget>, seq: u16) {
-    let mut pinger = pinger.lock().await;
+async fn ping(cl: Arc<Client>, tgt: Arc<PingTarget>, to: Duration, id: PingIdentifier, seq: u16) {
+    let mut pinger: Pinger = cl.pinger(tgt.addr, id).await;
+    pinger.timeout(to);
     let res = pinger.ping(PingSequence(seq), &PING_DATA).await;
+    update_ping_stats(&tgt, res).await;
+}
+
+/// Update ping statistics based on the result. Separated into fn for target lock granularity.
+async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Duration), SurgeError>) {
     let mut stats = tgt.data.lock().await;
     match res {
         Ok((_, dur)) => {
@@ -72,10 +80,6 @@ async fn ping_loop(
     conf: Arc<MpConfig>,
 ) {
     let id: PingIdentifier = PingIdentifier(random());
-    let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
-    pinger.timeout(conf.timeout);
-    // Wrap pinger in Arc<Mutex<>> for shared async access
-    let pinger: Arc<Mutex<Pinger>> = Arc::new(Mutex::new(pinger));
     let mut ticker: Interval = time::interval(conf.interval);
 
     while !quit.load(Ordering::Relaxed) {
@@ -92,7 +96,21 @@ async fn ping_loop(
             // since 2^16 is the max for ICMP sequence numbers
             (sent % 65536) as u16
         };
-        tokio::spawn(ping(pinger.clone(), tgt.clone(), seq));
+
+        // The async ping task can be spawned either using a closure, or an
+        // async fn block. Both should be functionally equivalent.
+        // In either case the pinger is created anew for each async context.
+        //
+        // Function style (saved for reference):
+        // tokio::spawn(ping(client.clone(), tgt.clone(), conf.timeout, id, seq));
+        //
+        let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
+        pinger.timeout(conf.timeout);
+        let tgt_clone = tgt.clone();
+        tokio::spawn(async move {
+            let res = pinger.ping(PingSequence(seq), &PING_DATA).await;
+            update_ping_stats(&tgt_clone, res).await;
+        });
     }
 }
 
