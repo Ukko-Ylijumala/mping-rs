@@ -33,7 +33,7 @@ use tokio::{sync::Mutex, time, time::Interval};
 const PING_DATA: &[u8] = &[0; 32];
 
 /// Create PingTarget instances for each IP address.
-fn make_targets(addrs: &Vec<IpAddr>, histsize: usize) -> Vec<Arc<PingTarget>> {
+fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
     addrs
         .into_iter()
         .map(|addr| {
@@ -118,6 +118,45 @@ async fn ping_loop(
     }
 }
 
+/// Format statistics data for display.
+async fn format_stats(tgt: &Arc<PingTarget>) -> (u64, u64, String, String, String, String, String) {
+    let (sent, recv, status_s, rtts) = {
+        // Only hold the lock inside this block to try to minimize contention.
+        let stats = tgt.data.lock().await;
+        let sent: u64 = stats.sent;
+        let recv: u64 = stats.recv;
+        // status formatting is cheap relative to float formatting
+        let status_s: String = format!("{}", stats.status);
+        let rtt_snap = if stats.rtts.is_empty() {
+            None
+        } else {
+            // pull raw numeric RTTs out while holding the lock
+            let (m, mi, ma) = stats.rtts.mean_min_max_ms().unwrap();
+            Some((stats.rtts.latest_ms().unwrap(), m, mi, ma))
+        };
+        (sent, recv, status_s, rtt_snap)
+    };
+
+    // Do all the (expensive) string formatting after releasing the lock.
+    let (latest_s, mean_s, min_s, max_s) = if let Some((last, m, mi, ma)) = rtts {
+        (
+            format!("{:.2}", last),
+            format!("{:.2}", m),
+            format!("{:.2}", mi),
+            format!("{:.2}", ma),
+        )
+    } else {
+        (
+            "-".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+            "-".to_string(),
+        )
+    };
+
+    (sent, recv, latest_s, mean_s, min_s, max_s, status_s)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
@@ -172,41 +211,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mvprintw(0, 0, header);
 
         for (row, tgt) in targets.iter().enumerate() {
-            // Snapshot data under lock; compute outside.
-            let (addr, sent, recv, latest, mean, min, max, status) = {
-                let stats = tgt.data.lock().await;
+            let (sent, recv, latest, mean, min, max, status) = format_stats(tgt).await;
 
-                let (latest_s, mean_s, min_s, max_s) = if stats.rtts.is_empty() {
-                    (
-                        "-".to_string(),
-                        "-".to_string(),
-                        "-".to_string(),
-                        "-".to_string(),
-                    )
-                } else {
-                    let last: f64 = stats.rtts.latest_ms().unwrap();
-                    let (m, mi, ma) = stats.rtts.mean_min_max_ms().unwrap();
-                    (
-                        format!("{:.2}", last),
-                        format!("{:.2}", m),
-                        format!("{:.2}", mi),
-                        format!("{:.2}", ma),
-                    )
-                };
-
-                (
-                    format!("{}", tgt.addr),
-                    stats.sent,
-                    stats.recv,
-                    latest_s,
-                    mean_s,
-                    min_s,
-                    max_s,
-                    format!("{}", stats.status),
-                )
-            };
-
-            let loss_pct: String = if sent == 0 {
+            let loss: String = if sent == 0 {
                 "-".to_string()
             } else if sent - recv == 1 {
                 // catch the common case of one receive missing (probably in transit)
@@ -216,8 +223,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let line: String = format!(
-                "{:<12}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                addr, sent, recv, loss_pct, latest, mean, min, max, status
+                "{:<12}\t{sent}\t{recv}\t{loss}\t{latest}\t{mean}\t{min}\t{max}\t{status}",
+                tgt.addr
             );
             mvprintw((row + 1) as i32, 0, &line);
         }
@@ -228,6 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Cleanup
     setup_curses(true);
     eprintln!("Interrupted. Exiting...");
     join_all(tasks).await;
