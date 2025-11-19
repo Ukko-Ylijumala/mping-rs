@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod args;
+mod ip_addresses;
 mod structs;
 mod tabulator;
 mod utils;
@@ -32,8 +33,6 @@ use surge_ping::{
 };
 use tokio::{sync::Mutex, time, time::Interval};
 
-const PING_DATA: &[u8] = &[0; 32];
-
 /// Create PingTarget instances for each IP address.
 fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
     addrs
@@ -52,11 +51,18 @@ fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
         .collect()
 }
 
-/// Send a ping and update statistics.
-async fn ping(cl: Arc<Client>, tgt: Arc<PingTarget>, to: Duration, id: PingIdentifier, seq: u16) {
+/// Send a ping and update statistics (deprecated, for reference).
+async fn ping(
+    cl: Arc<Client>,
+    tgt: Arc<PingTarget>,
+    to: Duration,
+    id: PingIdentifier,
+    seq: u16,
+    pl: Arc<[u8]>,
+) {
     let mut pinger: Pinger = cl.pinger(tgt.addr, id).await;
     pinger.timeout(to);
-    let res = pinger.ping(PingSequence(seq), &PING_DATA).await;
+    let res = pinger.ping(PingSequence(seq), &pl).await;
     update_ping_stats(&tgt, res).await;
 }
 
@@ -84,6 +90,7 @@ async fn ping_loop(
     client: Arc<Client>,
     quit: Arc<AtomicBool>,
     conf: Arc<MpConfig>,
+    payload: Arc<[u8]>,
 ) {
     let id: PingIdentifier = PingIdentifier(random());
     let mut ticker: Interval = time::interval(conf.interval);
@@ -112,9 +119,10 @@ async fn ping_loop(
         //
         let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
         pinger.timeout(conf.timeout);
-        let tgt_clone = tgt.clone();
+        let tgt_clone: Arc<PingTarget> = tgt.clone();
+        let pl: Arc<[u8]> = payload.clone();
         tokio::spawn(async move {
-            let res = pinger.ping(PingSequence(seq), &PING_DATA).await;
+            let res = pinger.ping(PingSequence(seq), &pl).await;
             update_ping_stats(&tgt_clone, res).await;
         });
     }
@@ -216,6 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Spawn ping tasks
+    let payload: Arc<[u8]> = vec![0u8; conf.size as usize].into();
     let targets: Vec<Arc<PingTarget>> = make_targets(&conf.addrs, conf.histsize as usize);
     let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
@@ -229,6 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             client.clone(),
             quit.clone(),
             conf.clone(),
+            payload.clone(),
         )));
     }
 
@@ -262,5 +272,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_curses(true);
     eprintln!("Interrupted. Exiting...");
     join_all(tasks).await;
+
+    // Print final stats
+    let data: Vec<[String; 9]> = gather_target_data(&targets).await;
+    for line in simple_tabulate(data, Some(&headers)) {
+        println!("{line}");
+    }
     Ok(())
 }
