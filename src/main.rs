@@ -6,10 +6,12 @@
 
 mod args;
 mod structs;
+mod tabulator;
 mod utils;
 use crate::{
     args::MpConfig,
     structs::{PingStatus, PingTarget, PingTargetInner, StatsWindow},
+    tabulator::simple_tabulate,
     utils::{nice_permission_error, panic_handler, setup_curses, setup_signal_handler},
 };
 
@@ -157,13 +159,45 @@ async fn format_stats(tgt: &Arc<PingTarget>) -> (u64, u64, String, String, Strin
     (sent, recv, latest_s, mean_s, min_s, max_s, status_s)
 }
 
+/// Gather current data from all targets.
+async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 9]> {
+    let mut data: Vec<[String; 9]> = Vec::new();
+
+    for tgt in targets {
+        let (sent, recv, last, mean, min, max, stat) = format_stats(tgt).await;
+
+        let loss: String = if sent == 0 {
+            "-".to_string()
+        } else if (sent - recv) == 1 {
+            // catch the common case of one receive missing (probably in transit)
+            "0.0%".to_string()
+        } else {
+            format!("{:.1}%", 100.0 * (sent as f64 - recv as f64) / sent as f64)
+        };
+
+        data.push([
+            tgt.addr.to_string(),
+            sent.to_string(),
+            recv.to_string(),
+            loss,
+            last,
+            mean,
+            min,
+            max,
+            stat,
+        ]);
+    }
+
+    data
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
 
     // Pinger clients
     // sharing a client across multiple targets is safe and allows socket reuse
-    let client_v4: Option<Arc<Client>> = if conf.addrs.iter().any(|a| a.is_ipv4()) {
+    let client_v4: Option<Arc<Client>> = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
         match Client::new(&Config::default()) {
             Ok(c) => Some(Arc::new(c)),
             Err(e) => nice_permission_error(&e, "v4"),
@@ -171,7 +205,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    let client_v6: Option<Arc<Client>> = if conf.addrs.iter().any(|a| a.is_ipv6()) {
+    let client_v6: Option<Arc<Client>> = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv6()) {
         let cfg: Config = Config::builder().kind(ICMP::V6).build();
         match Client::new(&cfg) {
             Ok(c) => Some(Arc::new(c)),
@@ -205,28 +239,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Main display loop
     let mut ui_tick: Interval = time::interval(Duration::from_millis(250));
-    let header: &str = "Address\t\tSent\tRecv\tLoss\tLatest\tMean\tMin\tMax\tStatus";
+    let headers: Vec<&str> = vec![
+        "Address", "Sent", "Recv", "Loss", "Latest", "Mean", "Min", "Max", "Status",
+    ];
     while !quit.load(Ordering::Relaxed) {
         ui_tick.tick().await;
-        mvprintw(0, 0, header);
 
-        for (row, tgt) in targets.iter().enumerate() {
-            let (sent, recv, latest, mean, min, max, status) = format_stats(tgt).await;
-
-            let loss: String = if sent == 0 {
-                "-".to_string()
-            } else if sent - recv == 1 {
-                // catch the common case of one receive missing (probably in transit)
-                "0.0%".to_string()
-            } else {
-                format!("{:.1}%", 100.0 * (sent as f64 - recv as f64) / sent as f64)
-            };
-
-            let line: String = format!(
-                "{:<12}\t{sent}\t{recv}\t{loss}\t{latest}\t{mean}\t{min}\t{max}\t{status}",
-                tgt.addr
-            );
-            mvprintw((row + 1) as i32, 0, &line);
+        // Render the table with dynamic tabulation, correct column widths etc
+        let data: Vec<[String; 9]> = gather_target_data(&targets).await;
+        for (i, line) in simple_tabulate(data, Some(&headers)).iter().enumerate() {
+            // mvprintw could segfault if the string contains "%" characters, use mvaddstr instead
+            mvaddstr(i as i32, 0, line);
         }
 
         refresh();

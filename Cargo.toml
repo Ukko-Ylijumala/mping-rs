@@ -1,6 +1,6 @@
 [package]
 name = "mping"
-version = "0.1.8"
+version = "0.1.9"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Multi-pinger utility written in Rust"
 readme = "README.md"
