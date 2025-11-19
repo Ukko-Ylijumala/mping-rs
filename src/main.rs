@@ -13,7 +13,9 @@ use crate::{
     args::MpConfig,
     structs::{PingStatus, PingTarget, PingTargetInner, StatsWindow},
     tabulator::simple_tabulate,
-    utils::{nice_permission_error, panic_handler, setup_curses, setup_signal_handler},
+    utils::{
+        curses_setup, curses_teardown, nice_permission_error, panic_handler, setup_signal_handler,
+    },
 };
 
 use futures::future::join_all;
@@ -199,7 +201,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 9]> {
     data
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
 
@@ -208,7 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_v4: Option<Arc<Client>> = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
         match Client::new(&Config::default()) {
             Ok(c) => Some(Arc::new(c)),
-            Err(e) => nice_permission_error(&e, "v4"),
+            Err(e) => return Err(nice_permission_error(&e, "v4")),
         }
     } else {
         None
@@ -217,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cfg: Config = Config::builder().kind(ICMP::V6).build();
         match Client::new(&cfg) {
             Ok(c) => Some(Arc::new(c)),
-            Err(e) => nice_permission_error(&e, "v6"),
+            Err(e) => return Err(nice_permission_error(&e, "v6")),
         }
     } else {
         None
@@ -245,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Curses initialization
     setup_signal_handler(quit.clone());
     panic::set_hook(Box::new(panic_handler));
-    setup_curses(false);
+    curses_setup(conf.debug);
 
     // Main display loop
     let mut ui_tick: Interval = time::interval(Duration::from_millis(250));
@@ -269,14 +271,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Cleanup
-    setup_curses(true);
-    eprintln!("Interrupted. Exiting...");
+    curses_teardown(conf.debug);
+    if conf.verbose || conf.debug {
+        eprintln!("Main thread quitting. Waiting for tasks to terminate...");
+    }
     join_all(tasks).await;
 
     // Print final stats
     let data: Vec<[String; 9]> = gather_target_data(&targets).await;
     for line in simple_tabulate(data, Some(&headers)) {
         println!("{line}");
-    }
+    };
     Ok(())
 }
