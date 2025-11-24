@@ -53,11 +53,11 @@ impl LatencyWindow {
         } else {
             // Evict oldest at head
             let tail_pos: usize = self.head;
-            let old: u32 = self.buf[tail_pos];
+            let old: f64 = self.buf[tail_pos] as f64;
             self.buf[tail_pos] = val;
             self.head = (self.head + 1) % self.cap;
-            self.sum += val_f - old as f64;
-            self.sum_sq += val_f * val_f - (old * old) as f64;
+            self.sum += val_f - old;
+            self.sum_sq += val_f * val_f - old * old;
 
             // The global “logical index” of the evicted element is idx - cap,
             // but we only track indices of pushed elements in queues;
@@ -69,6 +69,23 @@ impl LatencyWindow {
             let len_f: f64 = self.len as f64;
             self.variance = (self.sum_sq - (self.sum * self.sum / len_f)) / len_f;
             self.stdev = self.variance.sqrt();  // in µs
+        }
+
+        // Drop aged-out heads *before* adding new
+        let cutoff: usize = idx.saturating_sub(self.cap.saturating_sub(1));
+        while let Some(&(_, i)) = self.minq.front() {
+            if i < cutoff {
+                self.minq.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(&(_, i)) = self.maxq.front() {
+            if i < cutoff {
+                self.maxq.pop_front();
+            } else {
+                break;
+            }
         }
 
         // Update min deque (pop larger tails)
@@ -90,23 +107,6 @@ impl LatencyWindow {
             }
         }
         self.maxq.push_back((val, idx));
-
-        // Drop aged-out heads
-        let cutoff: usize = idx.saturating_sub(self.cap);
-        while let Some(&(_, i)) = self.minq.front() {
-            if i <= cutoff {
-                self.minq.pop_front();
-            } else {
-                break;
-            }
-        }
-        while let Some(&(_, i)) = self.maxq.front() {
-            if i <= cutoff {
-                self.maxq.pop_front();
-            } else {
-                break;
-            }
-        }
     }
 
     #[inline]
@@ -156,10 +156,13 @@ impl LatencyWindow {
         Ok(self.stdev / 1e3)
     }
 
-    /// Standard deviation in ms over last N samples. N must be >=2 and <=len.
+    /// Standard deviation in ms over last N samples. N must be >=1 and <=len.
     pub fn stdev_n(&self, n: usize) -> Result<f64, String> {
         self.no_samples_check()?;
-        if n < 2 || n > self.len {
+        if n == 1 {
+            return Ok(0.0);
+        }
+        if n < 1 || n > self.len {
             return Err("invalid sample count".into());
         }
         let mut var: f64 = 0.0;
