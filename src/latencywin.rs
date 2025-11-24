@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use std::collections::VecDeque;
+use std::{cmp::max, collections::VecDeque};
 
 /// O(1) amortized rolling latency window over the last N samples.
 #[derive(Debug)]
@@ -21,9 +21,10 @@ pub struct LatencyWindow {
 }
 
 impl LatencyWindow {
+    /// Create new LatencyWindow with capacity `cap` (clamped to 3 minimum).
     pub fn new(cap: usize) -> Self {
         Self {
-            cap,
+            cap: max(cap, 3),
             buf: vec![0; cap],
             head: 0,
             len: 0,
@@ -119,6 +120,10 @@ impl LatencyWindow {
         self.len
     }
 
+    pub fn maxlen(&self) -> usize {
+        self.cap
+    }
+
     #[inline]
     fn no_samples_check(&self) -> Result<(), String> {
         if self.is_empty() {
@@ -149,7 +154,7 @@ impl LatencyWindow {
         Ok(self.variance)
     }
 
-    /// Standard deviation in ms (running total over all samples).
+    /// Standard population deviation in ms (running total over all samples).
     pub fn stdev(&self) -> Result<f64, String> {
         self.no_samples_check()?;
         self.float_val_check(self.stdev)?;
@@ -177,7 +182,7 @@ impl LatencyWindow {
             let v: f64 = self.buf[idx] as f64;
             var += (v - sub_mean).powi(2);
         }
-        var /= n as f64;  // population
+        var /= (n as f64) - 1.0;  // sample variance (N-1)
         self.float_val_check(var)?;
         Ok(var.sqrt() / 1e3)
     }
