@@ -95,38 +95,46 @@ async fn ping_loop(
     payload: Arc<[u8]>,
 ) {
     let id: PingIdentifier = PingIdentifier(random());
-    let mut ticker: Interval = time::interval(conf.interval);
+    let mut ticker: Interval = time::interval(Duration::from_millis(100));
+    let loop_interval: Duration = conf.interval;
+    let mut next_ping: time::Instant = tokio::time::Instant::now();
 
-    while !quit.load(Ordering::Relaxed) {
+    loop {
         ticker.tick().await;
+        if quit.load(Ordering::Relaxed) {
+            break;
+        }
 
-        let seq: u16 = {
-            let mut stats = tgt.data.lock().await;
-            // update sent count here to make sure it's incremented before
-            // sending so that the main sent count stays accurate even if
-            // ping fails or we get out of order replies etc
-            let sent: u64 = stats.sent;
-            stats.sent += 1;
-            // calculate the 16-bit sequence number from sent count,
-            // since 2^16 is the max for ICMP sequence numbers
-            (sent % 65536) as u16
-        };
+        if tokio::time::Instant::now() >= next_ping {
+            let seq: u16 = {
+                let mut stats = tgt.data.lock().await;
+                // update sent count here to make sure it's incremented before
+                // sending so that the main sent count stays accurate even if
+                // ping fails or we get out of order replies etc
+                let sent: u64 = stats.sent;
+                stats.sent += 1;
+                // calculate the 16-bit sequence number from sent count,
+                // since 2^16 is the max for ICMP sequence numbers
+                (sent % 65536) as u16
+            };
 
-        // The async ping task can be spawned either using a closure, or an
-        // async fn block. Both should be functionally equivalent.
-        // In either case the pinger is created anew for each async context.
-        //
-        // Function style (saved for reference):
-        // tokio::spawn(ping(client.clone(), tgt.clone(), conf.timeout, id, seq));
-        //
-        let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
-        pinger.timeout(conf.timeout);
-        let tgt_clone: Arc<PingTarget> = tgt.clone();
-        let pl: Arc<[u8]> = payload.clone();
-        tokio::spawn(async move {
-            let res = pinger.ping(PingSequence(seq), &pl).await;
-            update_ping_stats(&tgt_clone, res).await;
-        });
+            // The async ping task can be spawned either using a closure, or an
+            // async fn block. Both should be functionally equivalent.
+            // In either case the pinger is created anew for each async context.
+            //
+            // Function style (saved for reference):
+            // tokio::spawn(ping(client.clone(), tgt.clone(), conf.timeout, id, seq));
+            //
+            let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
+            pinger.timeout(conf.timeout);
+            let tgt_clone: Arc<PingTarget> = tgt.clone();
+            let pl: Arc<[u8]> = payload.clone();
+            tokio::spawn(async move {
+                let res = pinger.ping(PingSequence(seq), &pl).await;
+                update_ping_stats(&tgt_clone, res).await;
+            });
+            next_ping += loop_interval;
+        }
     }
 }
 
@@ -281,6 +289,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let data: Vec<[String; 9]> = gather_target_data(&targets).await;
     for line in simple_tabulate(data, Some(&headers)) {
         println!("{line}");
-    };
+    }
     Ok(())
 }
