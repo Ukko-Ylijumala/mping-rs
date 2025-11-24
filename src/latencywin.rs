@@ -8,13 +8,13 @@ use std::{cmp::max, collections::VecDeque};
 #[derive(Debug)]
 pub struct LatencyWindow {
     cap: usize,
-    buf: Vec<u32>,                  // ring buffer of µs
+    buf: Vec<u32>,                  // ring buffer of values
     head: usize,                    // next write position
     len: usize,
-    sum: f64,                       // running sum in µs as f64
-    sum_sq: f64,                    // running sum of squares in µs² as f64
-    variance: f64,                  // running variance in µs² as f64
-    stdev: f64,                     // running standard deviation in µs as f64
+    sum: f64,                       // running sum
+    sum_sq: f64,                    // running sum of squares
+    variance: f64,                  // running population variance (M2 / N)
+    stdev: f64,                     // running population standard deviation as f64
     minq: VecDeque<(u32, usize)>,   // monotonic increasing (value, index)
     maxq: VecDeque<(u32, usize)>,   // monotonic decreasing (value, index)
     index: usize,                   // monotonically increasing sample index
@@ -38,7 +38,7 @@ impl LatencyWindow {
         }
     }
 
-    /// Push a new µs value, evicting oldest if full.
+    /// Push a new value, evicting oldest if full.
     pub fn push(&mut self, val: u32) {
         let idx: usize = self.index;
         self.index = self.index.wrapping_add(1);
@@ -65,11 +65,11 @@ impl LatencyWindow {
             // we’ll drop out-of-range by age below.
         }
 
-        // Compute variance and stdev (population: / len)
+        // Compute population variance and stdev
         if self.len > 1 {
             let len_f: f64 = self.len as f64;
             self.variance = (self.sum_sq - (self.sum * self.sum / len_f)) / len_f;
-            self.stdev = self.variance.sqrt();  // in µs
+            self.stdev = self.variance.sqrt();
         }
 
         // Drop aged-out heads *before* adding new
@@ -140,25 +140,25 @@ impl LatencyWindow {
         Ok(())
     }
 
-    /// Latest sample in ms.
-    pub fn latest_ms(&self) -> Result<f64, String> {
+    /// Latest latency sample.
+    pub fn last(&self) -> Result<u32, String> {
         self.no_samples_check()?;
         let last_idx: usize = (self.head + self.cap - 1) % self.cap;
-        Ok(self.buf[last_idx] as f64 / 1e3)
+        Ok(self.buf[last_idx])
     }
 
-    /// Variance (M2 / N) in µs² (running total over all samples).
+    /// Population variance [M2 / N] (running total over all samples).
     pub fn variance(&self) -> Result<f64, String> {
         self.no_samples_check()?;
         self.float_val_check(self.variance)?;
         Ok(self.variance)
     }
 
-    /// Standard population deviation in ms (running total over all samples).
+    /// Standard population deviation (running total over all samples).
     pub fn stdev(&self) -> Result<f64, String> {
         self.no_samples_check()?;
         self.float_val_check(self.stdev)?;
-        Ok(self.stdev / 1e3)
+        Ok(self.stdev)
     }
 
     /// Standard deviation in ms over last N samples. N must be >=1 and <=len.
@@ -184,15 +184,15 @@ impl LatencyWindow {
         }
         var /= (n as f64) - 1.0;  // sample variance (N-1)
         self.float_val_check(var)?;
-        Ok(var.sqrt() / 1e3)
+        Ok(var.sqrt())
     }
 
-    /// Mean/min/max in ms.
-    pub fn mean_min_max_ms(&self) -> Result<(f64, f64, f64), String> {
+    /// Mean/min/max values.
+    pub fn mean_min_max(&self) -> Result<(f64, u32, u32), String> {
         self.no_samples_check()?;
-        let mean: f64 = (self.sum / self.len as f64) / 1e3;
-        let min: f64 = self.minq.front().map(|(v, _)| *v as f64 / 1e3).unwrap_or_default();
-        let max: f64 = self.maxq.front().map(|(v, _)| *v as f64 / 1e3).unwrap_or_default();
+        let mean: f64 = self.sum / self.len as f64;
+        let min: u32 = self.minq.front().map(|(v, _)| *v).unwrap_or_default();
+        let max: u32 = self.maxq.front().map(|(v, _)| *v).unwrap_or_default();
         Ok((mean, min, max))
     }
 }
