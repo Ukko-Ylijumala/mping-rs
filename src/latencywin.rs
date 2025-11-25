@@ -102,7 +102,8 @@ impl LatencyWindow {
         // Compute population variance and stdev
         if self.len > 1 {
             let len_f: f64 = self.len as f64;
-            // Due to numerical errors, variance could become slightly negative (e.g. -1e-15)
+            // Due to floating-point rounding errors in the computational formula,
+            // variance could become slightly negative (e.g. -1e-15),
             // even though mathematically it should not. Guard against that here.
             let mut variance: f64 = (self.sum_sq - (self.sum * self.sum / len_f)) / len_f;
             if variance < 0.0 {
