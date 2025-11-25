@@ -2,9 +2,42 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! Efficient rolling window statistics for latency monitoring.
+//!
+//! The [`LatencyWindow`] provides O(1) amortized operations for tracking
+//! mean, min, max, variance, and standard deviation over a sliding window
+//! of samples. Should work for usual kinds of latency measurements.
+
 use std::{cmp::max, collections::VecDeque};
 
+const MIN_WINDOW_SIZE: usize = 3;
+
 /// O(1) amortized rolling latency window over the last N samples.
+///
+/// Maintains a fixed-size sliding window of latency samples and computes
+/// statistical metrics efficiently. All values are stored in microseconds
+/// as u32, and calculations use f64 for precision.
+///
+/// ## Capacity
+/// The window capacity is clamped to a minimum of 3 samples to ensure
+/// statistical operations are meaningful.
+///
+/// ## Numerical Considerations
+/// Variance is computed using the computational formula which is efficient
+/// but may lose precision for extremely large values or very small variance.
+/// Suitable for typical (network) latency monitoring (µs to ms range).
+///
+/// ## Example
+/// ```
+/// use latencywin::LatencyWindow;
+///
+/// let mut win = LatencyWindow::new(100);
+/// win.push(1500);  // 1.5ms in µs
+/// win.push(2000);  // 2.0ms
+/// 
+/// let (mean, min, max) = win.mean_min_max().unwrap();
+/// println!("Mean: {:.2}ms", mean / 1e3);
+/// ```
 #[derive(Debug)]
 pub struct LatencyWindow {
     cap: usize,
@@ -23,7 +56,7 @@ pub struct LatencyWindow {
 impl LatencyWindow {
     /// Create new LatencyWindow with capacity `cap` (clamped to 3 minimum).
     pub fn new(cap: usize) -> Self {
-        let cap: usize = max(cap, 3);
+        let cap: usize = max(cap, MIN_WINDOW_SIZE);
         Self {
             cap,
             buf: vec![0; cap],
@@ -182,7 +215,17 @@ impl LatencyWindow {
         Ok(self.stdev)
     }
 
-    /// Standard deviation over last N samples. N must be >=1 and <=len.
+    /// Computes sample standard deviation over the last `n` samples.
+    ///
+    /// Uses Bessel's correction (N-1 divisor) for unbiased sample variance.
+    /// This is an O(n) operation that scans backwards from the most recent sample.
+    ///
+    /// ## Arguments
+    /// * `n` - Number of recent samples to include (1 ≤ n ≤ len)
+    ///
+    /// ## Returns
+    /// * `Ok(stdev)` - Sample standard deviation
+    /// * `Err(_)` - If n is out of range or window is empty
     pub fn stdev_n(&self, n: usize) -> Result<f64, String> {
         self.no_samples_check()?;
         if n == 1 {
