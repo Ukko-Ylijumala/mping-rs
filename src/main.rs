@@ -66,7 +66,13 @@ async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Durat
         }
         Err(e) => {
             stats.status = match e {
-                SurgeError::Timeout { .. } => PingStatus::Timeout,
+                SurgeError::Timeout { .. } => {
+                    if stats.sent > 10 && stats.recv == 0 {
+                        PingStatus::NotReachable
+                    } else {
+                        PingStatus::Timeout
+                    }
+                },
                 _ => PingStatus::Error(e),
             };
         }
