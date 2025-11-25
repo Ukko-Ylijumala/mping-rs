@@ -57,9 +57,12 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u16).range(32..32768),
         default_value = "32",
-        help = "Size of ICMP payload in bytes"
+        help = "Size of ICMP payload in bytes (minus the 8-byte ICMP header)"
     )]
     pub size: u16,
+
+    #[arg(long, short = 'R', help = "Randomize ICMP payload data [default: zeroes]")]
+    pub randomize: bool,
 
     #[arg(
         long,
