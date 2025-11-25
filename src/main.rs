@@ -7,12 +7,14 @@
 mod args;
 mod ip_addresses;
 mod latencywin;
+mod simplecolor;
 mod structs;
 mod tabulator;
 mod utils;
 use crate::{
     args::MpConfig,
     latencywin::LatencyWindow,
+    simplecolor::*,
     structs::{PingStatus, PingTarget, PingTargetInner, StatsSnapshot},
     tabulator::simple_tabulate,
     utils::{
@@ -72,7 +74,7 @@ async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Durat
                     } else {
                         PingStatus::Timeout
                     }
-                },
+                }
                 _ => PingStatus::Error(e),
             };
         }
@@ -235,6 +237,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let headers: Vec<&str> = vec![
         "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
     ];
+
+    // FIXME:
+    // This works for applying ANSI codes to headers for final printout, but Curses
+    // rendering needs to be done differently as Curses simply does not care about ANSI codes.
+    let headers_ansi: Vec<String> = apply_ansi_to_all(
+        headers.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        bold,
+    );
+    let headers_ansi: Vec<&str> = headers_ansi.iter().map(|s: &String| s.as_str()).collect();
+
     while !quit.load(Ordering::Relaxed) {
         ui_tick.tick().await;
 
@@ -260,7 +272,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Print final stats
     let data: Vec<[String; 10]> = gather_target_data(&targets).await;
-    for line in simple_tabulate(data, Some(&headers)) {
+    for line in simple_tabulate(data, Some(&headers_ansi)) {
         println!("{line}");
     }
     Ok(())

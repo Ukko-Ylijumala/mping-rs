@@ -59,6 +59,8 @@ pub(crate) fn curses_setup(verbose: bool) {
         eprintln!("Initializing ncurses UI...");
     }
     initscr();
+    //start_color();
+    //use_default_colors();
     noecho();
     curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
     keypad(stdscr(), true);
