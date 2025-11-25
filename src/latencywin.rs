@@ -23,8 +23,9 @@ pub struct LatencyWindow {
 impl LatencyWindow {
     /// Create new LatencyWindow with capacity `cap` (clamped to 3 minimum).
     pub fn new(cap: usize) -> Self {
+        let cap: usize = max(cap, 3);
         Self {
-            cap: max(cap, 3),
+            cap,
             buf: vec![0; cap],
             head: 0,
             len: 0,
