@@ -161,7 +161,7 @@ impl LatencyWindow {
         Ok(self.stdev)
     }
 
-    /// Standard deviation in ms over last N samples. N must be >=1 and <=len.
+    /// Standard deviation over last N samples. N must be >=1 and <=len.
     pub fn stdev_n(&self, n: usize) -> Result<f64, String> {
         self.no_samples_check()?;
         if n == 1 {
@@ -194,5 +194,131 @@ impl LatencyWindow {
         let min: u32 = self.minq.front().map(|(v, _)| *v).unwrap_or_default();
         let max: u32 = self.maxq.front().map(|(v, _)| *v).unwrap_or_default();
         Ok((mean, min, max))
+    }
+}
+
+/// Naive reference calculation for sum of squares, which here means
+/// the sum of the squared differences between data values and the mean.
+///
+/// If `is_sample` == `true`, uses Bessel's correction (N-1 divisor),
+/// meaning the result is the sample variance; otherwise uses
+/// N divisor (population variance).
+pub fn sum_of_squares(data: &[u32], is_sample: bool) -> f64 {
+    #[cfg(test)]
+    {
+        eprintln!("sum_of_squares: data={data:?}, is_sample={is_sample}");
+    }
+    let len: f64 = data.len() as f64;
+    let divisor: f64 = if is_sample {
+        len - 1.0
+    } else {
+        len
+    };
+    let mean: f64 = data.iter().sum::<u32>() as f64 / len;
+    data.iter().map(|&x| {
+        (x as f64 - mean).powf(2.0)
+    }).sum::<f64>() / divisor
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic() {
+        let mut lw: LatencyWindow = LatencyWindow::new(1);
+
+        // basic empty checks
+        assert!(lw.is_empty());
+        assert_eq!(lw.len(), 0);
+        assert_eq!(lw.maxlen(), 3);
+        assert!(lw.last().is_err());
+        assert!(lw.variance().is_err());
+        assert!(lw.stdev().is_err());
+        assert!(lw.mean_min_max().is_err());
+
+        lw.push(10); // 10ms
+        assert!(! lw.is_empty());
+        assert_eq!(lw.len(), 1);
+        assert_eq!(lw.last().unwrap(), 10);
+        assert_eq!(lw.mean_min_max().unwrap(), (10.0, 10, 10));
+        assert_eq!(lw.variance().unwrap(), 0.0);
+        assert_eq!(lw.stdev().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn test_push() {
+        let mut lw: LatencyWindow = LatencyWindow::new(4);
+        let data = [10, 20, 30, 40];
+
+        /////// first 2 pushes ////////
+        lw.push(10);
+        lw.push(20);
+        assert_eq!(lw.last().unwrap(), 20, "Wrong last() after 2 pushes");
+        assert_eq!(lw.mean_min_max().unwrap(), (15.0, 10, 20), "Wrong mean/min/max after 2 pushes");
+
+        let exp_var: f64 = sum_of_squares(&data[..=1], false);
+        assert_eq!(lw.variance().unwrap(), exp_var, "Wrong population variance after 2 pushes");
+        assert_eq!(lw.stdev().unwrap(), 5.0, "Wrong population stdev after 2 pushes");
+
+        let exp_var: f64 = sum_of_squares(&data[..=1], true);
+        assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after 2 pushes");
+
+        /////// 3 pushes ////////
+        lw.push(30);
+        assert_eq!(lw.last().unwrap(), 30, "Wrong last() after 3 pushes");
+        assert_eq!(lw.mean_min_max().unwrap(), (20.0, 10, 30), "Wrong mean/min/max after 3 pushes");
+
+        let exp_var: f64 = sum_of_squares(&data[..=2], false);
+        assert_eq!(lw.variance().unwrap(), exp_var, "Wrong population variance after 3 pushes");
+        assert_eq!(lw.stdev().unwrap(), exp_var.sqrt(), "Wrong population stdev after 3 pushes");
+
+        let exp_var: f64 = sum_of_squares(&data[1..=2], true);
+        assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after 3 pushes");
+        let exp_var: f64 = sum_of_squares(&data[..=2], true);
+        assert_eq!(lw.stdev_n(3).unwrap(), exp_var.sqrt(), "Wrong sample stdev(3) after 3 pushes");
+
+        //////// 4 pushes ////////
+        lw.push(40);
+        assert_eq!(lw.last().unwrap(), 40, "Wrong last() after 4 pushes");
+        assert_eq!(lw.mean_min_max().unwrap(), (25.0, 10, 40), "Wrong mean/min/max after 4 pushes");
+
+        let exp_var: f64 = sum_of_squares(&data, false);
+        assert_eq!(lw.variance().unwrap(), exp_var, "Wrong population variance after 4 pushes");
+        assert_eq!(lw.stdev().unwrap(), exp_var.sqrt(), "Wrong population stdev after 4 pushes");
+
+        let exp_var: f64 = sum_of_squares(&data[2..=3], true);
+        assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after 4 pushes");
+        let exp_var: f64 = sum_of_squares(&data[1..=3], true);
+        assert_eq!(lw.stdev_n(3).unwrap(), exp_var.sqrt(), "Wrong sample stdev(3) after 4 pushes");
+        let exp_var: f64 = sum_of_squares(&data, true);
+        assert_eq!(lw.stdev_n(4).unwrap(), exp_var.sqrt(), "Wrong sample stdev(4) after 4 pushes");
+    }
+
+    #[test]
+    fn test_eviction() {
+        let mut lw: LatencyWindow = LatencyWindow::new(3);
+        let data = [20, 30, 40];
+
+        /////// first 3 pushes should fit, 4th should overflow and rotate ////////
+        lw.push(10);
+        assert_eq!(lw.len(), 1, "Wrong len() after 1 push, should be 1");
+        lw.push(20);
+        assert_eq!(lw.len(), 2, "Wrong len() after 2 pushes, should be 2");
+        lw.push(30);
+        assert_eq!(lw.len(), 3, "Wrong len() after 3 pushes, should be 3");
+        lw.push(40);
+        assert_eq!(lw.len(), 3, "Wrong len() after 4 pushes, should be 3");
+        assert_eq!(lw.last().unwrap(), 40, "Wrong last() after 4 pushes");
+        assert_eq!(lw.mean_min_max().unwrap(), (30.0, 20, 40), "Wrong mean/min/max, should have evicted 10");
+
+        let exp_var: f64 = sum_of_squares(&data, false);
+        assert_eq!(lw.variance().unwrap(), exp_var, "Wrong population variance after eviction");
+        assert_eq!(lw.stdev().unwrap(), exp_var.sqrt(), "Wrong population stdev after eviction");
+
+        let exp_var: f64 = sum_of_squares(&data[1..=2], true);
+        assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after eviction");
+        let exp_var: f64 = sum_of_squares(&data, true);
+        assert_eq!(lw.stdev_n(3).unwrap(), exp_var.sqrt(), "Wrong sample stdev(3) after eviction");
     }
 }
