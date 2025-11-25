@@ -68,7 +68,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u32).range(60..65536),
         default_value = "3600",
-        help = "History size (number of pings results to keep)"
+        help = "History size (number of ping results to keep)"
     )]
     pub histsize: u32,
 
@@ -119,10 +119,9 @@ impl MpConfig {
             eprintln!("Total unique addresses to monitor: {}", config.addrs.len());
         }
 
-
-        // clamp interval between 500ms and 10s...
+        // clamp interval between 100ms and 10s...
         config.interval = match config.interval {
-            d if d < Duration::from_millis(500) => Duration::from_millis(500),
+            d if d < Duration::from_millis(100) => Duration::from_millis(100),
             d if d > Duration::from_secs(10) => Duration::from_secs(10),
             d => d,
         };
