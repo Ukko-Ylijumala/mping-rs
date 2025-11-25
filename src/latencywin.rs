@@ -124,6 +124,20 @@ impl LatencyWindow {
         self.cap
     }
 
+    /// Reset the window to empty state.
+    pub fn clear(&mut self) {
+        self.buf.fill(0);
+        self.head = 0;
+        self.len = 0;
+        self.sum = 0.0;
+        self.sum_sq = 0.0;
+        self.variance = 0.0;
+        self.stdev = 0.0;
+        self.minq.clear();
+        self.maxq.clear();
+        self.index = 0;
+    }
+
     #[inline]
     fn no_samples_check(&self) -> Result<(), String> {
         if self.is_empty() {
@@ -237,7 +251,7 @@ mod tests {
         assert!(lw.stdev().is_err());
         assert!(lw.mean_min_max().is_err());
 
-        lw.push(10); // 10ms
+        lw.push(10);
         assert!(! lw.is_empty());
         assert_eq!(lw.len(), 1);
         assert_eq!(lw.last().unwrap(), 10);
@@ -320,5 +334,26 @@ mod tests {
         assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after eviction");
         let exp_var: f64 = sum_of_squares(&data, true);
         assert_eq!(lw.stdev_n(3).unwrap(), exp_var.sqrt(), "Wrong sample stdev(3) after eviction");
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut lw: LatencyWindow = LatencyWindow::new(3);
+
+        lw.push(100);
+        lw.push(200);
+        lw.push(300);
+        lw.push(400);
+        lw.push(500);
+        lw.clear();
+
+        // should be empty now
+        assert!(lw.is_empty());
+        assert_eq!(lw.len(), 0);
+        assert_eq!(lw.maxlen(), 3);
+        assert!(lw.last().is_err());
+        assert!(lw.variance().is_err());
+        assert!(lw.stdev().is_err());
+        assert!(lw.mean_min_max().is_err());
     }
 }
