@@ -6,12 +6,14 @@
 
 mod args;
 mod ip_addresses;
+mod latencywin;
 mod structs;
 mod tabulator;
 mod utils;
 use crate::{
     args::MpConfig,
-    structs::{PingStatus, PingTarget, PingTargetInner, StatsWindow},
+    latencywin::LatencyWindow,
+    structs::{PingStatus, PingTarget, PingTargetInner},
     tabulator::simple_tabulate,
     utils::{
         curses_setup, curses_teardown, nice_permission_error, panic_handler, setup_signal_handler,
@@ -45,7 +47,7 @@ fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
                 data: Mutex::new(PingTargetInner {
                     sent: 0,
                     recv: 0,
-                    rtts: StatsWindow::new(histsize),
+                    rtts: LatencyWindow::new(histsize),
                     status: PingStatus::None,
                 }),
             })
@@ -139,8 +141,10 @@ async fn ping_loop(
 }
 
 /// Format statistics data for display.
-async fn format_stats(tgt: &Arc<PingTarget>) -> (u64, u64, String, String, String, String, String) {
-    let (sent, recv, status_s, rtts) = {
+async fn format_stats(
+    tgt: &Arc<PingTarget>,
+) -> (u64, u64, String, String, String, String, String, String) {
+    let (sent, recv, status_s, stdev, rtts) = {
         // Only hold the lock inside this block to try to minimize contention.
         let stats = tgt.data.lock().await;
         let sent: u64 = stats.sent;
@@ -151,19 +155,23 @@ async fn format_stats(tgt: &Arc<PingTarget>) -> (u64, u64, String, String, Strin
             None
         } else {
             // pull raw numeric RTTs out while holding the lock
-            let (m, mi, ma) = stats.rtts.mean_min_max_ms().unwrap();
-            Some((stats.rtts.latest_ms().unwrap(), m, mi, ma))
+            let (m, mi, ma) = stats.rtts.mean_min_max().unwrap();
+            Some((stats.rtts.last().unwrap(), m, mi, ma))
         };
-        (sent, recv, status_s, rtt_snap)
+        let stdev: Option<f64> = match stats.rtts.stdev() {
+            Ok(s) => Some(s),
+            Err(_) => None,
+        };
+        (sent, recv, status_s, stdev, rtt_snap)
     };
 
     // Do all the (expensive) string formatting after releasing the lock.
     let (latest_s, mean_s, min_s, max_s) = if let Some((last, m, mi, ma)) = rtts {
         (
-            format!("{:.2}", last),
-            format!("{:.2}", m),
-            format!("{:.2}", mi),
-            format!("{:.2}", ma),
+            format!("{:.2}", last as f64 / 1e3),
+            format!("{:.2}", m as f64 / 1e3),
+            format!("{:.2}", mi as f64 / 1e3),
+            format!("{:.2}", ma as f64 / 1e3),
         )
     } else {
         (
@@ -173,16 +181,23 @@ async fn format_stats(tgt: &Arc<PingTarget>) -> (u64, u64, String, String, Strin
             "-".to_string(),
         )
     };
+    let stdev_s: String = if let Some(s) = stdev {
+        format!("{:.2}", s / 1e3)
+    } else {
+        "-".to_string()
+    };
 
-    (sent, recv, latest_s, mean_s, min_s, max_s, status_s)
+    (
+        sent, recv, latest_s, mean_s, min_s, max_s, stdev_s, status_s,
+    )
 }
 
 /// Gather current data from all targets.
-async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 9]> {
-    let mut data: Vec<[String; 9]> = Vec::new();
+async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 10]> {
+    let mut data: Vec<[String; 10]> = Vec::new();
 
     for tgt in targets {
-        let (sent, recv, last, mean, min, max, stat) = format_stats(tgt).await;
+        let (sent, recv, last, mean, min, max, stdev, stat) = format_stats(tgt).await;
 
         let loss: String = if sent == 0 {
             "-".to_string()
@@ -202,6 +217,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 9]> {
             mean,
             min,
             max,
+            stdev,
             stat,
         ]);
     }
@@ -258,15 +274,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     curses_setup(conf.debug);
 
     // Main display loop
-    let mut ui_tick: Interval = time::interval(Duration::from_millis(250));
+    let mut ui_tick: Interval = time::interval(Duration::from_millis(500));
     let headers: Vec<&str> = vec![
-        "Address", "Sent", "Recv", "Loss", "Latest", "Mean", "Min", "Max", "Status",
+        "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
     ];
     while !quit.load(Ordering::Relaxed) {
         ui_tick.tick().await;
 
         // Render the table with dynamic tabulation, correct column widths etc
-        let data: Vec<[String; 9]> = gather_target_data(&targets).await;
+        let data: Vec<[String; 10]> = gather_target_data(&targets).await;
         for (i, line) in simple_tabulate(data, Some(&headers)).iter().enumerate() {
             // mvprintw could segfault if the string contains "%" characters, use mvaddstr instead
             mvaddstr(i as i32, 0, line);
@@ -286,7 +302,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     join_all(tasks).await;
 
     // Print final stats
-    let data: Vec<[String; 9]> = gather_target_data(&targets).await;
+    let data: Vec<[String; 10]> = gather_target_data(&targets).await;
     for line in simple_tabulate(data, Some(&headers)) {
         println!("{line}");
     }
