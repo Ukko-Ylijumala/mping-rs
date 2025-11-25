@@ -22,7 +22,7 @@ use crate::{
 
 use futures::future::join_all;
 use ncurses::*;
-use rand::random;
+use rand::{fill, random};
 use std::{
     net::IpAddr,
     panic,
@@ -100,6 +100,11 @@ async fn ping_loop(
     let mut ticker: Interval = time::interval(Duration::from_millis(100));
     let loop_interval: Duration = conf.interval;
     let mut next_ping: time::Instant = tokio::time::Instant::now();
+    let mut payload: Arc<[u8]> = match conf.randomize {
+        // create a new payload for the ping loop which we can randomize
+        true => payload.as_ref().to_vec().into(),
+        false => payload.clone(),
+    };
 
     loop {
         ticker.tick().await;
@@ -130,7 +135,19 @@ async fn ping_loop(
             let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
             pinger.timeout(conf.timeout);
             let tgt_clone: Arc<PingTarget> = tgt.clone();
-            let pl: Arc<[u8]> = payload.clone();
+            let pl: Arc<[u8]> = match conf.randomize {
+                true => {
+                    let payload: &mut [u8] = Arc::make_mut(&mut payload);
+                    // Can't use a thread-local RNG here (for performance)
+                    // because it's not Send'able across await points.
+                    // However, we can spare CPU time by randomizing only
+                    // the first 32 bytes of the payload, which should be plenty.
+                    // And we already know the payload must be 32 bytes minimum.
+                    fill(&mut payload[..32]);
+                    payload.into()
+                }
+                false => payload.clone(),
+            };
             tokio::spawn(async move {
                 let res = pinger.ping(PingSequence(seq), &pl).await;
                 update_ping_stats(&tgt_clone, res).await;
