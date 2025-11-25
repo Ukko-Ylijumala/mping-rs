@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 pub(crate) enum PingStatus {
     Ok,
     Timeout,
+    NotReachable,
     Error(SurgeError),
     //Laggy,
     None,
@@ -21,6 +22,7 @@ impl Display for PingStatus {
         match self {
             PingStatus::Ok => write!(f, "OK"),
             PingStatus::Timeout => write!(f, "timeout"),
+            PingStatus::NotReachable => write!(f, "unreachable"),
             PingStatus::Error(e) => write!(f, "{e}"),
             //PingStatus::Laggy => write!(f, "laggy"),
             PingStatus::None => write!(f, "-"),
