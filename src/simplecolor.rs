@@ -273,6 +273,18 @@ pub fn b_whb(text: impl Into<String>) -> AnsiString {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Apply an ANSI formatting function to all items in an iterator
+/// and return a Vec of formatted strings.
+pub fn apply_ansi_to_all<I, T>(iter: I, f: fn(T) -> AnsiString) -> Vec<String>
+where
+    I: IntoIterator<Item = T>,
+    T: Clone,
+{
+    iter.into_iter().map(|item: T| f(item).build()).collect()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 /// Combine ANSI codes into a single ANSI escape sequence
 pub fn combine_codes(fg: AnsiColor, bg: Option<AnsiColor>, cc: Option<Vec<u8>>) -> String {
     let mut codes = vec![fg as u8];
