@@ -55,21 +55,6 @@ fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
         .collect()
 }
 
-/// Send a ping and update statistics (deprecated, for reference).
-async fn ping(
-    cl: Arc<Client>,
-    tgt: Arc<PingTarget>,
-    to: Duration,
-    id: PingIdentifier,
-    seq: u16,
-    pl: Arc<[u8]>,
-) {
-    let mut pinger: Pinger = cl.pinger(tgt.addr, id).await;
-    pinger.timeout(to);
-    let res = pinger.ping(PingSequence(seq), &pl).await;
-    update_ping_stats(&tgt, res).await;
-}
-
 /// Update ping statistics based on the result. Separated into fn for target lock granularity.
 async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Duration), SurgeError>) {
     let mut stats = tgt.data.lock().await;
