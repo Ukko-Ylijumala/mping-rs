@@ -13,7 +13,7 @@ mod utils;
 use crate::{
     args::MpConfig,
     latencywin::LatencyWindow,
-    structs::{PingStatus, PingTarget, PingTargetInner},
+    structs::{PingStatus, PingTarget, PingTargetInner, StatsSnapshot},
     tabulator::simple_tabulate,
     utils::{
         curses_setup, curses_teardown, nice_permission_error, panic_handler, setup_signal_handler,
@@ -148,56 +148,14 @@ async fn ping_loop(
     }
 }
 
-/// Format statistics data for display.
-async fn format_stats(
-    tgt: &Arc<PingTarget>,
-) -> (u64, u64, String, String, String, String, String, String) {
-    let (sent, recv, status_s, stdev, rtts) = {
-        // Only hold the lock inside this block to try to minimize contention.
-        let stats = tgt.data.lock().await;
-        let sent: u64 = stats.sent;
-        let recv: u64 = stats.recv;
-        // status formatting is cheap relative to float formatting
-        let status_s: String = format!("{}", stats.status);
-        let rtt_snap = if stats.rtts.is_empty() {
-            None
-        } else {
-            // pull raw numeric RTTs out while holding the lock
-            let (m, mi, ma) = stats.rtts.mean_min_max().unwrap();
-            Some((stats.rtts.last().unwrap(), m, mi, ma))
-        };
-        let stdev: Option<f64> = match stats.rtts.stdev() {
-            Ok(s) => Some(s),
-            Err(_) => None,
-        };
-        (sent, recv, status_s, stdev, rtt_snap)
-    };
-
-    // Do all the (expensive) string formatting after releasing the lock.
-    let (latest_s, mean_s, min_s, max_s) = if let Some((last, m, mi, ma)) = rtts {
-        (
-            format!("{:.2}", last as f64 / 1e3),
-            format!("{:.2}", m as f64 / 1e3),
-            format!("{:.2}", mi as f64 / 1e3),
-            format!("{:.2}", ma as f64 / 1e3),
-        )
-    } else {
-        (
-            "-".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-            "-".to_string(),
-        )
-    };
-    let stdev_s: String = if let Some(s) = stdev {
-        format!("{:.2}", s / 1e3)
-    } else {
-        "-".to_string()
-    };
-
-    (
-        sent, recv, latest_s, mean_s, min_s, max_s, stdev_s, status_s,
-    )
+/// Extract statistics data from a target's inner data.
+async fn extract_stats(tgt: &Arc<PingTarget>) -> (StatsSnapshot, String) {
+    // Holding the lock inside this function only should minimize contention.
+    // Do all the expensive string formatting in the caller.
+    let stats = tgt.data.lock().await;
+    let snap: StatsSnapshot = StatsSnapshot::new_from(&stats);
+    // status formatting is cheap relative to float formatting
+    (snap, format!("{}", stats.status))
 }
 
 /// Gather current data from all targets.
@@ -205,27 +163,18 @@ async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 10]> {
     let mut data: Vec<[String; 10]> = Vec::new();
 
     for tgt in targets {
-        let (sent, recv, last, mean, min, max, stdev, stat) = format_stats(tgt).await;
-
-        let loss: String = if sent == 0 {
-            "-".to_string()
-        } else if (sent - recv) == 1 {
-            // catch the common case of one receive missing (probably in transit)
-            "0.0%".to_string()
-        } else {
-            format!("{:.1}%", 100.0 * (sent as f64 - recv as f64) / sent as f64)
-        };
-
+        let (snap, stat) = extract_stats(tgt).await;
+        // Do all the (expensive) string formatting after releasing the lock.
         data.push([
             tgt.addr.to_string(),
-            sent.to_string(),
-            recv.to_string(),
-            loss,
-            last,
-            mean,
-            min,
-            max,
-            stdev,
+            snap.sent.to_string(),
+            snap.recv.to_string(),
+            snap.loss_str(),
+            snap.last_str(),
+            snap.mean_str(),
+            snap.min_str(),
+            snap.max_str(),
+            snap.stdev_str(),
             stat,
         ]);
     }
