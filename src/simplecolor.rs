@@ -79,6 +79,70 @@ impl AnsiColor {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug, Clone, Copy)]
+enum Color {
+    Basic(AnsiColor),
+    EightBit(u8),
+    Rgb(u8, u8, u8),
+}
+
+#[derive(Debug, Clone)]
+enum TextElement<'a> {
+    Plain(String),
+    Loan(&'a str),
+    Styled(StyledElement),
+    StyleClear,
+}
+
+#[derive(Debug, Clone)]
+pub struct StyledElement {
+    s: String,
+    fg: Option<Color>,
+    bg: Option<Color>,
+    styles: u32,    // Bitflags for bold (1<<0), underline (1<<1), etc.
+}
+
+#[derive(Debug, Clone)]
+pub struct StyledTableRow<'a> {
+    items: Vec<TextElement<'a>>,
+    colsep: Option<String>, // Separator between columns, for example " | "
+}
+
+#[derive(Debug, Clone)]
+pub struct StyledTable<'a> {
+    hdr: Option<StyledTableRow<'a>>,
+    rows: Vec<StyledTableRow<'a>>,
+    widths: Vec<usize>, // Column widths for padding
+}
+
+/* ---------------------------------------- */
+
+#[derive(Debug, Clone, Copy)]
+enum Canvas {
+    Console,
+    Curses,
+    Textarea,
+    Plain,
+    //Html,         // these 2 are probably more trouble than they're
+    //Markdown,     // worth, since we intend to be ANSI-focused
+    Unformatted,
+    FileLike,
+}
+
+#[derive(Debug, Clone)]
+pub struct StyledString<'a> {
+    elems: Vec<TextElement<'a>>,
+    sep: Option<String>,    // Separator between elements, for example " " (space)
+}
+
+#[derive(Debug, Clone)]
+pub struct StyledCanvas<'a> {
+    kind: Canvas,
+    lines: Vec<StyledString<'a>>,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 /// Struct for building ANSI-formatted strings (to support nesting/combining)
 #[derive(Clone, Debug)]
 pub struct AnsiString {
