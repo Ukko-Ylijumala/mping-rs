@@ -20,31 +20,36 @@
 use regex::Regex;
 use std::fmt;
 
-// ANSI control codes as constants
+// ANSI magic string sequences as constants
 const ANSI_BEG: &str = "\x1b[";
 const ANSI_SEP: char = ';';
 const ANSI_END: char = 'm';
-const ANSI_CLEAR: u8 = 0;
-const ANSI_BOLD: u8 = 1;
-const ANSI_FAINT: u8 = 2;
-const ANSI_ITALIC: u8 = 3;
-const ANSI_UNDERLINE: u8 = 4;
-const ANSI_BLINK: u8 = 5;
-const ANSI_BLINK_FAST: u8 = 6;
-const ANSI_INVERSE: u8 = 7;
-const ANSI_CONCEAL: u8 = 8;
-const ANSI_CROSSOUT: u8 = 9;
-const ANSI_NO_BOLD: u8 = 21;
-const ANSI_NORMAL: u8 = 22;
-const ANSI_NO_ITALIC: u8 = 23;
-const ANSI_NO_UNDERLINE: u8 = 24;
-const ANSI_NO_BLINK: u8 = 25;
-const ANSI_NO_INVERSE: u8 = 27;
-const ANSI_NO_CONCEAL: u8 = 28;
-const ANSI_NO_CROSSOUT: u8 = 29;
 
 /// Full ANSI clear string for convenience
 pub const CLR: &str = "\x1b[0m";
+
+/// Common ANSI control codes
+#[derive(Clone, Copy, Debug)]
+pub enum AnsiCC {
+    Clear = 0,
+    Bold = 1,
+    Faint = 2,
+    Italic = 3,
+    Underline = 4,
+    Blink = 5,
+    BlinkFast = 6,
+    Inverse = 7,
+    Conceal = 8,
+    Crossout = 9,
+    NoBold = 21,
+    Normal = 22,
+    NoItalic = 23,
+    NoUnderline = 24,
+    NoBlink = 25,
+    NoInverse = 27,
+    NoConceal = 28,
+    NoCrossout = 29,
+}
 
 /// ANSI color codes (foreground; background is +10)
 #[derive(Clone, Copy, Debug)]
@@ -72,6 +77,8 @@ impl AnsiColor {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
 /// Struct for building ANSI-formatted strings (to support nesting/combining)
 #[derive(Clone, Debug)]
 pub struct AnsiString {
@@ -87,8 +94,8 @@ impl AnsiString {
         }
     }
 
-    pub fn with_code(mut self, code: u8) -> Self {
-        self.codes.push(code);
+    pub fn with_code(mut self, code: AnsiCC) -> Self {
+        self.codes.push(code as u8);
         self
     }
 
@@ -124,152 +131,86 @@ impl fmt::Display for AnsiString {
 
 //////// Convenience functions for common styles (similar to Python classes) ////////
 
-#[inline]
-pub fn bold(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_code(ANSI_BOLD)
+macro_rules! style_fns {
+    ($( $name:ident => $code:ident ),* $(,)?) => {
+        $(
+            #[inline]
+            pub fn $name(text: impl Into<String>) -> AnsiString {
+                AnsiString::new(text).with_code(AnsiCC::$code)
+            }
+        )*
+    };
 }
-#[inline]
-pub fn underline(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_code(ANSI_UNDERLINE)
-}
-#[inline]
-pub fn blink(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_code(ANSI_BLINK)
-}
-#[inline]
-pub fn inverse(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_code(ANSI_INVERSE)
-}
-#[inline]
-pub fn crossout(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_code(ANSI_CROSSOUT)
-}
+
+style_fns!(
+    bold => Bold,
+    underline => Underline,
+    blink => Blink,
+    inverse => Inverse,
+    crossout => Crossout,
+);
 
 //////// Convenience functions for foreground colors ////////
 
-#[inline]
-pub fn blk(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Black)
+macro_rules! foreground_fns {
+    ($( $name:ident => $code:ident ),* $(,)?) => {
+        $(
+            #[inline]
+            pub fn $name(text: impl Into<String>) -> AnsiString {
+                AnsiString::new(text).with_fg(AnsiColor::$code)
+            }
+        )*
+    };
 }
-#[inline]
-pub fn red(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Red)
-}
-#[inline]
-pub fn grn(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Green)
-}
-#[inline]
-pub fn yel(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Yellow)
-}
-#[inline]
-pub fn blu(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Blue)
-}
-#[inline]
-pub fn mag(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Magenta)
-}
-#[inline]
-pub fn cya(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::Cyan)
-}
-#[inline]
-pub fn whi(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::White)
-}
-#[inline]
-pub fn rdb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::RedBright)
-}
-#[inline]
-pub fn grb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::GreenBright)
-}
-#[inline]
-pub fn org(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::YellowBright)
-}
-#[inline]
-pub fn lbl(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::BlueBright)
-}
-#[inline]
-pub fn mgb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::MagentaBright)
-}
-#[inline]
-pub fn cyb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::CyanBright)
-}
-#[inline]
-pub fn whb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_fg(AnsiColor::WhiteBright)
-}
+
+foreground_fns!(
+    blk => Black,
+    red => Red,
+    grn => Green,
+    yel => Yellow,
+    blu => Blue,
+    mag => Magenta,
+    cya => Cyan,
+    whi => White,
+    rdb => RedBright,
+    grb => GreenBright,
+    org => YellowBright,
+    lbl => BlueBright,
+    mgb => MagentaBright,
+    cyb => CyanBright,
+    whb => WhiteBright,
+);
 
 //////// Convenience functions for background colors ////////
 
-#[inline]
-pub fn b_blk(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Black)
+macro_rules! background_fns {
+    ($( $name:ident => $code:ident ),* $(,)?) => {
+        $(
+            #[inline]
+            pub fn $name(text: impl Into<String>) -> AnsiString {
+                AnsiString::new(text).with_bg(AnsiColor::$code)
+            }
+        )*
+    };
 }
-#[inline]
-pub fn b_red(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Red)
-}
-#[inline]
-pub fn b_grn(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Green)
-}
-#[inline]
-pub fn b_yel(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Yellow)
-}
-#[inline]
-pub fn b_blu(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Blue)
-}
-#[inline]
-pub fn b_mag(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Magenta)
-}
-#[inline]
-pub fn b_cya(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::Cyan)
-}
-#[inline]
-pub fn b_whi(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::White)
-}
-#[inline]
-pub fn b_rdb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::RedBright)
-}
-#[inline]
-pub fn b_grb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::GreenBright)
-}
-#[inline]
-pub fn b_org(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::YellowBright)
-}
-#[inline]
-pub fn b_lbl(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::BlueBright)
-}
-#[inline]
-pub fn b_mgb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::MagentaBright)
-}
-#[inline]
-pub fn b_cyb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::CyanBright)
-}
-#[inline]
-pub fn b_whb(text: impl Into<String>) -> AnsiString {
-    AnsiString::new(text).with_bg(AnsiColor::WhiteBright)
-}
+
+background_fns!(
+    b_blk => Black,
+    b_red => Red,
+    b_grn => Green,
+    b_yel => Yellow,
+    b_blu => Blue,
+    b_mag => Magenta,
+    b_cya => Cyan,
+    b_whi => White,
+    b_rdb => RedBright,
+    b_grb => GreenBright,
+    b_org => YellowBright,
+    b_lbl => BlueBright,
+    b_mgb => MagentaBright,
+    b_cyb => CyanBright,
+    b_whb => WhiteBright,
+);
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -281,6 +222,13 @@ where
     T: Clone,
 {
     iter.into_iter().map(|item: T| f(item).build()).collect()
+}
+
+/// Modify a Vec in-place by applying an ANSI formatting function to all items.
+pub fn apply_ansi_in_place(vec: &mut Vec<String>, f: fn(String) -> AnsiString) {
+    for item in vec.iter_mut() {
+        *item = f(item.clone()).build();
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
