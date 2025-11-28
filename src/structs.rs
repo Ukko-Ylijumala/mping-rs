@@ -25,7 +25,7 @@ impl Display for PingStatus {
             PingStatus::Ok => write!(f, "OK"),
             PingStatus::Timeout => write!(f, "timeout"),
             PingStatus::NotReachable => write!(f, "unreachable"),
-            PingStatus::Error(e) => write!(f, "{e}"),
+            PingStatus::Error(_) => write!(f, "error"),
             //PingStatus::Laggy => write!(f, "laggy"),
             PingStatus::None => write!(f, "-"),
         }
