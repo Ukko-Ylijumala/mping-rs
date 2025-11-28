@@ -60,6 +60,7 @@ pub(crate) struct StatsSnapshot {
     pub mean: Option<f64>,
     pub last: Option<u32>,
     pub stdev: Option<f64>,
+    pub error: Option<String>,
     pub when: Instant,
 }
 
@@ -84,6 +85,10 @@ impl StatsSnapshot {
             stdev: match data.rtts.stdev() {
                 Ok(v) => Some(v),
                 Err(_) => None,
+            },
+            error: match &data.status {
+                PingStatus::Error(e) => Some(e.to_string()),
+                _ => None,
             },
         }
     }
