@@ -17,6 +17,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 /// Set up handlers for various termination signals.
@@ -25,6 +26,9 @@ use std::{
 ///   - [SIGINT] - `Ctrl-C`
 ///   - [SIGTERM] - `kill -15` from shell or systemd etc
 ///   - [SIGQUIT] - `Ctrl-\`. This normally creates a core dump, but here we just exit cleanly.
+///
+/// NOTE: some (many? most?) console emulators do not process SIGINT when in raw mode,
+/// hence Ctrl-C might need to be handled manually in a key event loop instead.
 pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
     // Signals to listen for
     let listen: [i32; 3] = [SIGINT, SIGTERM, SIGQUIT];
@@ -76,5 +80,16 @@ pub(crate) fn nice_permission_error(err: &Error, ip_ver: &str) -> Box<dyn std::e
             Other,
             format!("Failed to create ICMP{ip_ver} client: {err}"),
         ))
+    }
+}
+
+/// Parse a floating point number into a Duration.
+pub(crate) fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
+    match arg.parse::<f64>() {
+        Ok(secs) if secs > 0.0 => {
+            let millis = (secs * 1000.0).round() as u64;
+            Ok(Duration::from_millis(millis))
+        }
+        _ => Err(format!("Invalid time value: {arg}")),
     }
 }

@@ -2,20 +2,9 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::ip_addresses::parse_ip_or_range;
+use crate::{ip_addresses::parse_ip_or_range, utils::parse_float_into_duration};
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
 use std::{collections::HashSet, fmt::Debug, net::IpAddr, process, time::Duration};
-
-/// Parse a floating point number into a Duration.
-fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
-    match arg.parse::<f64>() {
-        Ok(secs) if secs > 0.0 => {
-            let millis = (secs * 1000.0).round() as u64;
-            Ok(Duration::from_millis(millis))
-        }
-        _ => Err(format!("Invalid time value: {arg}")),
-    }
-}
 
 /// Configuration struct for the program.
 #[derive(Parser, Default, Debug, Clone)]
@@ -61,7 +50,7 @@ pub(crate) struct MpConfig {
     )]
     pub size: u16,
 
-    #[arg(long, short = 'R', help = "Randomize ICMP payload data [default: zeroes]")]
+    #[arg(long, short = 'R', help = "Randomize ICMP payload data [default: 0x0]")]
     pub randomize: bool,
 
     #[arg(
@@ -83,12 +72,16 @@ pub(crate) struct MpConfig {
 
     #[arg(skip)]
     pub addrs: Vec<IpAddr>,
+
+    #[arg(skip)]
+    pub ver: String,
 }
 
 impl MpConfig {
     /// Parses command line arguments and returns a [MpConfig] struct.
     pub fn parse() -> MpConfig {
         let mut config: MpConfig = <MpConfig as Parser>::parse();
+        config.ver = crate_version!().to_string();
 
         // Parse all targets and expand them into individual IPs
         let mut all_addrs: Vec<IpAddr> = Vec::new();
