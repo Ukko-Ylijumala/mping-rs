@@ -2,7 +2,6 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use ncurses::*;
 use signal_hook::{
     consts::signal::{SIGINT, SIGQUIT, SIGTERM},
     iterator::{Signals, SignalsInfo},
@@ -45,35 +44,6 @@ pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
             quit.store(true, Ordering::Relaxed);
         }
     });
-}
-
-/// Panic handler to restore the console to a sane state
-pub(crate) fn panic_handler(info: &std::panic::PanicHookInfo) {
-    curses_teardown(true);
-    eprintln!("Application panic: {}", info);
-}
-
-/// Set up the ncurses environment
-pub(crate) fn curses_setup(verbose: bool) {
-    if verbose {
-        eprintln!("Initializing ncurses UI...");
-    }
-    initscr();
-    noecho();
-    curs_set(CURSOR_VISIBILITY::CURSOR_INVISIBLE);
-    keypad(stdscr(), true);
-    nodelay(stdscr(), true);
-    clear();
-}
-
-/// Tear down the ncurses environment cleanly. Restores terminal to a sane state.
-pub(crate) fn curses_teardown(verbose: bool) {
-    curs_set(CURSOR_VISIBILITY::CURSOR_VISIBLE);
-    echo();
-    endwin();
-    if verbose {
-        eprintln!("nCurses UI was terminated.");
-    }
 }
 
 /// Nicely handle permission errors when creating raw sockets.
