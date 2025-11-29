@@ -115,18 +115,35 @@ impl MpConfig {
             eprintln!("Total unique addresses to monitor: {}", config.addrs.len());
         }
 
-        // clamp interval between 100ms and 10s...
+        // clamp interval between 10ms and 10s...
         config.interval = match config.interval {
-            d if d < Duration::from_millis(100) => Duration::from_millis(100),
+            d if d < Duration::from_millis(10) => Duration::from_millis(10),
             d if d > Duration::from_secs(10) => Duration::from_secs(10),
             d => d,
         };
-        // ... and timeout between 100ms and 5s
+        // ... and timeout between 10ms and 5s
         config.timeout = match config.timeout {
-            d if d < Duration::from_millis(100) => Duration::from_millis(100),
+            d if d < Duration::from_millis(10) => Duration::from_millis(10),
             d if d > Duration::from_secs(5) => Duration::from_secs(5),
             d => d,
         };
+
+        // If necessary, tweak the timeout so that we can't have an excessive number of
+        // pending pings (tasks) to the same target. This is a simple heuristic to avoid
+        // overwhelming the application with too many concurrent pings if the user has
+        // set an unreasonably high timeout combined with a very low interval.
+        let limit: Duration = config.interval * 3; // max. 3 pending pings per target
+        if config.timeout > limit {
+            if config.verbose {
+                eprintln!(
+                    "Adjusting timeout ({:.2}s -> {:.2}s) to avoid excessive concurrent pings (interval: {:.2}s)",
+                    config.timeout.as_secs_f64(),
+                    limit.as_secs_f64(),
+                    config.interval.as_secs_f64(),
+                );
+            }
+            config.timeout = limit;
+        }
 
         config
     }
