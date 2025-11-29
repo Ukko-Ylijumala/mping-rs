@@ -9,23 +9,23 @@ mod ip_addresses;
 mod latencywin;
 mod structs;
 mod tabulator;
+mod tui;
 mod utils;
+
 use crate::{
     args::MpConfig,
     latencywin::LatencyWindow,
     structs::{PingStatus, PingTarget, PingTargetInner, StatsSnapshot},
     tabulator::simple_tabulate,
-    utils::{
-        curses_setup, curses_teardown, nice_permission_error, panic_handler, setup_signal_handler,
-    },
+    tui::{TerminalGuard, determine_widths, key_event_poll},
+    utils::{nice_permission_error, setup_signal_handler},
 };
 
 use futures::future::join_all;
-use ncurses::*;
 use rand::{fill, random};
+use ratatui::{prelude::*, widgets::*};
 use std::{
     net::IpAddr,
-    panic,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -35,7 +35,12 @@ use std::{
 use surge_ping::{
     Client, Config, ICMP, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError,
 };
-use tokio::{sync::Mutex, time, time::Interval};
+use tokio::{
+    sync::Mutex,
+    time::{self, Instant, Interval},
+};
+
+////////////////////////////////////////////////////////////////////////////////
 
 /// Create PingTarget instances for each IP address.
 fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
@@ -72,7 +77,7 @@ async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Durat
                     } else {
                         PingStatus::Timeout
                     }
-                },
+                }
                 _ => PingStatus::Error(e),
             };
         }
@@ -88,9 +93,9 @@ async fn ping_loop(
     payload: Arc<[u8]>,
 ) {
     let id: PingIdentifier = PingIdentifier(random());
-    let mut ticker: Interval = time::interval(Duration::from_millis(100));
+    let mut ticker: Interval = time::interval(Duration::from_millis(10));
     let loop_interval: Duration = conf.interval;
-    let mut next_ping: time::Instant = tokio::time::Instant::now();
+    let mut next_ping: Instant = tokio::time::Instant::now();
     let mut payload: Arc<[u8]> = match conf.randomize {
         // create a new payload for the ping loop which we can randomize
         true => payload.as_ref().to_vec().into(),
@@ -159,13 +164,22 @@ async fn extract_stats(tgt: &Arc<PingTarget>) -> (StatsSnapshot, String) {
 }
 
 /// Gather current data from all targets.
-async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 10]> {
-    let mut data: Vec<[String; 10]> = Vec::new();
+async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec<String>> {
+    let mut data: Vec<Vec<String>> = Vec::new();
 
     for tgt in targets {
         let (snap, stat) = extract_stats(tgt).await;
+        let status: String = if debug {
+            match &snap.error {
+                Some(e) => e.to_string(),
+                None => stat,
+            }
+        } else {
+            stat
+        };
+
         // Do all the (expensive) string formatting after releasing the lock.
-        data.push([
+        data.push(vec![
             tgt.addr.to_string(),
             snap.sent.to_string(),
             snap.recv.to_string(),
@@ -175,12 +189,14 @@ async fn gather_target_data(targets: &[Arc<PingTarget>]) -> Vec<[String; 10]> {
             snap.min_str(),
             snap.max_str(),
             snap.stdev_str(),
-            stat,
+            status,
         ]);
     }
 
     data
 }
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -225,42 +241,98 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )));
     }
 
-    // Curses initialization
+    // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(quit.clone());
-    panic::set_hook(Box::new(panic_handler));
-    curses_setup(conf.debug);
+    let mut guard: TerminalGuard = TerminalGuard::new(250, conf.verbose)?;
+    let term = &mut guard.term;
 
-    // Main display loop
-    let mut ui_tick: Interval = time::interval(Duration::from_millis(500));
+    // Prepare basic data for the main display loop
+    let title = Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
+        .alignment(Alignment::Center)
+        .style(Style::new().bold().green());
     let headers: Vec<&str> = vec![
         "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
     ];
-    while !quit.load(Ordering::Relaxed) {
-        ui_tick.tick().await;
+    let header_w: Vec<usize> = headers.iter().map(|h| h.len()).collect(); // precompute header widths
+    let mut data: Vec<Vec<String>> = vec![vec!["".to_string(); headers.len()]; targets.len()];
+    let colspacing: u16 = 2;
 
-        // Render the table with dynamic tabulation, correct column widths etc
-        let data: Vec<[String; 10]> = gather_target_data(&targets).await;
-        for (i, line) in simple_tabulate(data, Some(&headers)).iter().enumerate() {
-            // mvprintw could segfault if the string contains "%" characters, use mvaddstr instead
-            mvaddstr(i as i32, 0, line);
+    // Set up timers
+    let mut tick: Interval = time::interval(Duration::from_millis(50)); // 20 Hz
+    let mut next_refresh: Instant = tokio::time::Instant::now();
+
+    // Main display loop
+    loop {
+        tick.tick().await;
+        key_event_poll(0, &quit)?;
+        if quit.load(Ordering::Relaxed) {
+            break;
+        }
+        if tokio::time::Instant::now() < next_refresh {
+            continue;
         }
 
-        refresh();
-        if getch() == 'q' as i32 {
-            quit.store(true, Ordering::Relaxed);
-        }
+        // Gather data for display
+        data = gather_target_data(&targets, conf.debug).await;
+        let (widths, sum) = determine_widths(&data, Some(&header_w));
+
+        // Render the current frame. Display will be updated as soon as the closure completes.
+        term.draw(|frame: &mut Frame<'_>| {
+            let area: Rect = frame.area();
+            let tbl_req_w: u16 = ((colspacing as usize) * (headers.len() - 1) + sum + 2) as u16;
+            let tbl_req_h: u16 = (data.len() + 3) as u16; // title + header
+            let title_area = Rect {
+                x: 0,
+                y: 0,
+                width: area.width,
+                height: 1,
+            };
+            let table_area = Rect {
+                x: 0,
+                y: 1,
+                width: tbl_req_w,
+                height: tbl_req_h,
+            };
+
+            frame.render_widget(&title, title_area);
+
+            let block =
+                Block::bordered().title(format!(" Ping Statistics - targets: {} ", targets.len()));
+            let hdr_row = headers
+                .iter()
+                .map(|h| {
+                    Cell::from(*h).style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                })
+                .collect::<Vec<Cell>>();
+
+            let data_rows = data
+                .iter()
+                .map(|r| Row::new(r.iter().map(|c| Cell::from(c.as_str()))))
+                .collect::<Vec<Row>>();
+
+            let table = Table::new(data_rows, &widths)
+                .header(Row::new(hdr_row))
+                .column_spacing(colspacing)
+                .block(block);
+
+            frame.render_widget(table, table_area);
+            next_refresh += guard.interval;
+        })?;
     }
 
     // Cleanup
-    curses_teardown(conf.debug);
-    if conf.verbose || conf.debug {
+    drop(guard); // explicitly drop TUI guard to restore terminal so we can print
+    if conf.debug {
         eprintln!("Main thread quitting. Waiting for tasks to terminate...");
     }
     join_all(tasks).await;
 
     // Print final stats
-    let data: Vec<[String; 10]> = gather_target_data(&targets).await;
-    for line in simple_tabulate(data, Some(&headers)) {
+    for line in simple_tabulate(&data, Some(&headers)) {
         println!("{line}");
     }
     Ok(())
