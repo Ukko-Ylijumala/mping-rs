@@ -334,10 +334,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .block(block);
 
             let procinfo = Paragraph::new(format!(
-                "pid: {} | mem: {} | CPU: {}",
-                pinfo.pid,
+                "CPU: {:>7} | mem: {} | pid: {}",
+                pinfo.cpu_str(),
                 pinfo.mem_str(),
-                pinfo.cpu_str()
+                pinfo.pid,
             ))
             .alignment(Alignment::Right);
 
