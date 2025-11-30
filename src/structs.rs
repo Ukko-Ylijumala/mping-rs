@@ -23,12 +23,17 @@ pub(crate) struct AppState<'a> {
     pub c_v6: Option<Arc<Client>>,
     pub targets: Vec<Arc<PingTarget>>,
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
-    pub title: ratatui::widgets::Paragraph<'a>,
-    pub headers: Vec<&'static str>,
-    pub header_widths: Vec<usize>,
-    pub colspacing: u16,
-    pub interval: Duration,
-    pub next_refresh: RwLock<tokio::time::Instant>,
+    pub tbl_title: ratatui::widgets::Paragraph<'a>,
+    /// Table headers
+    pub tbl_hdrs: Vec<&'static str>,
+    /// Precomputed visible widths of table headers
+    pub tbl_hdr_width: Vec<usize>,
+    /// Spacing between table columns
+    pub tbl_colsp: u16,
+    /// UI refresh interval
+    pub ui_interval: Duration,
+    /// Next scheduled UI refresh time
+    pub ui_next_refresh: tokio::time::Instant,
     pub verbose: bool,
     pub debug: bool,
 }
@@ -36,7 +41,7 @@ pub(crate) struct AppState<'a> {
 impl AppState<'_> {
     /// Do any final calculations needed after initialization.
     pub fn build(mut self) -> Self {
-        self.header_widths = self.headers.iter().map(|h| h.len()).collect();
+        self.tbl_hdr_width = self.tbl_hdrs.iter().map(|h| h.len()).collect();
         self
     }
 }

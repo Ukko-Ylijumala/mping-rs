@@ -24,7 +24,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "1",
-        help = "Interval between pings to each target"
+        help = "Interval between pings to each target [0.01-10]"
     )]
     pub interval: Duration,
 
@@ -35,22 +35,22 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "2",
-        help = "Timeout for each ping request"
+        help = "Timeout for each ping request [0.01-5]"
     )]
     pub timeout: Duration,
 
     #[arg(
         long,
         short = 's',
-        value_name = "NUM",
+        value_name = "BYTES",
         required = false,
-        value_parser = value_parser!(u16).range(32..32768),
+        value_parser = value_parser!(u16).range(32..32760),
         default_value = "32",
-        help = "Size of ICMP payload in bytes (minus the 8-byte ICMP header)"
+        help = "Size of ICMP payload (minus the 8-byte ICMP header) [32-32760]"
     )]
     pub size: u16,
 
-    #[arg(long, short = 'R', help = "Randomize ICMP payload data [default: 0x0]")]
+    #[arg(long, short = 'R', help = "Randomize ICMP payload data [default: no]")]
     pub randomize: bool,
 
     #[arg(
@@ -60,7 +60,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u32).range(60..65536),
         default_value = "3600",
-        help = "History size (number of ping results to keep per target)"
+        help = "Full history size (number of ping results to keep per target) [60-65536]"
     )]
     pub histsize: u32,
 
@@ -70,9 +70,19 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u16).range(10..1000),
         default_value = "100",
-        help = "Detailed recent history size (for laggy/flappy detection etc)"
+        help = "Detailed recent history size (for laggy/flappy detection etc) [10-1000]"
     )]
     pub detailed: u16,
+
+    #[arg(
+        long,
+        value_name = "ms",
+        required = false,
+        value_parser = value_parser!(u64).range(100..5000),
+        default_value = "250",
+        help = "TUI refresh interval in milliseconds [100-5000]"
+    )]
+    pub refresh: u64,
 
     #[arg(long, short = 'v', help = "Increase output verbosity")]
     pub verbose: bool,
@@ -142,7 +152,7 @@ impl MpConfig {
         // pending pings (tasks) to the same target. This is a simple heuristic to avoid
         // overwhelming the application with too many concurrent pings if the user has
         // set an unreasonably high timeout combined with a very low interval.
-        let limit: Duration = config.interval * 3; // max. 3 pending pings per target
+        let limit: Duration = config.interval * 4; // max. 4 pending pings per target
         if config.timeout > limit {
             if config.verbose {
                 eprintln!(

@@ -224,8 +224,8 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
 /// Render the current frame. Display will be updated as soon as this function completes.
 fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<String>]) {
     let area: Rect = frame.area();
-    let (widths, sum) = determine_widths(&data, Some(&state.header_widths));
-    let tbl_req_w: u16 = ((state.colspacing as usize) * (state.headers.len() - 1) + sum + 2) as u16;
+    let (widths, sum) = determine_widths(&data, Some(&state.tbl_hdr_width));
+    let tbl_req_w: u16 = ((state.tbl_colsp as usize) * (state.tbl_hdrs.len() - 1) + sum + 2) as u16;
     let tbl_req_h: u16 = (data.len() + 3) as u16; // title + header
     let title_area = Rect {
         x: 0,
@@ -248,7 +248,7 @@ fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<S
 
     let block = Block::bordered().title(format!(" Ping targets: {} ", state.targets.len()));
     let hdr_row = state
-        .headers
+        .tbl_hdrs
         .iter()
         .map(|h| {
             Cell::from(*h).style(
@@ -266,7 +266,7 @@ fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<S
 
     let table = Table::new(data_rows, &widths)
         .header(Row::new(hdr_row))
-        .column_spacing(state.colspacing)
+        .column_spacing(state.tbl_colsp)
         .block(block);
 
     let procinfo = Paragraph::new(format!(
@@ -277,10 +277,9 @@ fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<S
     ))
     .alignment(Alignment::Right);
 
-    frame.render_widget(&state.title, title_area);
+    frame.render_widget(&state.tbl_title, title_area);
     frame.render_widget(table, table_area);
     frame.render_widget(procinfo, proc_area);
-    *state.next_refresh.write() += state.interval;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -294,18 +293,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pi: ProcessInfo::new(),
         c_v4,
         c_v6,
+        tasks: vec![],
         targets: make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize),
-        title: Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
+        tbl_title: Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
             .alignment(Alignment::Center)
             .style(Style::new().bold().green()),
-        headers: vec![
+        tbl_hdrs: vec![
             "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
         ],
-        colspacing: 2,
-        tasks: vec![],
-        header_widths: vec![],
-        interval: Duration::from_millis(250), // main display refresh interval
-        next_refresh: tokio::time::Instant::now().into(),
+        tbl_colsp: 2,
+        tbl_hdr_width: vec![],
+        ui_interval: Duration::from_millis(conf.refresh), // main display refresh interval
+        ui_next_refresh: tokio::time::Instant::now().into(),
         verbose: conf.verbose,
         debug: conf.debug,
     }
@@ -330,16 +329,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(quit.clone());
-    let mut guard: TerminalGuard = TerminalGuard::new(app.interval.as_millis(), app.verbose)?;
-    let mut tick: Interval = time::interval(DEFAULT_TICK);
+    let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval.as_millis(), app.verbose)?;
+    let mut tick: Interval = time::interval(DEFAULT_TICK.min(app.ui_interval));
     let mut data: Vec<Vec<String>> =
-        vec![vec!["".to_string(); app.headers.len()]; app.targets.len()];
+        vec![vec!["".to_string(); app.tbl_hdrs.len()]; app.targets.len()];
 
     // Main display loop
     while !quit.load(Ordering::Relaxed) {
         tick.tick().await;
         key_event_poll(0, &quit)?;
-        if tokio::time::Instant::now() < *app.next_refresh.read() {
+        if tokio::time::Instant::now() < app.ui_next_refresh {
             continue;
         }
 
@@ -348,6 +347,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         guard
             .term
             .draw(|frame: &mut Frame| render_frame(frame, &mut app, &data))?;
+        app.ui_next_refresh += app.ui_interval;
     }
 
     // Cleanup
@@ -358,7 +358,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     join_all(app.tasks).await;
 
     // Print final stats
-    for line in simple_tabulate(&data, Some(&app.headers)) {
+    for line in simple_tabulate(&data, Some(&app.tbl_hdrs)) {
         println!("{line}");
     }
     Ok(())
