@@ -38,7 +38,7 @@ const MIN_WINDOW_SIZE: usize = 3;
 /// let (mean, min, max) = win.mean_min_max().unwrap();
 /// println!("Mean: {:.2}ms", mean / 1e3);
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LatencyWindow {
     cap: usize,
     buf: Vec<u32>,                  // ring buffer of values

@@ -15,13 +15,14 @@ use tokio::sync::Mutex;
 
 const MICRO_TO_MILLI: f64 = 1e3;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) enum PingStatus {
     Ok,
     Timeout,
     NotReachable,
     Error(SurgeError),
     //Laggy,
+    #[default]
     None,
 }
 
@@ -38,7 +39,7 @@ impl Display for PingStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct PingTargetInner {
     pub sent: u64,
     pub recv: u64,
@@ -52,6 +53,24 @@ pub(crate) struct PingTargetInner {
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
     pub data: Mutex<PingTargetInner>,
+}
+
+impl PingTarget {
+    /// Create a new [PingTarget] for the specified IP address.
+    ///
+    /// - `histsize` specifies the size of the full RTT latency window.
+    /// - `detailed` specifies the number of more detailed recent packet stats to keep.
+    pub fn new(addr: IpAddr, histsize: usize, detailed: usize) -> Self {
+        Self {
+            addr,
+            data: PingTargetInner {
+                rtts: LatencyWindow::new(histsize),
+                recent: PacketHistory::new(detailed),
+                ..Default::default()
+            }
+            .into(),
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -119,7 +138,7 @@ impl Default for PacketRecord {
 /* ---------------------------------------- */
 
 /// Recent history of sent/received packets for a ping target.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct PacketHistory {
     capacity: usize,
     records: VecDeque<PacketRecord>,

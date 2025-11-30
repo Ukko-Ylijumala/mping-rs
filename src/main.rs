@@ -14,10 +14,7 @@ mod utils;
 
 use crate::{
     args::MpConfig,
-    latencywin::LatencyWindow,
-    structs::{
-        PacketHistory, PacketRecord, PingStatus, PingTarget, PingTargetInner, StatsSnapshot,
-    },
+    structs::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     tabulator::simple_tabulate,
     tui::{TerminalGuard, determine_widths, key_event_poll},
     utils::{nice_permission_error, setup_signal_handler},
@@ -38,10 +35,7 @@ use std::{
 use surge_ping::{
     Client, Config, ICMP, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError,
 };
-use tokio::{
-    sync::Mutex,
-    time::{self, Instant, Interval},
-};
+use tokio::time::{self, Instant, Interval};
 
 const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
 
@@ -51,18 +45,7 @@ const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
 fn make_targets(addrs: &[IpAddr], histsize: usize, detailed: usize) -> Vec<Arc<PingTarget>> {
     addrs
         .into_iter()
-        .map(|addr| {
-            Arc::new(PingTarget {
-                addr: *addr,
-                data: Mutex::new(PingTargetInner {
-                    sent: 0,
-                    recv: 0,
-                    rtts: LatencyWindow::new(histsize),
-                    recent: PacketHistory::new(detailed),
-                    status: PingStatus::None,
-                }),
-            })
-        })
+        .map(|addr| Arc::new(PingTarget::new(*addr, histsize, detailed)))
         .collect()
 }
 
