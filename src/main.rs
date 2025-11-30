@@ -55,7 +55,7 @@ async fn update_ping_stats(
     res: Result<(IcmpPacket, Duration), SurgeError>,
     mut rec: PacketRecord,
 ) {
-    let mut stats = tgt.data.lock().await;
+    let mut stats = tgt.data.write();
     match res {
         Ok((_, dur)) => {
             stats.recv += 1;
@@ -103,7 +103,7 @@ async fn ping_loop(
         }
 
         let seq: u16 = {
-            let mut stats = tgt.data.lock().await;
+            let mut stats = tgt.data.write();
             // update sent count here to make sure it's incremented before
             // sending so that the main sent count stays accurate even if
             // ping fails or we get out of order replies etc
@@ -152,7 +152,7 @@ async fn ping_loop(
 async fn extract_stats(tgt: &Arc<PingTarget>) -> (StatsSnapshot, String) {
     // Holding the lock inside this function only should minimize contention.
     // Do all the expensive string formatting in the caller.
-    let stats = tgt.data.lock().await;
+    let stats = tgt.data.read();
     let snap: StatsSnapshot = StatsSnapshot::new_from(&stats);
     // status formatting is cheap relative to float formatting
     (snap, format!("{}", stats.status))

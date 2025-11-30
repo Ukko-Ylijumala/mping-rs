@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::latencywin::LatencyWindow;
+use parking_lot::RwLock;
 use std::{
     collections::VecDeque,
     fmt::Display,
@@ -11,7 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 use surge_ping::SurgeError;
-use tokio::sync::Mutex;
 
 const MICRO_TO_MILLI: f64 = 1e3;
 
@@ -52,7 +52,7 @@ pub(crate) struct PingTargetInner {
 #[derive(Debug)]
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
-    pub data: Mutex<PingTargetInner>,
+    pub data: RwLock<PingTargetInner>,
 }
 
 impl PingTarget {
