@@ -162,8 +162,10 @@ async fn extract_stats(tgt: &Arc<PingTarget>) -> (StatsSnapshot, String) {
 async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec<String>> {
     let mut data: Vec<Vec<String>> = Vec::new();
 
-    for tgt in targets {
-        let (snap, stat) = extract_stats(tgt).await;
+    // Collect all extract_stats futures and run them concurrently, then process results
+    let res = join_all(targets.iter().map(|t| extract_stats(t))).await;
+
+    for (tgt, (snap, stat)) in targets.iter().zip(res.into_iter()) {
         let status: String = if debug {
             match &snap.error {
                 Some(e) => e.to_string(),
