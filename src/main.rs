@@ -24,6 +24,7 @@ use crate::{
 };
 
 use futures::future::join_all;
+use miniutils::ProcessInfo;
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
 use std::{
@@ -211,6 +212,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
+    let pinfo: ProcessInfo = ProcessInfo::new();
 
     // Pinger clients
     // sharing a client across multiple targets is safe and allows socket reuse
@@ -304,11 +306,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 width: tbl_req_w,
                 height: tbl_req_h,
             };
+            let proc_area = Rect {
+                x: 0,
+                y: area.height - 1,
+                width: area.width,
+                height: 1,
+            };
 
-            frame.render_widget(&title, title_area);
-
-            let block =
-                Block::bordered().title(format!(" Ping Statistics - targets: {} ", targets.len()));
+            let block = Block::bordered().title(format!(" Ping targets: {} ", targets.len()));
             let hdr_row = headers
                 .iter()
                 .map(|h| {
@@ -330,7 +335,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .column_spacing(colspacing)
                 .block(block);
 
+            let procinfo = Paragraph::new(format!(
+                "pid: {} | mem: {} | CPU: {}",
+                pinfo.pid,
+                pinfo.mem_str(),
+                pinfo.cpu_str()
+            ))
+            .alignment(Alignment::Right);
+
+            frame.render_widget(&title, title_area);
             frame.render_widget(table, table_area);
+            frame.render_widget(procinfo, proc_area);
             next_refresh += guard.interval;
         })?;
     }
