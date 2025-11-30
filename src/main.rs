@@ -41,10 +41,38 @@ const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Setup [surge_ping::Client] instances for IPv4 and IPv6 as needed.
+///
+/// Sharing a client across multiple targets is (async) safe and allows socket reuse.
+fn setup_clients(
+    addrs: &[IpAddr],
+) -> Result<(Option<Arc<Client>>, Option<Arc<Client>>), Box<dyn std::error::Error>> {
+    // IPv4 client
+    let v4: Option<Arc<Client>> = if addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
+        match Client::new(&Config::default()) {
+            Ok(c) => Some(Arc::new(c)),
+            Err(e) => return Err(nice_permission_error(&e, "v4")),
+        }
+    } else {
+        None
+    };
+
+    // IPv6 client
+    let v6: Option<Arc<Client>> = if addrs.iter().any(|a: &IpAddr| a.is_ipv6()) {
+        match Client::new(&Config::builder().kind(ICMP::V6).build()) {
+            Ok(c) => Some(Arc::new(c)),
+            Err(e) => return Err(nice_permission_error(&e, "v6")),
+        }
+    } else {
+        None
+    };
+    Ok((v4, v6))
+}
+
 /// Create [PingTarget] instances for each IP address.
 fn make_targets(addrs: &[IpAddr], histsize: usize, detailed: usize) -> Vec<Arc<PingTarget>> {
     addrs
-        .into_iter()
+        .iter()
         .map(|addr| Arc::new(PingTarget::new(*addr, histsize, detailed)))
         .collect()
 }
@@ -260,29 +288,12 @@ fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<S
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
-
-    // Pinger clients
-    // sharing a client across multiple targets is safe and allows socket reuse
-    let client_v4: Option<Arc<Client>> = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
-        match Client::new(&Config::default()) {
-            Ok(c) => Some(Arc::new(c)),
-            Err(e) => return Err(nice_permission_error(&e, "v4")),
-        }
-    } else {
-        None
-    };
-    let client_v6: Option<Arc<Client>> = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv6()) {
-        let cfg: Config = Config::builder().kind(ICMP::V6).build();
-        match Client::new(&cfg) {
-            Ok(c) => Some(Arc::new(c)),
-            Err(e) => return Err(nice_permission_error(&e, "v6")),
-        }
-    } else {
-        None
-    };
+    let (c_v4, c_v6) = setup_clients(&conf.addrs)?;
 
     let mut app: AppState<'static> = AppState {
         pi: ProcessInfo::new(),
+        c_v4,
+        c_v6,
         targets: make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize),
         title: Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
             .alignment(Alignment::Center)
@@ -305,8 +316,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     for tgt in &app.targets {
         let client = match tgt.addr {
-            IpAddr::V4(_) => client_v4.as_ref().expect("IPv4 client missing"),
-            IpAddr::V6(_) => client_v6.as_ref().expect("IPv6 client missing"),
+            IpAddr::V4(_) => app.c_v4.as_ref().expect("IPv4 client missing"),
+            IpAddr::V6(_) => app.c_v6.as_ref().expect("IPv6 client missing"),
         };
         app.tasks.push(tokio::spawn(ping_loop(
             tgt.clone(),

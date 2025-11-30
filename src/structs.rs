@@ -12,13 +12,15 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use surge_ping::SurgeError;
+use surge_ping::{Client, SurgeError};
 
 const MICRO_TO_MILLI: f64 = 1e3;
 
 /// Main application state structure.
 pub(crate) struct AppState<'a> {
     pub pi: miniutils::ProcessInfo,
+    pub c_v4: Option<Arc<Client>>,
+    pub c_v6: Option<Arc<Client>>,
     pub targets: Vec<Arc<PingTarget>>,
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
     pub title: ratatui::widgets::Paragraph<'a>,
