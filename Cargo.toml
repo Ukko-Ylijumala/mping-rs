@@ -1,6 +1,6 @@
 [package]
 name = "mping"
-version = "0.2.5"
+version = "0.2.6"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Multi-pinger utility written in Rust"
 readme = "README.md"
@@ -30,3 +30,12 @@ features = ["full"]
 [dependencies.clap]
 version = "4.5"
 features = ["cargo", "derive"]
+
+[dependencies.miniutils]
+git = "https://github.com/Ukko-Ylijumala/miniutils-rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+# Enable to make release builds include debug info
+#debug = true
