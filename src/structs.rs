@@ -308,8 +308,9 @@ impl Index<usize> for PacketHistory {
 pub(crate) struct HistorySnapshot {
     pub start_seq: u16,
     pub end_seq: u16,
-    pub resp_seq_nums: Vec<u16>,
-    pub loss_count: usize,
+    pub gaps_in_seqs: bool,
+    pub last_out_of_order: bool,
+    pub recent_losses: usize,
     pub loss_pct: f64,
     pub min: Option<Duration>,
     pub max: Option<Duration>,
@@ -319,6 +320,31 @@ pub(crate) struct HistorySnapshot {
 impl HistorySnapshot {
     /// Extract recent history statistics from [PacketHistory].
     fn new_from(data: &PacketHistory) -> Self {
+        let inspect_win: usize = 10;
+
+        let gaps_in_seqs: bool = {
+            let mut expected_seq: Option<u16> = None;
+            let mut gaps: bool = false;
+            for rec in data.iter().rev().take(inspect_win) {
+                if let Some(exp) = expected_seq {
+                    if rec.seq + 1 != exp {
+                        gaps = true;
+                        break;
+                    }
+                }
+                expected_seq = Some(rec.seq);
+            }
+            gaps
+        };
+
+        let last_out_of_order: bool = if data.len() >= 2 {
+            let last: u16 = data.last().unwrap().seq;
+            let second_last: u16 = data.iter().rev().nth(1).unwrap().seq;
+            last < second_last
+        } else {
+            false
+        };
+
         Self {
             start_seq: match data.first() {
                 Some(pr) => pr.seq,
@@ -329,18 +355,9 @@ impl HistorySnapshot {
                 None => 0,
             },
 
-            resp_seq_nums: data
-                .iter()
-                .filter_map(|pr: &PacketRecord| {
-                    if pr.has_response() {
-                        Some(pr.seq)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-
-            loss_count: data.recent_losses(data.len()),
+            gaps_in_seqs,
+            last_out_of_order,
+            recent_losses: data.recent_losses(inspect_win),
             loss_pct: data.loss(),
 
             min: match data.min() {
