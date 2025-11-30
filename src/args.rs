@@ -60,9 +60,19 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u32).range(60..65536),
         default_value = "3600",
-        help = "History size (number of ping results to keep)"
+        help = "History size (number of ping results to keep per target)"
     )]
     pub histsize: u32,
+
+    #[arg(
+        long,
+        value_name = "NUM",
+        required = false,
+        value_parser = value_parser!(u16).range(10..1000),
+        default_value = "100",
+        help = "Detailed recent history size (for laggy/flappy detection etc)"
+    )]
+    pub detailed: u16,
 
     #[arg(long, short = 'v', help = "Increase output verbosity")]
     pub verbose: bool,
