@@ -9,11 +9,37 @@ use std::{
     fmt::Display,
     net::IpAddr,
     ops::Index,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use surge_ping::SurgeError;
 
 const MICRO_TO_MILLI: f64 = 1e3;
+
+/// Main application state structure.
+pub(crate) struct AppState<'a> {
+    pub pi: miniutils::ProcessInfo,
+    pub targets: Vec<Arc<PingTarget>>,
+    pub tasks: Vec<tokio::task::JoinHandle<()>>,
+    pub title: ratatui::widgets::Paragraph<'a>,
+    pub headers: Vec<&'static str>,
+    pub header_widths: Vec<usize>,
+    pub colspacing: u16,
+    pub interval: Duration,
+    pub next_refresh: RwLock<tokio::time::Instant>,
+    pub verbose: bool,
+    pub debug: bool,
+}
+
+impl AppState<'_> {
+    /// Do any final calculations needed after initialization.
+    pub fn build(mut self) -> Self {
+        self.header_widths = self.headers.iter().map(|h| h.len()).collect();
+        self
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Default)]
 pub(crate) enum PingStatus {
