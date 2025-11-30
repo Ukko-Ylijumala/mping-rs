@@ -29,7 +29,7 @@ pub struct TerminalGuard {
 }
 
 impl TerminalGuard {
-    pub fn new(interval_ms: u64, verbose: bool) -> Result<Self> {
+    pub fn new(interval_ms: u128, verbose: bool) -> Result<Self> {
         if verbose {
             let hz: f64 = 1e3 / interval_ms as f64;
             eprintln!("Initializing terminal UI (display refresh rate: {hz:.1} Hz)...");
