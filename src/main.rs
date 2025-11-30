@@ -15,7 +15,9 @@ mod utils;
 use crate::{
     args::MpConfig,
     latencywin::LatencyWindow,
-    structs::{PingStatus, PingTarget, PingTargetInner, StatsSnapshot},
+    structs::{
+        PacketHistory, PacketRecord, PingStatus, PingTarget, PingTargetInner, StatsSnapshot,
+    },
     tabulator::simple_tabulate,
     tui::{TerminalGuard, determine_widths, key_event_poll},
     utils::{nice_permission_error, setup_signal_handler},
@@ -42,8 +44,8 @@ use tokio::{
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Create PingTarget instances for each IP address.
-fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
+/// Create [PingTarget] instances for each IP address.
+fn make_targets(addrs: &[IpAddr], histsize: usize, detailed: usize) -> Vec<Arc<PingTarget>> {
     addrs
         .into_iter()
         .map(|addr| {
@@ -53,6 +55,7 @@ fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
                     sent: 0,
                     recv: 0,
                     rtts: LatencyWindow::new(histsize),
+                    recent: PacketHistory::new(detailed),
                     status: PingStatus::None,
                 }),
             })
@@ -61,13 +64,18 @@ fn make_targets(addrs: &[IpAddr], histsize: usize) -> Vec<Arc<PingTarget>> {
 }
 
 /// Update ping statistics based on the result. Separated into fn for target lock granularity.
-async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Duration), SurgeError>) {
+async fn update_ping_stats(
+    tgt: &Arc<PingTarget>,
+    res: Result<(IcmpPacket, Duration), SurgeError>,
+    mut rec: PacketRecord,
+) {
     let mut stats = tgt.data.lock().await;
     match res {
         Ok((_, dur)) => {
             stats.recv += 1;
             stats.rtts.push(dur.as_micros() as u32);
             stats.status = PingStatus::Ok;
+            rec.set_rtt(dur);
         }
         Err(e) => {
             stats.status = match e {
@@ -82,6 +90,7 @@ async fn update_ping_stats(tgt: &Arc<PingTarget>, res: Result<(IcmpPacket, Durat
             };
         }
     };
+    stats.recent.push(rec);
 }
 
 /// Set up a ping loop for each target.
@@ -145,8 +154,9 @@ async fn ping_loop(
                 false => payload.clone(),
             };
             tokio::spawn(async move {
+                let rec: PacketRecord = PacketRecord::new(seq);
                 let res = pinger.ping(PingSequence(seq), &pl).await;
-                update_ping_stats(&tgt_clone, res).await;
+                update_ping_stats(&tgt_clone, res, rec).await;
             });
             next_ping += loop_interval;
         }
@@ -224,7 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Spawn ping tasks
     let payload: Arc<[u8]> = vec![0u8; conf.size as usize].into();
-    let targets: Vec<Arc<PingTarget>> = make_targets(&conf.addrs, conf.histsize as usize);
+    let targets: Vec<Arc<PingTarget>> =
+        make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize);
     let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
     let mut tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     for tgt in &targets {
