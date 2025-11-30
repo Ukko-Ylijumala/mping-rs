@@ -43,6 +43,8 @@ use tokio::{
     time::{self, Instant, Interval},
 };
 
+const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
+
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Create [PingTarget] instances for each IP address.
@@ -103,8 +105,7 @@ async fn ping_loop(
     payload: Arc<[u8]>,
 ) {
     let id: PingIdentifier = PingIdentifier(random());
-    let mut ticker: Interval = time::interval(Duration::from_millis(10));
-    let loop_interval: Duration = conf.interval;
+    let mut ticker: Interval = time::interval(conf.interval.min(DEFAULT_TICK));
     let mut next_ping: Instant = tokio::time::Instant::now();
     let mut payload: Arc<[u8]> = match conf.randomize {
         // create a new payload for the ping loop which we can randomize
@@ -112,55 +113,55 @@ async fn ping_loop(
         false => payload.clone(),
     };
 
-    loop {
+    while !quit.load(Ordering::Relaxed) {
         ticker.tick().await;
-        if quit.load(Ordering::Relaxed) {
-            break;
+        if tokio::time::Instant::now() < next_ping {
+            continue;
         }
 
-        if tokio::time::Instant::now() >= next_ping {
-            let seq: u16 = {
-                let mut stats = tgt.data.lock().await;
-                // update sent count here to make sure it's incremented before
-                // sending so that the main sent count stays accurate even if
-                // ping fails or we get out of order replies etc
-                let sent: u64 = stats.sent;
-                stats.sent += 1;
-                // calculate the 16-bit sequence number from sent count,
-                // since 2^16 is the max for ICMP sequence numbers
-                (sent % 65536) as u16
-            };
+        let seq: u16 = {
+            let mut stats = tgt.data.lock().await;
+            // update sent count here to make sure it's incremented before
+            // sending so that the main sent count stays accurate even if
+            // ping fails or we get out of order replies etc
+            let sent: u64 = stats.sent;
+            stats.sent += 1;
+            // calculate the 16-bit sequence number from sent count,
+            // since 2^16 is the max for ICMP sequence numbers
+            (sent % 65536) as u16
+        };
 
-            // The async ping task can be spawned either using a closure, or an
-            // async fn block. Both should be functionally equivalent.
-            // In either case the pinger is created anew for each async context.
-            //
-            // Function style (saved for reference):
-            // tokio::spawn(ping(client.clone(), tgt.clone(), conf.timeout, id, seq));
-            //
-            let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
-            pinger.timeout(conf.timeout);
-            let tgt_clone: Arc<PingTarget> = tgt.clone();
-            let pl: Arc<[u8]> = match conf.randomize {
-                true => {
-                    let payload: &mut [u8] = Arc::make_mut(&mut payload);
-                    // Can't use a thread-local RNG here (for performance)
-                    // because it's not Send'able across await points.
-                    // However, we can spare CPU time by randomizing only
-                    // the first 32 bytes of the payload, which should be plenty.
-                    // And we already know the payload must be 32 bytes minimum.
-                    fill(&mut payload[..32]);
-                    payload.into()
-                }
-                false => payload.clone(),
-            };
-            tokio::spawn(async move {
-                let rec: PacketRecord = PacketRecord::new(seq);
-                let res = pinger.ping(PingSequence(seq), &pl).await;
-                update_ping_stats(&tgt_clone, res, rec).await;
-            });
-            next_ping += loop_interval;
-        }
+        // The async ping task can be spawned either using a closure, or an
+        // async fn block. Both should be functionally equivalent.
+        // In either case the pinger is created anew for each async context.
+        //
+        // Function style (saved for reference):
+        // tokio::spawn(ping(client.clone(), tgt.clone(), conf.timeout, id, seq));
+        //
+        let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
+        pinger.timeout(conf.timeout);
+        let tgt_clone: Arc<PingTarget> = tgt.clone();
+        let pl: Arc<[u8]> = match conf.randomize {
+            true => {
+                let payload: &mut [u8] = Arc::make_mut(&mut payload);
+                // Can't use a thread-local RNG here (for performance)
+                // because it's not Send'able across await points.
+                // However, we can spare CPU time by randomizing only
+                // the first 32 bytes of the payload, which should be plenty.
+                // And we already know the payload must be 32 bytes minimum.
+                fill(&mut payload[..32]);
+                payload.into()
+            }
+            false => payload.clone(),
+        };
+
+        tokio::spawn(async move {
+            let rec: PacketRecord = PacketRecord::new(seq);
+            let res = pinger.ping(PingSequence(seq), &pl).await;
+            update_ping_stats(&tgt_clone, res, rec).await;
+        });
+
+        next_ping += conf.interval;
     }
 }
 
@@ -271,16 +272,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let colspacing: u16 = 2;
 
     // Set up timers
-    let mut tick: Interval = time::interval(Duration::from_millis(50)); // 20 Hz
+    let mut tick: Interval = time::interval(DEFAULT_TICK);
     let mut next_refresh: Instant = tokio::time::Instant::now();
 
     // Main display loop
-    loop {
+    while !quit.load(Ordering::Relaxed) {
         tick.tick().await;
         key_event_poll(0, &quit)?;
-        if quit.load(Ordering::Relaxed) {
-            break;
-        }
         if tokio::time::Instant::now() < next_refresh {
             continue;
         }
