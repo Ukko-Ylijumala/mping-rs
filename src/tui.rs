@@ -25,7 +25,6 @@ use std::{
 /// - restores the normal terminal on drop (automatic cleanup)
 pub struct TerminalGuard {
     pub term: Terminal<CrosstermBackend<Stdout>>,
-    pub interval: Duration,
     verbose: bool,
 }
 
@@ -44,7 +43,6 @@ impl TerminalGuard {
 
         Ok(Self {
             term: Terminal::new(CrosstermBackend::new(stdout))?,
-            interval: Duration::from_millis(interval_ms),
             verbose,
         })
     }
