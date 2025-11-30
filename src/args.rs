@@ -19,6 +19,15 @@ pub(crate) struct MpConfig {
 
     #[arg(
         long,
+        value_name = "IP1[,IP2...]",
+        value_delimiter = ',',
+        require_equals = true,
+        help = "Comma-separated IP addresses (and/or ranges) to exclude"
+    )]
+    pub exclude: Vec<String>,
+
+    #[arg(
+        long,
         short = 'I',
         value_name = "SECS",
         required = false,
@@ -125,13 +134,51 @@ impl MpConfig {
         // Remove duplicates while preserving order
         let mut seen: HashSet<IpAddr> = HashSet::new();
         all_addrs.retain(|ip: &IpAddr| seen.insert(*ip));
-        config.addrs = all_addrs;
 
+        // Parse exclusions and expand them into individual IPs
+        let mut exclusions: HashSet<IpAddr> = HashSet::new();
+        for exc in &config.exclude {
+            match parse_ip_or_range(exc) {
+                Ok(mut ips) => {
+                    if config.verbose {
+                        if ips.len() > 1 {
+                            eprintln!("Expanded '{exc}' to {} addresses (exclusion)", ips.len());
+                        }
+                    }
+                    exclusions.extend(ips.drain(..));
+                }
+                Err(e) => {
+                    eprintln!("Error parsing exclusion '{exc}': {e}");
+                    process::exit(1);
+                }
+            }
+        }
+
+        // Apply exclusions if needed
+        if exclusions.len() > 0 {
+            // let's see if we actually exclude anything
+            let remainder: HashSet<IpAddr> = &seen - &exclusions;
+            if &remainder == &seen {
+                eprintln!("WARN: exclusions did not match any target addresses.");
+            } else if remainder.is_empty() {
+                eprintln!("All target addresses were excluded.");
+                process::exit(1);
+            } else {
+                if config.verbose {
+                    eprintln!(
+                        "Excluding {} addresses from target list",
+                        (seen.len() - remainder.len())
+                    );
+                }
+                all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
+            }
+        }
+
+        config.addrs = all_addrs;
         if config.addrs.is_empty() {
             eprintln!("No valid IP addresses provided.");
             process::exit(1);
-        }
-        if config.verbose {
+        } else if config.verbose {
             eprintln!("Total unique addresses to monitor: {}", config.addrs.len());
         }
 
