@@ -204,7 +204,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
         };
 
         // Do all the (expensive) string formatting after releasing the lock.
-        data.push(vec![
+        let mut row: Vec<String> = vec![
             tgt.addr.to_string(),
             snap.sent.to_string(),
             snap.recv.to_string(),
@@ -215,7 +215,11 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
             snap.max_str(),
             snap.stdev_str(),
             status,
-        ]);
+        ];
+        if debug {
+            row.push(snap.hist.end_seq.to_string());
+        }
+        data.push(row);
     }
 
     data
@@ -289,6 +293,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
     let (c_v4, c_v6) = setup_clients(&conf.addrs)?;
 
+    let mut headers: Vec<&str> = vec![
+        "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
+    ];
+    if conf.debug {
+        headers.push("Seq");
+    }
     let mut app: AppState<'static> = AppState {
         pi: ProcessInfo::new(),
         c_v4,
@@ -298,9 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tbl_title: Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
             .alignment(Alignment::Center)
             .style(Style::new().bold().green()),
-        tbl_hdrs: vec![
-            "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
-        ],
+        tbl_hdrs: headers,
         tbl_colsp: 2,
         tbl_hdr_width: vec![],
         ui_interval: Duration::from_millis(conf.refresh), // main display refresh interval
