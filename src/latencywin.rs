@@ -216,6 +216,12 @@ impl LatencyWindow {
         Ok(self.stdev)
     }
 
+    /// Mean value (aka. average).
+    pub fn mean(&self) -> Result<f64, String> {
+        self.no_samples_check()?;
+        Ok(self.sum / self.len as f64)
+    }
+
     /// Computes sample standard deviation over the last `n` samples.
     ///
     /// Uses Bessel's correction (N-1 divisor) for unbiased sample variance.
