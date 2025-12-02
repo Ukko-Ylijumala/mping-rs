@@ -89,7 +89,9 @@ pub(crate) enum PingStatus {
     Timeout,
     NotReachable,
     Error(SurgeError),
-    //Laggy,
+    Laggy,
+    Lossy,
+    Flappy,
     #[default]
     None,
 }
@@ -101,7 +103,9 @@ impl Display for PingStatus {
             PingStatus::Timeout => write!(f, "timeout"),
             PingStatus::NotReachable => write!(f, "unreachable"),
             PingStatus::Error(_) => write!(f, "error"),
-            //PingStatus::Laggy => write!(f, "laggy"),
+            PingStatus::Laggy => write!(f, "laggy"),
+            PingStatus::Lossy => write!(f, "lossy"),
+            PingStatus::Flappy => write!(f, "flapping"),
             PingStatus::None => write!(f, "-"),
         }
     }
