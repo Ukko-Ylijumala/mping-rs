@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{args::MpConfig, latencywin::LatencyWindow};
+use itertools::Itertools;
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
 use std::{
@@ -116,6 +117,22 @@ pub(crate) struct PingTargetInner {
     pub status: PingStatus,
 }
 
+impl PingTargetInner {
+    pub fn is_lossy(&self, n: usize, threshold: f64) -> bool {
+        self.recent.recent_losses(n) as f64 / n as f64 >= threshold
+    }
+
+    pub fn is_flappy(&self, n: usize, threshold: usize) -> bool {
+        self.recent.recent_transitions(n) >= threshold
+    }
+
+    pub fn is_laggy(&self, n: usize, threshold: f64) -> Result<bool, String> {
+        let long_mean: f64 = self.rtts.mean().map(|m: f64| m).unwrap_or(0.0);
+        let recent_mean: Duration = self.recent.mean(Some(n))?;
+        Ok(recent_mean.as_micros() as f64 > long_mean * threshold)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
@@ -136,6 +153,24 @@ impl PingTarget {
                 ..Default::default()
             }
             .into(),
+        }
+    }
+
+    /// Whether recent packet loss of las N packets exceeds the specified threshold.
+    pub fn is_lossy(&self, n: usize, threshold: f64) -> bool {
+        self.data.read().is_lossy(n, threshold)
+    }
+
+    /// Whether recent packet history shows flappiness (frequent up/down transitions)
+    pub fn is_flappy(&self, n: usize, threshold: usize) -> bool {
+        self.data.read().is_flappy(n, threshold)
+    }
+
+    /// Whether recent N RTTs are significantly above historical mean.
+    pub fn is_laggy(&self, n: usize, threshold_factor: f64) -> bool {
+        match self.data.read().is_laggy(n, threshold_factor) {
+            Ok(v) => v,
+            Err(_) => false,
         }
     }
 }
@@ -294,6 +329,17 @@ impl PacketHistory {
             .count()
     }
 
+    /// Transitions between "responding" and "not responding" in last N records
+    pub fn recent_transitions(&self, n: usize) -> usize {
+        self.iter()
+            .rev()
+            .take(n)
+            .map(|r| r.has_response())
+            .tuple_windows()
+            .filter(|(a, b)| a != b)
+            .count()
+    }
+
     /// Determine the minimum RTT in the history.
     pub fn min(&self) -> Result<Duration, String> {
         if self.is_empty() {
@@ -326,23 +372,33 @@ impl PacketHistory {
         }
     }
 
-    /// Calculate the mean (average) RTT in the history.
-    pub fn mean(&self) -> Result<Duration, String> {
+    /// Calculate the mean (average) RTT in the history (or given N-sized window).
+    pub fn mean(&self, n: Option<usize>) -> Result<Duration, String> {
         if self.is_empty() {
             return Err("No records to calculate mean RTT".to_string());
         }
+        if n.is_some_and(|s: usize| s > self.len()) {
+            return Err("Window size exceeds history length".to_string());
+        }
 
-        let rtts: Vec<Duration> = self
-            .iter()
-            .filter_map(|rec: &PacketRecord| rec.rtt().ok())
-            .collect();
+        let rtts: Vec<Duration> = match n {
+            None => self
+                .iter()
+                .filter_map(|rec: &PacketRecord| rec.rtt().ok())
+                .collect(),
+            Some(ws) => self
+                .iter()
+                .rev()
+                .take(ws)
+                .filter_map(|rec: &PacketRecord| rec.rtt().ok())
+                .collect(),
+        };
 
         if rtts.is_empty() {
             return Err("No valid RTTs to calculate mean".to_string());
         }
 
-        let total: Duration = rtts.iter().sum();
-        Ok(total / rtts.len() as u32)
+        Ok(rtts.iter().sum::<Duration>() / rtts.len() as u32)
     }
 }
 
@@ -454,7 +510,7 @@ impl HistorySnapshot {
                 Ok(v) => Some(v),
                 Err(_) => None,
             },
-            mean: match data.mean() {
+            mean: match data.mean(None) {
                 Ok(v) => Some(v),
                 Err(_) => None,
             },
