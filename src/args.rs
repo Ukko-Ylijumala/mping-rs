@@ -155,10 +155,10 @@ impl MpConfig {
         }
 
         // Apply exclusions if needed
-        if exclusions.len() > 0 {
+        if !exclusions.is_empty() {
             // let's see if we actually exclude anything
             let remainder: HashSet<IpAddr> = &seen - &exclusions;
-            if &remainder == &seen {
+            if remainder == seen {
                 eprintln!("WARN: exclusions did not match any target addresses.");
             } else if remainder.is_empty() {
                 eprintln!("All target addresses were excluded.");
