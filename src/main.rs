@@ -21,7 +21,6 @@ use crate::{
 };
 
 use futures::future::join_all;
-use miniutils::ProcessInfo;
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
 use std::{
@@ -281,7 +280,7 @@ fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<S
     ))
     .alignment(Alignment::Right);
 
-    frame.render_widget(&state.tbl_title, title_area);
+    frame.render_widget(&state.title, title_area);
     frame.render_widget(table, table_area);
     frame.render_widget(procinfo, proc_area);
 }
@@ -293,30 +292,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
     let (c_v4, c_v6) = setup_clients(&conf.addrs)?;
 
-    let mut headers: Vec<&str> = vec![
-        "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
-    ];
-    if conf.debug {
-        headers.push("Seq");
-    }
     let mut app: AppState<'static> = AppState {
-        pi: ProcessInfo::new(),
         c_v4,
         c_v6,
-        tasks: vec![],
         targets: make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize),
-        tbl_title: Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
-            .alignment(Alignment::Center)
-            .style(Style::new().bold().green()),
-        tbl_hdrs: headers,
-        tbl_colsp: 2,
-        tbl_hdr_width: vec![],
-        ui_interval: Duration::from_millis(conf.refresh), // main display refresh interval
-        ui_next_refresh: tokio::time::Instant::now().into(),
-        verbose: conf.verbose,
-        debug: conf.debug,
+        title: Some(
+            Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
+                .alignment(Alignment::Center)
+                .style(Style::new().bold().green()),
+        ),
+        ..Default::default()
     }
-    .build();
+    .build(&conf);
 
     // Spawn ping tasks
     let payload: Arc<[u8]> = vec![0u8; conf.size as usize].into();

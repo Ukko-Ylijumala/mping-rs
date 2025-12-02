@@ -2,7 +2,8 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::latencywin::LatencyWindow;
+use crate::{args::MpConfig, latencywin::LatencyWindow};
+use miniutils::ProcessInfo;
 use parking_lot::RwLock;
 use std::{
     collections::VecDeque,
@@ -15,6 +16,7 @@ use std::{
 use surge_ping::{Client, SurgeError};
 
 const MICRO_TO_MILLI: f64 = 1e3;
+const DEFAULT_REFRESH: Duration = Duration::from_millis(250);
 
 /// Main application state structure.
 pub(crate) struct AppState<'a> {
@@ -23,7 +25,7 @@ pub(crate) struct AppState<'a> {
     pub c_v6: Option<Arc<Client>>,
     pub targets: Vec<Arc<PingTarget>>,
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
-    pub tbl_title: ratatui::widgets::Paragraph<'a>,
+    pub title: Option<ratatui::widgets::Paragraph<'a>>,
     /// Table headers
     pub tbl_hdrs: Vec<&'static str>,
     /// Precomputed visible widths of table headers
@@ -40,9 +42,41 @@ pub(crate) struct AppState<'a> {
 
 impl AppState<'_> {
     /// Do any final calculations needed after initialization.
-    pub fn build(mut self) -> Self {
+    pub fn build(mut self, conf: &Arc<MpConfig>) -> Self {
+        self.debug = conf.debug;
+        self.verbose = conf.verbose;
+        if self.ui_interval != DEFAULT_REFRESH {
+            self.ui_interval = Duration::from_millis(conf.refresh);
+        }
+
+        if self.debug {
+            self.tbl_hdrs.push("Seq");
+        }
         self.tbl_hdr_width = self.tbl_hdrs.iter().map(|h| h.len()).collect();
+
         self
+    }
+}
+
+impl Default for AppState<'_> {
+    fn default() -> Self {
+        Self {
+            pi: ProcessInfo::new(),
+            c_v4: None,
+            c_v6: None,
+            targets: vec![],
+            tasks: vec![],
+            title: None,
+            tbl_hdrs: vec![
+                "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
+            ],
+            tbl_hdr_width: vec![],
+            tbl_colsp: 2,
+            ui_interval: DEFAULT_REFRESH,
+            ui_next_refresh: tokio::time::Instant::now(),
+            verbose: false,
+            debug: false,
+        }
     }
 }
 
