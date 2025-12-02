@@ -413,7 +413,7 @@ impl HistorySnapshot {
             let mut gaps: bool = false;
             for rec in data.iter().rev().take(inspect_win) {
                 if let Some(exp) = expected_seq {
-                    if rec.seq + 1 != exp {
+                    if rec.seq.wrapping_add(1) != exp {
                         gaps = true;
                         break;
                     }
