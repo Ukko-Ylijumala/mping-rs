@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{args::MpConfig, latencywin::LatencyWindow};
+use crate::{args::MpConfig, latencywin::LatencyWindow, tui::AppLayout};
 use itertools::Itertools;
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
@@ -26,6 +26,7 @@ pub(crate) struct AppState<'a> {
     pub c_v6: Option<Arc<Client>>,
     pub targets: Vec<Arc<PingTarget>>,
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
+    pub layout: Option<AppLayout>,
     pub title: Option<ratatui::widgets::Paragraph<'a>>,
     /// Table headers
     pub tbl_hdrs: Vec<&'static str>,
@@ -67,6 +68,7 @@ impl Default for AppState<'_> {
             c_v6: None,
             targets: vec![],
             tasks: vec![],
+            layout: None,
             title: None,
             tbl_hdrs: vec![
                 "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",

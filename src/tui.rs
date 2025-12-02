@@ -8,7 +8,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend, layout::Constraint};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::{Constraint, Rect}};
 use std::{
     io::{Result, Stdout, stdout},
     panic,
@@ -18,6 +18,18 @@ use std::{
     },
     time::Duration,
 };
+
+/// Layout structure for Ratatui frames
+pub(crate) struct AppLayout {
+    /// Full frame area
+    pub area: Rect,
+    /// Title bar - top line
+    pub title: Rect,
+    /// Main table area
+    pub table: Rect,
+    /// Status bar area - bottom line
+    pub status: Rect,
+}
 
 /// RAII guard object for TUI console using [ratatui] and [crossterm].
 /// - sets up a panic handler to restore normal terminal on panic
