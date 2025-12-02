@@ -104,6 +104,17 @@ async fn update_ping_stats(
         }
     };
     stats.recent.push(rec);
+
+    // Update status based on recent history if applicable
+    if matches!(stats.status, PingStatus::Ok | PingStatus::Timeout) {
+        if stats.is_flappy(10, 5) {
+            stats.status = PingStatus::Flappy
+        } else if stats.is_lossy(5, 0.5) {
+            stats.status = PingStatus::Lossy
+        } else if stats.is_laggy(10, 2.0).unwrap_or(false) {
+            stats.status = PingStatus::Laggy
+        }
+    }
 }
 
 /// Set up a ping loop for each target.
