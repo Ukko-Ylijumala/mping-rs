@@ -2,7 +2,11 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{args::MpConfig, latencywin::LatencyWindow, tui::AppLayout};
+use crate::{
+    args::MpConfig,
+    latencywin::LatencyWindow,
+    tui::{AppLayout, TableRow},
+};
 use itertools::Itertools;
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
@@ -29,11 +33,7 @@ pub(crate) struct AppState<'a> {
     pub layout: RwLock<AppLayout>,
     pub title: Option<ratatui::widgets::Paragraph<'a>>,
     /// Table headers
-    pub tbl_hdrs: Vec<&'static str>,
-    /// Precomputed visible widths of table headers
-    pub tbl_hdr_width: Vec<usize>,
-    /// Spacing between table columns
-    pub tbl_colsp: u16,
+    pub headers: TableRow,
     /// UI refresh interval
     pub ui_interval: Duration,
     /// Next scheduled UI refresh time
@@ -50,12 +50,9 @@ impl AppState<'_> {
         if self.ui_interval != DEFAULT_REFRESH {
             self.ui_interval = Duration::from_millis(conf.refresh);
         }
-
         if self.debug {
-            self.tbl_hdrs.push("Seq");
+            self.headers.add_item("Seq");
         }
-        self.tbl_hdr_width = self.tbl_hdrs.iter().map(|h| h.len()).collect();
-
         self
     }
 }
@@ -70,11 +67,9 @@ impl Default for AppState<'_> {
             tasks: vec![],
             layout: AppLayout::default().into(),
             title: None,
-            tbl_hdrs: vec![
+            headers: TableRow::from_iter([
                 "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
-            ],
-            tbl_hdr_width: vec![],
-            tbl_colsp: 2,
+            ]),
             ui_interval: DEFAULT_REFRESH,
             ui_next_refresh: tokio::time::Instant::now(),
             verbose: false,
