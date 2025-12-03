@@ -16,7 +16,7 @@ use crate::{
     args::MpConfig,
     structs::{AppState, PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     tabulator::simple_tabulate,
-    tui::{TerminalGuard, determine_widths, key_event_poll},
+    tui::{TableRow, TerminalGuard, determine_widths, key_event_poll},
     utils::{nice_permission_error, setup_signal_handler},
 };
 
@@ -197,8 +197,8 @@ async fn extract_stats(tgt: &Arc<PingTarget>) -> (StatsSnapshot, String) {
 }
 
 /// Gather current data from all targets.
-async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec<String>> {
-    let mut data: Vec<Vec<String>> = Vec::new();
+async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<TableRow> {
+    let mut data: Vec<TableRow> = Vec::with_capacity(targets.len());
 
     // Collect all extract_stats futures and run them concurrently, then process results
     let res = join_all(targets.iter().map(|t| extract_stats(t))).await;
@@ -214,7 +214,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
         };
 
         // Do all the (expensive) string formatting after releasing the lock.
-        let mut row: Vec<String> = vec![
+        let mut row: TableRow = TableRow::from_iter([
             tgt.addr.to_string(),
             snap.sent.to_string(),
             snap.recv.to_string(),
@@ -225,9 +225,9 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
             snap.max_str(),
             snap.stdev_str(),
             status,
-        ];
+        ]);
         if debug {
-            row.push(snap.hist.end_seq.to_string());
+            row.add_item(snap.hist.end_seq.to_string());
         }
         data.push(row);
     }
@@ -236,33 +236,16 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
 }
 
 /// Render the current frame. Display will be updated as soon as this function completes.
-fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<String>]) {
-    let (widths, sum) = determine_widths(&data, Some(&state.tbl_hdr_width));
-    let table_width: u16 = sum as u16 + state.tbl_colsp * (widths.len() as u16);
+fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let layout = &mut state.layout.write();
-    layout.update(frame.area(), table_width);
+    let (widths, sum) = determine_widths(data, Some(&layout.tbl_hdr_widths));
+    layout.update(frame.area(), sum as u16);
 
     let block = Block::bordered().title(format!(" Ping targets: {} ", state.targets.len()));
-    let hdr_row = state
-        .tbl_hdrs
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-        })
-        .collect::<Vec<Cell>>();
 
-    let data_rows = data
-        .iter()
-        .map(|r| Row::new(r.iter().map(|c| Cell::from(c.as_str()))))
-        .collect::<Vec<Row>>();
-
-    let table = Table::new(data_rows, &widths)
-        .header(Row::new(hdr_row))
-        .column_spacing(state.tbl_colsp)
+    let table = Table::new(data.iter().map(|r| Row::new(r.cells())), &widths)
+        .header(Row::new(state.headers.cells()))
+        .column_spacing(layout.tbl_colspacing)
         .block(block);
 
     let procinfo = Paragraph::new(format!(
@@ -298,6 +281,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     .build(&conf);
 
+    // Setup table header style and cache widths. Layout is locked for this block only.
+    {
+        app.headers.set_style_all(Style::new().bold().yellow());
+        let mut layout = app.layout.write();
+        layout.tbl_hdr_widths = app.headers.widths();
+        layout.tbl_colspacing = 2;
+    }
+
     // Spawn ping tasks
     let payload: Arc<[u8]> = vec![0u8; conf.size as usize].into();
     let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
@@ -319,8 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_signal_handler(quit.clone());
     let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval.as_millis(), app.verbose)?;
     let mut tick: Interval = time::interval(DEFAULT_TICK.min(app.ui_interval));
-    let mut data: Vec<Vec<String>> =
-        vec![vec!["".to_string(); app.tbl_hdrs.len()]; app.targets.len()];
+    //let mut data = vec![vec!["".to_string(); app.headers.len()]; app.targets.len()];
 
     // Main display loop
     while !quit.load(Ordering::Relaxed) {
@@ -331,7 +321,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Gather data for display and render the frame
-        data = gather_target_data(&app.targets, app.debug).await;
+        let data: Vec<TableRow> = gather_target_data(&app.targets, app.debug).await;
         guard
             .term
             .draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
@@ -346,7 +336,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     join_all(app.tasks).await;
 
     // Print final stats
-    for line in simple_tabulate(&data, Some(&app.tbl_hdrs)) {
+    for line in simple_tabulate(
+        &gather_target_data(&app.targets, app.debug).await,
+        Some(&app.headers.strings()),
+    ) {
         println!("{line}");
     }
     Ok(())
