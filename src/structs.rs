@@ -26,7 +26,7 @@ pub(crate) struct AppState<'a> {
     pub c_v6: Option<Arc<Client>>,
     pub targets: Vec<Arc<PingTarget>>,
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
-    pub layout: Option<AppLayout>,
+    pub layout: RwLock<AppLayout>,
     pub title: Option<ratatui::widgets::Paragraph<'a>>,
     /// Table headers
     pub tbl_hdrs: Vec<&'static str>,
@@ -68,7 +68,7 @@ impl Default for AppState<'_> {
             c_v6: None,
             targets: vec![],
             tasks: vec![],
-            layout: None,
+            layout: AppLayout::default().into(),
             title: None,
             tbl_hdrs: vec![
                 "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",

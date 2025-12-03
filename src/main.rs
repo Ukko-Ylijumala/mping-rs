@@ -237,28 +237,10 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Vec
 
 /// Render the current frame. Display will be updated as soon as this function completes.
 fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<String>]) {
-    let area: Rect = frame.area();
     let (widths, sum) = determine_widths(&data, Some(&state.tbl_hdr_width));
-    let tbl_req_w: u16 = ((state.tbl_colsp as usize) * (state.tbl_hdrs.len() - 1) + sum + 2) as u16;
-    let tbl_req_h: u16 = (data.len() + 3) as u16; // title + header
-    let title_area = Rect {
-        x: 0,
-        y: 0,
-        width: area.width,
-        height: 1,
-    };
-    let table_area = Rect {
-        x: 0,
-        y: 1,
-        width: tbl_req_w,
-        height: tbl_req_h,
-    };
-    let proc_area = Rect {
-        x: 0,
-        y: area.height - 1,
-        width: area.width,
-        height: 1,
-    };
+    let table_width: u16 = sum as u16 + state.tbl_colsp * (widths.len() as u16);
+    let layout = &mut state.layout.write();
+    layout.update(frame.area(), table_width);
 
     let block = Block::bordered().title(format!(" Ping targets: {} ", state.targets.len()));
     let hdr_row = state
@@ -291,9 +273,9 @@ fn render_frame<'a>(frame: &mut Frame, state: &'a AppState<'a>, data: &'a [Vec<S
     ))
     .alignment(Alignment::Right);
 
-    frame.render_widget(&state.title, title_area);
-    frame.render_widget(table, table_area);
-    frame.render_widget(procinfo, proc_area);
+    frame.render_widget(&state.title, layout.title);
+    frame.render_widget(table, layout.table);
+    frame.render_widget(procinfo, layout.status);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -352,7 +334,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         data = gather_target_data(&app.targets, app.debug).await;
         guard
             .term
-            .draw(|frame: &mut Frame| render_frame(frame, &mut app, &data))?;
+            .draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
         app.ui_next_refresh += app.ui_interval;
     }
 

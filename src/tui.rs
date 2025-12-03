@@ -8,10 +8,15 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{Terminal, backend::CrosstermBackend, layout::{Constraint, Rect}};
+use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
+    layout::{Constraint, Layout, Rect},
+};
 use std::{
     io::{Result, Stdout, stdout},
     panic,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering::Relaxed},
@@ -19,16 +24,78 @@ use std::{
     time::Duration,
 };
 
-/// Layout structure for Ratatui frames
+#[derive(Debug, Default)]
+/// Layout structure for Ratatui frames.
+///
+/// Create the initial layout with [AppLayout::default()], then call
+/// [AppLayout::update()] on each frame render to adjust to any terminal
+/// size changes. Update is a no-op if the size hasn't changed.
+///
+/// Current layot:
+///
+/// ```text
+/// |   title   |  (1 line)
+/// +-----------+
+/// |           |
+/// |  middle   |
+/// |           |
+/// +-----------+
+/// |   status  |  (1 line)
+///
+/// Middle is further divided into two sections with table having priority:
+/// +----------------------+
+/// |               |      |
+/// |  table        | info |
+/// |               |      |
+/// +----------------------+
+/// ```
 pub(crate) struct AppLayout {
     /// Full frame area
-    pub area: Rect,
+    pub frame: Rect,
     /// Title bar - top line
     pub title: Rect,
     /// Main table area
     pub table: Rect,
+    /// Info area (right side)
+    pub info: Rect,
     /// Status bar area - bottom line
     pub status: Rect,
+    tblsize: u16,
+}
+
+impl AppLayout {
+    /// Update the layout based on the full frame area if it has changed.
+    pub fn update(&mut self, frame: Rect, tblsize: u16) {
+        // No need to recalculate if frame size and table size are unchanged
+        if frame == self.frame && tblsize == self.tblsize {
+            return;
+        };
+
+        // Create vertical layout
+        let full: Rc<[Rect]> = Layout::vertical([
+            Constraint::Length(1), // title - 1 line
+            Constraint::Min(1),    // table
+            Constraint::Length(1), // status - 1 line
+        ])
+        .split(frame);
+        let (title, middle, status) = (full[0], full[1], full[2]);
+
+        // split middle into table and info areas with table size being fixed
+        let middle: Rc<[Rect]> = Layout::horizontal([
+            Constraint::Min(tblsize), // table
+            Constraint::Fill(1),      // info
+        ])
+        .split(middle);
+        let (table, info) = (middle[0], middle[1]);
+
+        // Update layout rectangles
+        self.frame = frame;
+        self.title = title;
+        self.table = table;
+        self.info = info;
+        self.status = status;
+        self.tblsize = tblsize;
+    }
 }
 
 /// RAII guard object for TUI console using [ratatui] and [crossterm].
