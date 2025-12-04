@@ -27,7 +27,7 @@ itertools = "0.14"
 
 [dependencies.tokio]
 version = "1.48"
-features = ["full"]
+features = ["rt-multi-thread", "macros", "time", "parking_lot"]
 
 [dependencies.clap]
 version = "4.5"
