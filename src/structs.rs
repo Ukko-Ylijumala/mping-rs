@@ -31,7 +31,7 @@ pub(crate) struct AppState<'a> {
     pub targets: Vec<Arc<PingTarget>>,
     pub tasks: Vec<tokio::task::JoinHandle<()>>,
     pub layout: RwLock<AppLayout>,
-    pub title: Option<ratatui::widgets::Paragraph<'a>>,
+    pub title: Option<ratatui::text::Line<'a>>,
     /// Table headers
     pub headers: TableRow,
     /// UI refresh interval

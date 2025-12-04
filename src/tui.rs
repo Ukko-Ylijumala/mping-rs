@@ -34,7 +34,7 @@ use std::{
 /// [AppLayout::update()] on each frame render to adjust to any terminal
 /// size changes. Update is a no-op if the size hasn't changed.
 ///
-/// Current layot:
+/// Current layout:
 ///
 /// ```text
 /// |   title   |  (1 line)
@@ -67,13 +67,18 @@ pub(crate) struct AppLayout {
     pub tbl_hdr_widths: Vec<usize>,
     /// Spacing between table columns
     pub tbl_colspacing: u16,
+    /// Current column width Constraints
+    pub tbl_constraints: Vec<Constraint>,
     tbl_width: u16,
 }
 
 impl AppLayout {
-    /// Update the layout based on the full frame area if it has changed.
-    pub fn update(&mut self, frame: Rect, tblsize: u16) {
+    /// Update the layout based on the full frame area (if it has changed),
+    /// and the table size (if needed). Updated column [Constraint]s are available
+    /// after this call in `tbl_constraints`.
+    pub fn update(&mut self, frame: Rect, data: &[TableRow]) {
         // No need to recalculate if frame size and table size are unchanged
+        let tblsize: u16 = self.update_col_widths(data);
         if frame == self.frame && tblsize == self.tbl_width {
             return;
         };
@@ -94,7 +99,7 @@ impl AppLayout {
         // split middle into table and info areas with table size being fixed
         let spacing: u16 = self.tbl_colspacing * (self.tbl_hdr_widths.len() as u16 - 1);
         let middle: Rc<[Rect]> = Layout::horizontal([
-            Constraint::Min(self.tbl_width + spacing + 2), // table
+            Constraint::Min(self.tbl_width + spacing + 2), // table + borders
             Constraint::Fill(1),                           // info
         ])
         .split(middle);
@@ -106,6 +111,36 @@ impl AppLayout {
         self.table = table;
         self.info = info;
         self.status = status;
+    }
+
+    /// Update column widths based on data.
+    fn update_col_widths(&mut self, data: &[TableRow]) -> u16 {
+        // Start with header widths as minimums
+        let mut widths: Vec<usize> = self.tbl_hdr_widths.clone();
+        let mut sum_widths: usize = 0;
+
+        for row in data {
+            for (i, item) in row.iter().enumerate() {
+                // Consider existing constraint as minimum (ie. columns can grow but won't shrink)
+                let cur_constr: usize = match self.tbl_constraints.get(i) {
+                    Some(Constraint::Min(n)) => *n as usize,
+                    Some(Constraint::Max(n)) => *n as usize,
+                    Some(Constraint::Length(n)) => *n as usize,
+                    Some(Constraint::Percentage(n)) => *n as usize,
+                    _ => 1,
+                };
+                widths[i] = widths[i].max(item.len().max(cur_constr));
+            }
+        }
+        self.tbl_constraints = widths
+            .iter()
+            .map(|w| {
+                sum_widths += *w;
+                Constraint::Length(*w as u16)
+            })
+            .collect();
+
+        sum_widths as u16
     }
 }
 
@@ -326,35 +361,4 @@ pub(crate) fn key_event_poll(wait_ms: u64, quit: &Arc<AtomicBool>) -> Result<()>
     } else {
         Ok(())
     }
-}
-
-/// Find the maximum width needed for each column. Returns a tuple of:
-/// - Vec of [Constraint]s for each column
-/// - total width sum
-pub(crate) fn determine_widths(
-    data: &[TableRow],
-    header_widths: Option<&Vec<usize>>,
-) -> (Vec<Constraint>, usize) {
-    // Start with header widths as minimums if provided
-    let mut widths: Vec<usize> = match header_widths {
-        None => vec![0; data.iter().map(|row| row.len()).max().unwrap_or(1)],
-        Some(hdrs) => hdrs.clone(),
-    };
-
-    for row in data {
-        for (i, item) in row.iter().enumerate() {
-            widths[i] = widths[i].max(item.len());
-        }
-    }
-
-    let mut sum_widths: usize = 0;
-    let constraints: Vec<Constraint> = widths
-        .iter()
-        .map(|w| {
-            sum_widths += *w;
-            Constraint::Length(*w as u16)
-        })
-        .collect();
-
-    (constraints, sum_widths)
 }

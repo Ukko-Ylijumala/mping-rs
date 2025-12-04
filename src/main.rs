@@ -16,7 +16,7 @@ use crate::{
     args::MpConfig,
     structs::{AppState, PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     tabulator::simple_tabulate,
-    tui::{TableRow, TerminalGuard, determine_widths, key_event_poll},
+    tui::{TableRow, TerminalGuard, key_event_poll},
     utils::{nice_permission_error, setup_signal_handler},
 };
 
@@ -242,15 +242,18 @@ async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration)
 /// Render the current frame. Display will be updated as soon as this function completes.
 fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let layout = &mut state.layout.write();
-    let (widths, sum) = determine_widths(data, Some(&layout.tbl_hdr_widths));
-    layout.update(frame.area(), sum as u16);
+    layout.update(frame.area(), &data);
 
-    let block = Block::bordered().title(format!(" Ping targets: {} ", state.targets.len()));
+    let block =
+        Block::bordered().title_bottom(Line::from(format!(" Targets: {} ", state.targets.len())));
 
-    let table = Table::new(data.iter().map(|r| Row::new(r.cells())), &widths)
-        .header(Row::new(state.headers.cells()))
-        .column_spacing(layout.tbl_colspacing)
-        .block(block);
+    let table = Table::new(
+        data.iter().map(|r| Row::new(r.cells())),
+        &layout.tbl_constraints,
+    )
+    .header(Row::new(state.headers.cells()))
+    .column_spacing(layout.tbl_colspacing)
+    .block(block);
 
     let procinfo = Paragraph::new(format!(
         "CPU: {:>7} | mem: {} | pid: {}",
@@ -277,9 +280,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         c_v6,
         targets: make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize),
         title: Some(
-            Paragraph::new(format!("*** Multi-pinger v{} ***", conf.ver))
-                .alignment(Alignment::Center)
-                .style(Style::new().bold().green()),
+            Line::from(format!("Multi-pinger v{}", conf.ver))
+                .centered()
+                .style(Style::new().bold().on_green()),
         ),
         ..Default::default()
     }
