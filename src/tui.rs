@@ -213,11 +213,9 @@ impl TableRow {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let mut items: Vec<TableItem> = Vec::new();
-        for i in iter {
-            items.push(TableItem::new(i));
+        Self {
+            items: iter.into_iter().map(TableItem::new).collect(),
         }
-        Self { items }
     }
 
     #[inline]
