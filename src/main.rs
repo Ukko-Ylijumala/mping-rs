@@ -17,7 +17,7 @@ use crate::{
     structs::{AppState, PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     tabulator::simple_tabulate,
     tui::{TableRow, TerminalGuard, key_event_poll},
-    utils::{nice_permission_error, setup_signal_handler},
+    utils::setup_signal_handler,
 };
 
 use futures::future::join_all;
@@ -31,42 +31,12 @@ use std::{
     },
     time::Duration,
 };
-use surge_ping::{
-    Client, Config, ICMP, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError,
-};
+use surge_ping::{Client, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError};
 use tokio::time::{self, Instant, Interval};
 
 const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
 
 ////////////////////////////////////////////////////////////////////////////////
-
-/// Setup [surge_ping::Client] instances for IPv4 and IPv6 as needed.
-///
-/// Sharing a client across multiple targets is (async) safe and allows socket reuse.
-fn setup_clients(
-    addrs: &[IpAddr],
-) -> Result<(Option<Arc<Client>>, Option<Arc<Client>>), Box<dyn std::error::Error>> {
-    // IPv4 client
-    let v4: Option<Arc<Client>> = if addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
-        match Client::new(&Config::default()) {
-            Ok(c) => Some(Arc::new(c)),
-            Err(e) => return Err(nice_permission_error(&e, "v4")),
-        }
-    } else {
-        None
-    };
-
-    // IPv6 client
-    let v6: Option<Arc<Client>> = if addrs.iter().any(|a: &IpAddr| a.is_ipv6()) {
-        match Client::new(&Config::builder().kind(ICMP::V6).build()) {
-            Ok(c) => Some(Arc::new(c)),
-            Err(e) => return Err(nice_permission_error(&e, "v6")),
-        }
-    } else {
-        None
-    };
-    Ok((v4, v6))
-}
 
 /// Create [PingTarget] instances for each IP address.
 fn make_targets(addrs: &[IpAddr], histsize: usize, detailed: usize) -> Vec<Arc<PingTarget>> {
@@ -273,20 +243,14 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
-    let (c_v4, c_v6) = setup_clients(&conf.addrs)?;
 
+    let title = Line::from(format!("Multi-pinger v{}", conf.ver));
     let mut app: AppState<'static> = AppState {
-        c_v4,
-        c_v6,
         targets: make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize),
-        title: Some(
-            Line::from(format!("Multi-pinger v{}", conf.ver))
-                .centered()
-                .style(Style::new().bold().on_green()),
-        ),
+        title: Some(title.centered().style(Style::new().bold().on_green())),
         ..Default::default()
     }
-    .build(&conf);
+    .build(&conf)?;
 
     // Setup table header style and cache widths. Layout is locked for this block only.
     {

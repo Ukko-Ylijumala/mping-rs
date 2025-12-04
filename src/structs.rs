@@ -6,6 +6,7 @@ use crate::{
     args::MpConfig,
     latencywin::LatencyWindow,
     tui::{AppLayout, TableRow},
+    utils::nice_permission_error,
 };
 use itertools::Itertools;
 use miniutils::ProcessInfo;
@@ -18,7 +19,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
-use surge_ping::{Client, SurgeError};
+use surge_ping::{Client, Config, ICMP, SurgeError};
 
 const MICRO_TO_MILLI: f64 = 1e3;
 const DEFAULT_REFRESH: Duration = Duration::from_millis(250);
@@ -43,8 +44,13 @@ pub(crate) struct AppState<'a> {
 }
 
 impl AppState<'_> {
-    /// Do any final calculations needed after initialization.
-    pub fn build(mut self, conf: &Arc<MpConfig>) -> Self {
+    /// Build the application state based on the provided configuration.
+    /// - set up UI refresh interval
+    /// - set up [surge_ping::Client] instances for IPv4 and IPv6 as needed
+    ///
+    /// NOTE: sharing a client across multiple targets is (async) safe
+    /// and allows socket reuse.
+    pub fn build(mut self, conf: &Arc<MpConfig>) -> Result<Self, Box<dyn std::error::Error>> {
         self.debug = conf.debug;
         self.verbose = conf.verbose;
         if self.ui_interval != DEFAULT_REFRESH {
@@ -53,7 +59,26 @@ impl AppState<'_> {
         if self.debug {
             self.headers.add_item("Seq");
         }
-        self
+
+        // IPv4 & IPv6 clients
+        self.c_v4 = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
+            match Client::new(&Config::default()) {
+                Ok(c) => Arc::new(c).into(),
+                Err(e) => return Err(nice_permission_error(&e, "v4")),
+            }
+        } else {
+            None
+        };
+        self.c_v6 = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv6()) {
+            match Client::new(&Config::builder().kind(ICMP::V6).build()) {
+                Ok(c) => Arc::new(c).into(),
+                Err(e) => return Err(nice_permission_error(&e, "v6")),
+            }
+        } else {
+            None
+        };
+
+        Ok(self)
     }
 }
 
