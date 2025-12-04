@@ -612,7 +612,7 @@ impl StatsSnapshot {
             },
             hist: HistorySnapshot::new_from(&data.recent),
             latest_seq: data.last_seq,
-            latest_sent: data.last_sent.expect("last_sent should be set"),
+            latest_sent: data.last_sent.unwrap_or(now),
             timeout,
         }
     }
