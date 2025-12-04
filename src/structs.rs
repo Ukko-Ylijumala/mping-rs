@@ -116,6 +116,11 @@ pub(crate) struct PingTargetInner {
     /// Detailed history of recent sent/received packets
     pub recent: PacketHistory,
     pub status: PingStatus,
+    /// Authoritative last sent sequence number
+    pub last_seq: u16,
+    /// Authoritative last sent timestamp. Will be slightly before actual send time. The
+    /// difference can be calculated from [PacketRecord] (with the same sequence number).
+    pub last_sent: Option<Instant>,
 }
 
 impl PingTargetInner {
@@ -451,7 +456,9 @@ impl Index<usize> for PacketHistory {
 /// Snapshot of recent detailed packet history statistics.
 #[derive(Debug)]
 pub(crate) struct HistorySnapshot {
+    /// Starting sequence number from historical data
     pub start_seq: u16,
+    /// Ending sequence number from historical data
     pub end_seq: u16,
     pub gaps_in_seqs: bool,
     pub last_out_of_order: bool,
@@ -540,18 +547,27 @@ pub(crate) struct StatsSnapshot {
     pub error: Option<String>,
     /// History of recent sent/received packets
     pub hist: HistorySnapshot,
+    /// Timestamp of this snapshot.
     pub when: Instant,
+    /// The latest sequence number from master data AT THE TIME OF THIS SNAPSHOT
+    pub latest_seq: u16,
+    /// The instant when the latest packet (latest_seq) was sent
+    pub latest_sent: Instant,
+    timeout: Duration,
 }
 
 impl StatsSnapshot {
     /// Extract a [StatsSnapshot] from [PingTargetInner]
-    pub fn new_from(data: &PingTargetInner) -> Self {
+    ///
+    /// - `timeout` is the overall ping timeout duration.
+    pub fn new_from(data: &PingTargetInner, timeout: Duration) -> Self {
+        let now: Instant = Instant::now();
         let (mean, min, max) = match data.rtts.mean_min_max() {
             Ok((mean, mi, ma)) => (Some(mean), Some(mi), Some(ma)),
             Err(_) => (None, None, None),
         };
         Self {
-            when: Instant::now(),
+            when: now,
             sent: data.sent,
             recv: data.recv,
             mean,
@@ -570,6 +586,9 @@ impl StatsSnapshot {
                 _ => None,
             },
             hist: HistorySnapshot::new_from(&data.recent),
+            latest_seq: data.last_seq,
+            latest_sent: data.last_sent.expect("last_sent should be set"),
+            timeout,
         }
     }
 
@@ -582,12 +601,20 @@ impl StatsSnapshot {
         }
     }
 
+    /// Whether the latest sent packet is still considered "in flight" (not yet timed out).
+    ///
+    /// NOTE: This is based on this snapshot's creation timestamp (`now`), not the current
+    /// time, so it may be slightly out of date. Sufficient for display purposes.
+    fn is_latest_inflight(&self) -> bool {
+        self.timeout > self.when.duration_since(self.latest_sent)
+    }
+
     /// Packet loss as formatted string.
     pub fn loss_str(&self) -> String {
         if self.sent == 0 {
             "-".to_string()
-        } else if (self.sent - self.recv) == 1 {
-            // catch the common case of one receive missing (probably in transit)
+        } else if ((self.sent - self.recv) == 1) && self.is_latest_inflight() {
+            // catch the common case of one receive missing (still in transit)
             "0.0%".to_string()
         } else {
             format!("{:.1}%", 1e2 * self.loss())

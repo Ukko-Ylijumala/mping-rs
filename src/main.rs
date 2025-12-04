@@ -149,7 +149,11 @@ async fn ping_loop(
             stats.sent += 1;
             // calculate the 16-bit sequence number from sent count,
             // since 2^16 is the max for ICMP sequence numbers
-            (sent % 65536) as u16
+            let seq: u16 = (sent % 65536) as u16;
+            // store last sent seq and timestamp for master reference
+            stats.last_seq = seq;
+            stats.last_sent = Some(std::time::Instant::now());
+            seq
         };
 
         // The async ping task can be spawned either using a closure, or an
@@ -187,23 +191,23 @@ async fn ping_loop(
 }
 
 /// Extract statistics data from a target's inner data.
-async fn extract_stats(tgt: &Arc<PingTarget>) -> (StatsSnapshot, String) {
+async fn extract_stats(tgt: &Arc<PingTarget>, to: Duration) -> (StatsSnapshot, String) {
     // Holding the lock inside this function only should minimize contention.
     // Do all the expensive string formatting in the caller.
     let stats = tgt.data.read();
-    let snap: StatsSnapshot = StatsSnapshot::new_from(&stats);
+    let snap: StatsSnapshot = StatsSnapshot::new_from(&stats, to);
     // status formatting is cheap relative to float formatting
     (snap, format!("{}", stats.status))
 }
 
 /// Gather current data from all targets.
-async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<TableRow> {
-    let mut data: Vec<TableRow> = Vec::with_capacity(targets.len());
+async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration) -> Vec<TableRow> {
+    let mut data: Vec<TableRow> = Vec::with_capacity(tgts.len());
 
     // Collect all extract_stats futures and run them concurrently, then process results
-    let res = join_all(targets.iter().map(|t| extract_stats(t))).await;
+    let res = join_all(tgts.iter().map(|t| extract_stats(t, to))).await;
 
-    for (tgt, (snap, stat)) in targets.iter().zip(res.into_iter()) {
+    for (t, (snap, stat)) in tgts.iter().zip(res.into_iter()) {
         let status: String = if debug {
             match &snap.error {
                 Some(e) => e.to_string(),
@@ -215,7 +219,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Tab
 
         // Do all the (expensive) string formatting after releasing the lock.
         let mut row: TableRow = TableRow::from_iter([
-            tgt.addr.to_string(),
+            t.addr.to_string(),
             snap.sent.to_string(),
             snap.recv.to_string(),
             snap.loss_str(),
@@ -227,7 +231,7 @@ async fn gather_target_data(targets: &[Arc<PingTarget>], debug: bool) -> Vec<Tab
             status,
         ]);
         if debug {
-            row.add_item(snap.hist.end_seq.to_string());
+            row.add_item(snap.latest_seq.to_string());
         }
         data.push(row);
     }
@@ -321,7 +325,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Gather data for display and render the frame
-        let data: Vec<TableRow> = gather_target_data(&app.targets, app.debug).await;
+        let data: Vec<TableRow> = gather_target_data(&app.targets, app.debug, conf.timeout).await;
         guard
             .term
             .draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
@@ -337,7 +341,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Print final stats
     for line in simple_tabulate(
-        &gather_target_data(&app.targets, app.debug).await,
+        &gather_target_data(&app.targets, app.debug, conf.timeout).await,
         Some(&app.headers.strings()),
     ) {
         println!("{line}");
