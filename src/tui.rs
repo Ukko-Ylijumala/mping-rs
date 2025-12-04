@@ -2,6 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use crate::structs::AppState;
 use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyModifiers},
@@ -13,7 +14,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::Cell,
+    widgets::{Cell, TableState},
 };
 use std::{
     fmt,
@@ -69,6 +70,8 @@ pub(crate) struct AppLayout {
     pub tbl_colspacing: u16,
     /// Current column width Constraints
     pub tbl_constraints: Vec<Constraint>,
+    /// Stateful table state for managing selection, scrolling, etc.
+    pub tablestate: TableState,
     tbl_width: u16,
 }
 
@@ -344,19 +347,41 @@ pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Crossterm key event polling helper
-pub(crate) fn key_event_poll(wait_ms: u64, quit: &Arc<AtomicBool>) -> Result<()> {
+/// ### Arguments
+/// - `wait_ms`: milliseconds to wait for an event (before returning `Ok(false)`)
+/// - `q`: AtomicBool flag to signal quitting the application
+/// - `s`: Application state reference
+///
+/// ### Returns
+/// - `Ok(bool)` indicating whether a handled key event occurred
+pub(crate) fn key_event_poll(wait_ms: u64, q: &Arc<AtomicBool>, s: &AppState) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
         if let Event::Key(e) = event::read()? {
             match (e.code, e.modifiers) {
-                (KeyCode::Char('q'), _) => Ok(quit.store(true, Relaxed)),
+                // Quit the application
+                (KeyCode::Char('q'), _) => q.store(true, Relaxed),
+
                 // terminal in raw mode -> ctrl-c has to be processed manually
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => Ok(quit.store(true, Relaxed)),
-                _ => Ok(()),
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => q.store(true, Relaxed),
+
+                // Table navigation up/down
+                (KeyCode::Up, _) => s.layout.write().tablestate.select_previous(),
+                (KeyCode::Down, _) => s.layout.write().tablestate.select_next(),
+
+                // Don't signal an unhandled key event
+                _ => return Ok(false),
             }
+
+            // Clear the event queue after handling a key event to avoid a backlog.
+            while event::poll(Duration::from_millis(0))? {
+                let _ = event::read()?;
+            }
+
+            Ok(true)
         } else {
-            Ok(())
+            Ok(false)
         }
     } else {
-        Ok(())
+        Ok(false)
     }
 }
