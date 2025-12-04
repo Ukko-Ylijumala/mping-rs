@@ -223,7 +223,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     )
     .header(Row::new(state.headers.cells()))
     .column_spacing(layout.tbl_colspacing)
-    .block(block);
+    .block(block)
+    .row_highlight_style(Style::new().reversed());
 
     let procinfo = Paragraph::new(format!(
         "CPU: {:>7} | mem: {} | pid: {}",
@@ -234,7 +235,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .alignment(Alignment::Right);
 
     frame.render_widget(&state.title, layout.title);
-    frame.render_widget(table, layout.table);
+    frame.render_stateful_widget(table, layout.table, &mut layout.tablestate);
     frame.render_widget(procinfo, layout.status);
 }
 
@@ -281,14 +282,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_signal_handler(quit.clone());
     let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval.as_millis(), app.verbose)?;
     let mut tick: Interval = time::interval(DEFAULT_TICK.min(app.ui_interval));
-    //let mut data = vec![vec!["".to_string(); app.headers.len()]; app.targets.len()];
 
     // Main display loop
     while !quit.load(Ordering::Relaxed) {
-        tick.tick().await;
-        key_event_poll(0, &quit)?;
-        if tokio::time::Instant::now() < app.ui_next_refresh {
-            continue;
+        // If no keypress event -> wait for next tick.
+        // We also want to redraw only on UI interval, or when a keypress is handled.
+        let keypress_event: bool = key_event_poll(5, &quit, &app)?;
+        if !keypress_event {
+            tick.tick().await;
+            if tokio::time::Instant::now() < app.ui_next_refresh {
+                continue;
+            }
         }
 
         // Gather data for display and render the frame
@@ -296,7 +300,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         guard
             .term
             .draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
-        app.ui_next_refresh += app.ui_interval;
+
+        // Schedule next UI refresh if no keypress event, otherwise each keypress increments the delay
+        if !keypress_event {
+            app.ui_next_refresh += app.ui_interval;
+        }
     }
 
     // Cleanup
