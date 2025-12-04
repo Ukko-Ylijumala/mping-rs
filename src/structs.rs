@@ -15,7 +15,7 @@ use std::{
     fmt::Display,
     net::IpAddr,
     ops::Index,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 use surge_ping::{Client, SurgeError};
@@ -138,6 +138,7 @@ impl PingTargetInner {
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
     pub data: RwLock<PingTargetInner>,
+    pub paused: AtomicBool,
 }
 
 impl PingTarget {
@@ -154,6 +155,7 @@ impl PingTarget {
                 ..Default::default()
             }
             .into(),
+            paused: AtomicBool::new(false),
         }
     }
 
