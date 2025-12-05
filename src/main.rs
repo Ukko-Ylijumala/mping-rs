@@ -184,65 +184,72 @@ async fn extract_stats(tgt: &Arc<PingTarget>, to: Duration) -> (StatsSnapshot, S
     (snap, format!("{}", stats.status))
 }
 
+/// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
+async fn format_row(t: &Arc<PingTarget>, snap: StatsSnapshot, s: String, debug: bool) -> TableRow {
+    let status: String = if debug {
+        match &snap.error {
+            Some(e) => e.to_string(),
+            None => s,
+        }
+    } else {
+        s
+    };
+
+    // Do all the (expensive) string formatting after releasing the lock.
+    let mut row: TableRow = TableRow::from_iter([
+        t.addr.to_string(),
+        snap.sent.to_string(),
+        snap.recv.to_string(),
+        snap.loss_str(),
+        snap.last_str(),
+        snap.mean_str(),
+        snap.min_str(),
+        snap.max_str(),
+        snap.stdev_str(),
+        status,
+    ]);
+    if debug {
+        row.add_item(snap.latest_seq.to_string());
+    }
+
+    // Add full-row styling based on statuses
+    if t.is_paused() {
+        row.set_style_all(Style::new().dim().italic());
+    } else {
+        match t.data.read().status {
+            PingStatus::Error(_) => {
+                row.set_style_all(Style::new().on_red());
+            }
+            PingStatus::NotReachable => {
+                row.set_style_all(Style::new().light_red());
+            }
+            PingStatus::Timeout => {
+                row.set_style_all(Style::new().light_magenta());
+            }
+            PingStatus::Lossy => {
+                row.set_style_all(Style::new().light_yellow());
+            }
+            PingStatus::Laggy | PingStatus::Flappy => {
+                row.set_style_all(Style::new().yellow());
+            }
+            _ => {}
+        }
+    }
+    row
+}
+
 /// Gather current data from all targets.
 async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration) -> Vec<TableRow> {
-    let mut data: Vec<TableRow> = Vec::with_capacity(tgts.len());
-
     // Collect all extract_stats futures and run them concurrently, then process results
     let res = join_all(tgts.iter().map(|t| extract_stats(t, to))).await;
 
-    for (t, (snap, stat)) in tgts.iter().zip(res.into_iter()) {
-        let status: String = if debug {
-            match &snap.error {
-                Some(e) => e.to_string(),
-                None => stat,
-            }
-        } else {
-            stat
-        };
-
-        // Do all the (expensive) string formatting after releasing the lock.
-        let mut row: TableRow = TableRow::from_iter([
-            t.addr.to_string(),
-            snap.sent.to_string(),
-            snap.recv.to_string(),
-            snap.loss_str(),
-            snap.last_str(),
-            snap.mean_str(),
-            snap.min_str(),
-            snap.max_str(),
-            snap.stdev_str(),
-            status,
-        ]);
-        if debug {
-            row.add_item(snap.latest_seq.to_string());
-        }
-
-        // Add full-row styling based on statuses
-        if t.is_paused() {
-            row.set_style_all(Style::new().dim().italic());
-        } else {
-            match t.data.read().status {
-                PingStatus::Error(_) => {
-                    row.set_style_all(Style::new().on_red());
-                }
-                PingStatus::NotReachable => {
-                    row.set_style_all(Style::new().light_red());
-                }
-                PingStatus::Timeout => {
-                    row.set_style_all(Style::new().light_magenta());
-                }
-                PingStatus::Lossy => {
-                    row.set_style_all(Style::new().light_yellow());
-                }
-                PingStatus::Laggy | PingStatus::Flappy => {
-                    row.set_style_all(Style::new().yellow());
-                }
-                _ => {}
-            }
-        }
-        data.push(row);
-    }
+    // Ditto for formatting rows
+    let data: Vec<TableRow> = join_all(
+        tgts.iter()
+            .zip(res.into_iter())
+            .map(|(t, (snap, s))| format_row(t, snap, s, debug)),
+    )
+    .await;
 
     data
 }
