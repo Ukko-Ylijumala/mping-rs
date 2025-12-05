@@ -83,6 +83,13 @@ impl AppState<'_> {
 
         Ok(self)
     }
+
+    /// Pause pinging for the target at the specified index.
+    pub fn toggle_target_pause(&self, index: usize) {
+        if let Some(tgt) = self.targets.get(index) {
+            tgt.toggle_pause();
+        }
+    }
 }
 
 impl Default for AppState<'_> {
@@ -117,6 +124,7 @@ pub(crate) enum PingStatus {
     Laggy,
     Lossy,
     Flappy,
+    Paused,
     #[default]
     None,
 }
@@ -131,6 +139,7 @@ impl Display for PingStatus {
             PingStatus::Laggy => write!(f, "laggy"),
             PingStatus::Lossy => write!(f, "lossy"),
             PingStatus::Flappy => write!(f, "flapping"),
+            PingStatus::Paused => write!(f, "paused"),
             PingStatus::None => write!(f, "-"),
         }
     }
@@ -214,9 +223,12 @@ impl PingTarget {
     }
 
     /// Toggle paused state for this target.
-    pub fn toggle_pause(&self) {
+    fn toggle_pause(&self) {
         let state: bool = self.paused.load(Ordering::Relaxed);
         self.paused.store(!state, Ordering::Relaxed);
+        if !state {
+            self.data.write().status = PingStatus::Paused;
+        }
     }
 
     /// Whether recent packet loss of las N packets exceeds the specified threshold.
