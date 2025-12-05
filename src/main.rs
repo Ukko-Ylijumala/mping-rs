@@ -217,6 +217,30 @@ async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration)
         if debug {
             row.add_item(snap.latest_seq.to_string());
         }
+
+        // Add full-row styling based on statuses
+        if t.is_paused() {
+            row.set_style_all(Style::new().dim().italic());
+        } else {
+            match t.data.read().status {
+                PingStatus::Error(_) => {
+                    row.set_style_all(Style::new().on_red());
+                }
+                PingStatus::NotReachable => {
+                    row.set_style_all(Style::new().light_red());
+                }
+                PingStatus::Timeout => {
+                    row.set_style_all(Style::new().light_magenta());
+                }
+                PingStatus::Lossy => {
+                    row.set_style_all(Style::new().light_yellow());
+                }
+                PingStatus::Laggy | PingStatus::Flappy => {
+                    row.set_style_all(Style::new().yellow());
+                }
+                _ => {}
+            }
+        }
         data.push(row);
     }
 
