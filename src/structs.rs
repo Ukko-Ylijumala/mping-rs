@@ -443,28 +443,24 @@ impl PacketHistory {
         if self.is_empty() {
             return Err("No records to calculate mean RTT".to_string());
         }
-        if n.is_some_and(|s: usize| s > self.len()) {
-            return Err("Window size exceeds history length".to_string());
-        }
 
-        let rtts: Vec<Duration> = match n {
-            None => self
-                .iter()
-                .filter_map(|rec: &PacketRecord| rec.rtt().ok())
-                .collect(),
-            Some(ws) => self
-                .iter()
-                .rev()
-                .take(ws)
-                .filter_map(|rec: &PacketRecord| rec.rtt().ok())
-                .collect(),
+        let skip: usize = match n {
+            None => 0,
+            Some(ws) if ws <= self.len() => self.len() - ws,
+            Some(_) => return Err("Window size exceeds history length".to_string()),
         };
 
-        if rtts.is_empty() {
+        let (sum, count) = self
+            .iter()
+            .skip(skip)
+            .filter_map(|rec| rec.rtt().ok())
+            .fold((Duration::ZERO, 0u32), |(s, c), rtt| (s + rtt, c + 1));
+
+        if count == 0 {
             return Err("No valid RTTs to calculate mean".to_string());
         }
 
-        Ok(rtts.iter().sum::<Duration>() / rtts.len() as u32)
+        Ok(sum / count)
     }
 }
 
