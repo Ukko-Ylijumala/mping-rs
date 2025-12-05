@@ -152,14 +152,17 @@ pub(crate) struct PingTargetInner {
 }
 
 impl PingTargetInner {
+    #[inline]
     pub fn is_lossy(&self, n: usize, threshold: f64) -> bool {
         self.recent.recent_losses(n) as f64 / n as f64 >= threshold
     }
 
+    #[inline]
     pub fn is_flappy(&self, n: usize, threshold: usize) -> bool {
         self.recent.recent_transitions(n) >= threshold
     }
 
+    #[inline]
     pub fn is_laggy(&self, n: usize, threshold: f64) -> Result<bool, String> {
         let long_mean: f64 = self.rtts.mean().map(|m: f64| m).unwrap_or(0.0);
         let recent_mean: Duration = self.recent.mean(Some(n))?;
@@ -330,6 +333,7 @@ impl PacketHistory {
     }
 
     /// Check if the history is empty.
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
@@ -401,6 +405,7 @@ impl PacketHistory {
     }
 
     /// Determine the minimum RTT in the history.
+    #[inline]
     pub fn min(&self) -> Result<Duration, String> {
         if self.is_empty() {
             return Err("No records".to_string());
@@ -417,6 +422,7 @@ impl PacketHistory {
     }
 
     /// Determine the maximum RTT in the history.
+    #[inline]
     pub fn max(&self) -> Result<Duration, String> {
         if self.is_empty() {
             return Err("No records".to_string());
@@ -657,11 +663,13 @@ impl StatsSnapshot {
     ///
     /// NOTE: This is based on this snapshot's creation timestamp (`now`), not the current
     /// time, so it may be slightly out of date. Sufficient for display purposes.
+    #[inline]
     fn is_latest_inflight(&self) -> bool {
         self.timeout > self.when.duration_since(self.latest_sent)
     }
 
     /// Packet loss as formatted string.
+    #[inline]
     pub fn loss_str(&self) -> String {
         if self.sent == 0 {
             "-".to_string()
@@ -674,6 +682,7 @@ impl StatsSnapshot {
     }
 
     /// Minimum RTT as formatted string (as milliseconds).
+    #[inline]
     pub fn min_str(&self) -> String {
         match self.min {
             Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
@@ -682,6 +691,7 @@ impl StatsSnapshot {
     }
 
     /// Maximum RTT as formatted string (as milliseconds).
+    #[inline]
     pub fn max_str(&self) -> String {
         match self.max {
             Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
@@ -690,6 +700,7 @@ impl StatsSnapshot {
     }
 
     /// Last RTT as formatted string (as milliseconds).
+    #[inline]
     pub fn last_str(&self) -> String {
         match self.last {
             Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
@@ -698,6 +709,7 @@ impl StatsSnapshot {
     }
 
     /// Mean RTT as formatted string (as milliseconds).
+    #[inline]
     pub fn mean_str(&self) -> String {
         match self.mean {
             Some(v) => format!("{:.2}", v / MICRO_TO_MILLI),
@@ -706,6 +718,7 @@ impl StatsSnapshot {
     }
 
     /// Standard deviation as formatted string (as milliseconds).
+    #[inline]
     pub fn stdev_str(&self) -> String {
         match self.stdev {
             Some(v) => format!("{:.2}", v / MICRO_TO_MILLI),
