@@ -377,16 +377,22 @@ pub(crate) fn key_event_poll(wait_ms: u64, q: &Arc<AtomicBool>, s: &AppState) ->
                 (KeyCode::End, _) => s.layout.write().tablestate.select_last(),
 
                 // Table navigation: page up/down
-                (KeyCode::PageUp, _) => {
+                (KeyCode::PageUp, m) => {
                     let mut lo = s.layout.write();
-                    let page_size: u16 = lo.table.height.saturating_sub(2);
-                    lo.tablestate.scroll_up_by(page_size);
-                },
-                (KeyCode::PageDown, _) => {
+                    let step: u16 = match m {
+                        KeyModifiers::SHIFT => 10,
+                        _ => lo.table.height.saturating_sub(2),
+                    };
+                    lo.tablestate.scroll_up_by(step);
+                }
+                (KeyCode::PageDown, m) => {
                     let mut lo = s.layout.write();
-                    let page_size: u16 = lo.table.height.saturating_sub(2);
-                    lo.tablestate.scroll_down_by(page_size);
-                },
+                    let step: u16 = match m {
+                        KeyModifiers::SHIFT => 10,
+                        _ => lo.table.height.saturating_sub(2),
+                    };
+                    lo.tablestate.scroll_down_by(step);
+                }
 
                 // Clear table selections
                 (KeyCode::Backspace, _) => {
