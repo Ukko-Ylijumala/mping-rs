@@ -75,6 +75,13 @@ async fn update_ping_stats(
     };
     stats.recent.push(rec);
 
+    // Update "paused" status here if necessary, as it's the overriding status.
+    // In theory the paused state could have been changed by the task spawned by ping_loop()
+    // calling this function in the previous iteration before the flag toggle took effect.
+    if tgt.is_paused() && !matches!(stats.status, PingStatus::Paused) {
+        stats.status = PingStatus::Paused;
+    }
+
     // Update status based on recent history if applicable
     if matches!(stats.status, PingStatus::Ok | PingStatus::Timeout) {
         if stats.is_flappy(10, 5) {
@@ -106,7 +113,14 @@ async fn ping_loop(
 
     while !quit.load(Ordering::Relaxed) {
         ticker.tick().await;
-        if tokio::time::Instant::now() < next_ping || tgt.is_paused() {
+        if tgt.is_paused() {
+            // Adjust next ping time to not build a backlog while paused.
+            // When unpaused, the next ping should be pretty much immediate
+            // and subsequent pings will resume at the normal interval.
+            next_ping = tokio::time::Instant::now();
+            continue;
+        }
+        if tokio::time::Instant::now() <= next_ping {
             continue;
         }
 
@@ -224,7 +238,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .header(Row::new(state.headers.cells()))
     .column_spacing(layout.tbl_colspacing)
     .block(block)
-    .row_highlight_style(Style::new().reversed());
+    .row_highlight_style(Style::new().reversed())
+    .column_highlight_style(Style::new().bg(Color::Indexed(240)));
 
     let procinfo = Paragraph::new(format!(
         "CPU: {:>7} | mem: {} | pid: {}",
