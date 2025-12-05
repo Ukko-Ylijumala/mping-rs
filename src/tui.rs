@@ -364,9 +364,44 @@ pub(crate) fn key_event_poll(wait_ms: u64, q: &Arc<AtomicBool>, s: &AppState) ->
                 // terminal in raw mode -> ctrl-c has to be processed manually
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => q.store(true, Relaxed),
 
-                // Table navigation up/down
+                // Table navigation: up/down
                 (KeyCode::Up, _) => s.layout.write().tablestate.select_previous(),
                 (KeyCode::Down, _) => s.layout.write().tablestate.select_next(),
+
+                // Table navigation: left/right (columns)
+                (KeyCode::Left, _) => s.layout.write().tablestate.select_previous_column(),
+                (KeyCode::Right, _) => s.layout.write().tablestate.select_next_column(),
+
+                // Table navigation: home/end
+                (KeyCode::Home, _) => s.layout.write().tablestate.select_first(),
+                (KeyCode::End, _) => s.layout.write().tablestate.select_last(),
+
+                // Table navigation: page up/down
+                (KeyCode::PageUp, _) => {
+                    let mut lo = s.layout.write();
+                    let page_size: u16 = lo.table.height.saturating_sub(2);
+                    lo.tablestate.scroll_up_by(page_size);
+                },
+                (KeyCode::PageDown, _) => {
+                    let mut lo = s.layout.write();
+                    let page_size: u16 = lo.table.height.saturating_sub(2);
+                    lo.tablestate.scroll_down_by(page_size);
+                },
+
+                // Clear table selections
+                (KeyCode::Backspace, _) => {
+                    let mut lo = s.layout.write();
+                    lo.tablestate.select(None);
+                    lo.tablestate.select_column(None);
+                }
+
+                // Pause/resume the selected target
+                (KeyCode::Char(' '), _) => {
+                    let sel_idx = s.layout.read().tablestate.selected();
+                    if let Some(idx) = sel_idx {
+                        s.toggle_target_pause(idx);
+                    }
+                }
 
                 // Don't signal an unhandled key event
                 _ => return Ok(false),
