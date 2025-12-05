@@ -16,7 +16,10 @@ use std::{
     fmt::Display,
     net::IpAddr,
     ops::Index,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use surge_ping::{Client, Config, ICMP, SurgeError};
@@ -168,7 +171,7 @@ impl PingTargetInner {
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
     pub data: RwLock<PingTargetInner>,
-    pub paused: AtomicBool,
+    paused: AtomicBool,
 }
 
 impl PingTarget {
@@ -187,6 +190,30 @@ impl PingTarget {
             .into(),
             paused: AtomicBool::new(false),
         }
+    }
+
+    /// Reset all statistics for this target as if it was never pinged.
+    pub fn reset_stats(&self) {
+        let mut data = self.data.write();
+        data.sent = 0;
+        data.recv = 0;
+        data.rtts.clear();
+        data.recent.clear();
+        data.status = PingStatus::None;
+        data.last_seq = 0;
+        data.last_sent = None;
+    }
+
+    /// Whether pinging currently paused for this target is.
+    #[inline]
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Toggle paused state for this target.
+    pub fn toggle_pause(&self) {
+        let state: bool = self.paused.load(Ordering::Relaxed);
+        self.paused.store(!state, Ordering::Relaxed);
     }
 
     /// Whether recent packet loss of las N packets exceeds the specified threshold.

@@ -106,7 +106,7 @@ async fn ping_loop(
 
     while !quit.load(Ordering::Relaxed) {
         ticker.tick().await;
-        if tokio::time::Instant::now() < next_ping || tgt.paused.load(Ordering::Relaxed) {
+        if tokio::time::Instant::now() < next_ping || tgt.is_paused() {
             continue;
         }
 
