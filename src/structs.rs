@@ -134,7 +134,7 @@ impl Display for PingStatus {
         match self {
             PingStatus::Ok => write!(f, "OK"),
             PingStatus::Timeout => write!(f, "timeout"),
-            PingStatus::NotReachable => write!(f, "unreachable"),
+            PingStatus::NotReachable => write!(f, "unreach"),
             PingStatus::Error(_) => write!(f, "error"),
             PingStatus::Laggy => write!(f, "laggy"),
             PingStatus::Lossy => write!(f, "lossy"),
