@@ -23,7 +23,6 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering::Relaxed},
     },
     time::Duration,
 };
@@ -346,39 +345,46 @@ pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/// This key event handler loop is intended to be run in a dedicated thread.
+/// It listens for keyboard events and updates the application state accordingly.
+pub(crate) fn key_event_hander(state: Arc<AppState>) {
+    while !state.is_quitting() {
+        let _ = key_event_poll(50, &state);
+    }
+}
+
 /// Crossterm key event polling helper
 /// ### Arguments
 /// - `wait_ms`: milliseconds to wait for an event (before returning `Ok(false)`)
-/// - `q`: AtomicBool flag to signal quitting the application
-/// - `s`: Application state reference
+/// - `app`: Application state reference
 ///
 /// ### Returns
 /// - `Ok(bool)` indicating whether a handled key event occurred
-pub(crate) fn key_event_poll(wait_ms: u64, q: &Arc<AtomicBool>, s: &AppState) -> Result<bool> {
+fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
         if let Event::Key(e) = event::read()? {
             match (e.code, e.modifiers) {
                 // Quit the application
-                (KeyCode::Char('q'), _) => q.store(true, Relaxed),
+                (KeyCode::Char('q'), _) => app.quit(),
 
                 // terminal in raw mode -> ctrl-c has to be processed manually
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => q.store(true, Relaxed),
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => app.quit(),
 
                 // Table navigation: up/down
-                (KeyCode::Up, _) => s.layout.write().tablestate.select_previous(),
-                (KeyCode::Down, _) => s.layout.write().tablestate.select_next(),
+                (KeyCode::Up, _) => app.layout.write().tablestate.select_previous(),
+                (KeyCode::Down, _) => app.layout.write().tablestate.select_next(),
 
                 // Table navigation: left/right (columns)
-                (KeyCode::Left, _) => s.layout.write().tablestate.select_previous_column(),
-                (KeyCode::Right, _) => s.layout.write().tablestate.select_next_column(),
+                (KeyCode::Left, _) => app.layout.write().tablestate.select_previous_column(),
+                (KeyCode::Right, _) => app.layout.write().tablestate.select_next_column(),
 
                 // Table navigation: home/end
-                (KeyCode::Home, _) => s.layout.write().tablestate.select_first(),
-                (KeyCode::End, _) => s.layout.write().tablestate.select_last(),
+                (KeyCode::Home, _) => app.layout.write().tablestate.select_first(),
+                (KeyCode::End, _) => app.layout.write().tablestate.select_last(),
 
                 // Table navigation: page up/down
                 (KeyCode::PageUp, m) => {
-                    let mut lo = s.layout.write();
+                    let mut lo = app.layout.write();
                     let step: u16 = match m {
                         KeyModifiers::SHIFT => 10,
                         _ => lo.table.height.saturating_sub(2),
@@ -386,7 +392,7 @@ pub(crate) fn key_event_poll(wait_ms: u64, q: &Arc<AtomicBool>, s: &AppState) ->
                     lo.tablestate.scroll_up_by(step);
                 }
                 (KeyCode::PageDown, m) => {
-                    let mut lo = s.layout.write();
+                    let mut lo = app.layout.write();
                     let step: u16 = match m {
                         KeyModifiers::SHIFT => 10,
                         _ => lo.table.height.saturating_sub(2),
@@ -396,16 +402,16 @@ pub(crate) fn key_event_poll(wait_ms: u64, q: &Arc<AtomicBool>, s: &AppState) ->
 
                 // Clear table selections
                 (KeyCode::Backspace, _) => {
-                    let mut lo = s.layout.write();
+                    let mut lo = app.layout.write();
                     lo.tablestate.select(None);
                     lo.tablestate.select_column(None);
                 }
 
                 // Pause/resume the selected target
                 (KeyCode::Char(' '), _) => {
-                    let sel_idx = s.layout.read().tablestate.selected();
+                    let sel_idx = app.layout.read().tablestate.selected();
                     if let Some(idx) = sel_idx {
-                        s.toggle_target_pause(idx);
+                        app.toggle_target_pause(idx);
                     }
                 }
 
