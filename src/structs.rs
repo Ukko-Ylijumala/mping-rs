@@ -276,9 +276,8 @@ impl PingTarget {
 
     /// Toggle paused state for this target.
     fn toggle_pause(&self) {
-        let state: bool = self.paused.load(Ordering::Relaxed);
-        self.paused.store(!state, Ordering::Relaxed);
-        if !state {
+        let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
+        if !was_paused {
             self.data.write().status = PingStatus::Paused;
         }
     }
