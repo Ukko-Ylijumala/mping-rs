@@ -347,7 +347,7 @@ pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
 
 /// This key event handler loop is intended to be run in a dedicated thread.
 /// It listens for keyboard events and updates the application state accordingly.
-pub(crate) fn key_event_hander(state: Arc<AppState>) {
+pub(crate) fn key_event_handler(state: Arc<AppState>) {
     while !state.is_quitting() {
         let _ = key_event_poll(50, &state);
     }

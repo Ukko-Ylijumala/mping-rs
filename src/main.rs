@@ -16,7 +16,7 @@ use crate::{
     args::MpConfig,
     structs::{AppState, PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     tabulator::simple_tabulate,
-    tui::{TableRow, TerminalGuard, key_event_hander},
+    tui::{TableRow, TerminalGuard, key_event_handler},
     utils::setup_signal_handler,
 };
 
@@ -300,7 +300,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start the key event handling thread
     let app_clone: Arc<AppState> = app.clone();
-    let kev_handle = thread::spawn(move || key_event_hander(app_clone));
+    let kev_handle = thread::spawn(move || key_event_handler(app_clone));
 
     // Main display loop
     while !app.is_quitting() {
