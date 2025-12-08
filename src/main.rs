@@ -21,6 +21,7 @@ use crate::{
 };
 
 use futures::future::join_all;
+use miniutils::ToDisplay;
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
 use std::{
@@ -69,7 +70,7 @@ async fn update_ping_stats(
                         PingStatus::Timeout
                     }
                 }
-                _ => PingStatus::Error(e),
+                _ => PingStatus::Error(e.to_display()),
             };
         }
     };
@@ -174,25 +175,16 @@ async fn ping_loop(
     }
 }
 
-/// Extract statistics data from a target's inner data.
-async fn extract_stats(tgt: &Arc<PingTarget>, to: Duration) -> (StatsSnapshot, String) {
-    // Holding the lock inside this function only should minimize contention.
-    // Do all the expensive string formatting in the caller.
-    let stats = tgt.data.read();
-    let snap: StatsSnapshot = StatsSnapshot::new_from(&stats, to);
-    // status formatting is cheap relative to float formatting
-    (snap, format!("{}", stats.status))
-}
-
 /// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
-async fn format_row(t: &Arc<PingTarget>, snap: StatsSnapshot, s: String, debug: bool) -> TableRow {
-    let status: String = if debug {
-        match &snap.error {
-            Some(e) => e.to_string(),
-            None => s,
-        }
-    } else {
-        s
+async fn format_row(t: &Arc<PingTarget>, debug: bool, timeout: Duration) -> TableRow {
+    let snap: StatsSnapshot = {
+        // Holding the lock inside this block only should minimize contention.
+        // Do all the expensive string formatting afterwards.
+        StatsSnapshot::new_from(&t.data.read(), timeout)
+    };
+    let status: String = match &snap.status {
+        PingStatus::Error(e) if debug => e.to_string(),
+        _ => snap.status.to_display(),
     };
 
     // Do all the (expensive) string formatting after releasing the lock.
@@ -239,19 +231,11 @@ async fn format_row(t: &Arc<PingTarget>, snap: StatsSnapshot, s: String, debug: 
 }
 
 /// Gather current data from all targets.
+#[inline]
 async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration) -> Vec<TableRow> {
-    // Collect all extract_stats futures and run them concurrently, then process results
-    let res = join_all(tgts.iter().map(|t| extract_stats(t, to))).await;
-
-    // Ditto for formatting rows
-    let data: Vec<TableRow> = join_all(
-        tgts.iter()
-            .zip(res.into_iter())
-            .map(|(t, (snap, s))| format_row(t, snap, s, debug)),
-    )
-    .await;
-
-    data
+    // Run all row formatter tasks concurrently
+    join_all(tgts.iter().map(|t| format_row(t, debug, to)))
+        .await
 }
 
 /// Render the current frame. Display will be updated as soon as this function completes.
