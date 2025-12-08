@@ -22,7 +22,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use surge_ping::{Client, Config, ICMP, SurgeError};
+use surge_ping::{Client, Config, ICMP};
 
 const MICRO_TO_MILLI: f64 = 1e3;
 const DEFAULT_REFRESH: Duration = Duration::from_millis(250);
@@ -115,12 +115,12 @@ impl Default for AppState<'_> {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) enum PingStatus {
     Ok,
     Timeout,
     NotReachable,
-    Error(SurgeError),
+    Error(String),
     Laggy,
     Lossy,
     Flappy,
@@ -610,7 +610,7 @@ pub(crate) struct StatsSnapshot {
     pub mean: Option<f64>,
     pub last: Option<u32>,
     pub stdev: Option<f64>,
-    pub error: Option<String>,
+    pub status: PingStatus,
     /// History of recent sent/received packets
     pub hist: HistorySnapshot,
     /// Timestamp of this snapshot.
@@ -647,10 +647,7 @@ impl StatsSnapshot {
                 Ok(v) => Some(v),
                 Err(_) => None,
             },
-            error: match &data.status {
-                PingStatus::Error(e) => Some(e.to_string()),
-                _ => None,
-            },
+            status: data.status.clone(),
             hist: HistorySnapshot::new_from(&data.recent),
             latest_seq: data.last_seq,
             latest_sent: data.last_sent.unwrap_or(now),
