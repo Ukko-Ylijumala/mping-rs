@@ -26,6 +26,7 @@ use surge_ping::{Client, Config, ICMP};
 
 const MICRO_TO_MILLI: f64 = 1e3;
 const DEFAULT_REFRESH: Duration = Duration::from_millis(250);
+static MISSING: &str = "-";
 
 /// Main application state structure.
 pub(crate) struct AppState<'a> {
@@ -140,7 +141,7 @@ impl Display for PingStatus {
             PingStatus::Lossy => write!(f, "lossy"),
             PingStatus::Flappy => write!(f, "flapping"),
             PingStatus::Paused => write!(f, "paused"),
-            PingStatus::None => write!(f, "-"),
+            PingStatus::None => write!(f, "{MISSING}"),
         }
     }
 }
@@ -677,7 +678,7 @@ impl StatsSnapshot {
     #[inline]
     pub fn loss_str(&self) -> String {
         if self.sent == 0 {
-            "-".to_string()
+            MISSING.to_string()
         } else if ((self.sent - self.recv) == 1) && self.is_latest_inflight() {
             // catch the common case of one receive missing (still in transit)
             "0.0%".to_string()
@@ -691,7 +692,7 @@ impl StatsSnapshot {
     pub fn min_str(&self) -> String {
         match self.min {
             Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
-            None => "-".to_string(),
+            None => MISSING.to_string(),
         }
     }
 
@@ -700,7 +701,7 @@ impl StatsSnapshot {
     pub fn max_str(&self) -> String {
         match self.max {
             Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
-            None => "-".to_string(),
+            None => MISSING.to_string(),
         }
     }
 
@@ -709,7 +710,7 @@ impl StatsSnapshot {
     pub fn last_str(&self) -> String {
         match self.last {
             Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
-            None => "-".to_string(),
+            None => MISSING.to_string(),
         }
     }
 
@@ -718,7 +719,7 @@ impl StatsSnapshot {
     pub fn mean_str(&self) -> String {
         match self.mean {
             Some(v) => format!("{:.2}", v / MICRO_TO_MILLI),
-            None => "-".to_string(),
+            None => MISSING.to_string(),
         }
     }
 
@@ -727,7 +728,7 @@ impl StatsSnapshot {
     pub fn stdev_str(&self) -> String {
         match self.stdev {
             Some(v) => format!("{:.2}", v / MICRO_TO_MILLI),
-            None => "-".to_string(),
+            None => MISSING.to_string(),
         }
     }
 }
