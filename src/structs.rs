@@ -25,43 +25,60 @@ use std::{
 use surge_ping::{Client, Config, ICMP};
 
 const MICRO_TO_MILLI: f64 = 1e3;
-const DEFAULT_REFRESH: Duration = Duration::from_millis(250);
+const DEFAULT_PAYLOAD_SIZE: usize = 32;
+const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
+const DEFAULT_REFRESH: Duration = Duration::from_millis(250); // 4 Hz
 static MISSING: &str = "-";
 
-/// Main application state structure.
+/// Main application state structure. Holds shared state across threads and tasks.
+/// Needs to be put into an Arc after intialization, which build() conveniently does.
 pub(crate) struct AppState<'a> {
     pub pi: miniutils::ProcessInfo,
     pub c_v4: Option<Arc<Client>>,
     pub c_v6: Option<Arc<Client>>,
-    pub targets: Vec<Arc<PingTarget>>,
-    pub tasks: Vec<tokio::task::JoinHandle<()>>,
+    pub targets: RwLock<Vec<Arc<PingTarget>>>,
+    pub tasks: RwLock<Vec<tokio::task::JoinHandle<()>>>,
     pub layout: RwLock<AppLayout>,
     pub title: Option<ratatui::text::Line<'a>>,
     /// Table headers
-    pub headers: TableRow,
+    pub headers: RwLock<TableRow>,
     /// UI refresh interval
     pub ui_interval: Duration,
     /// Next scheduled UI refresh time
-    pub ui_next_refresh: tokio::time::Instant,
+    pub ui_next_refresh: RwLock<tokio::time::Instant>,
     pub verbose: bool,
     pub debug: bool,
+    pub quit: Arc<AtomicBool>,
+    pub ping_interval: Duration,
+    pub ping_timeout: Duration,
+    pub randomize: bool,
+    pub payload: Arc<[u8]>,
 }
 
 impl AppState<'_> {
     /// Build the application state based on the provided configuration.
     /// - set up UI refresh interval
     /// - set up [surge_ping::Client] instances for IPv4 and IPv6 as needed
+    /// - add provided ping targets
     ///
     /// NOTE: sharing a client across multiple targets is (async) safe
     /// and allows socket reuse.
-    pub fn build(mut self, conf: &Arc<MpConfig>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn build(
+        mut self,
+        conf: &Arc<MpConfig>,
+        targets: Vec<PingTarget>,
+    ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         self.debug = conf.debug;
         self.verbose = conf.verbose;
-        if self.ui_interval != DEFAULT_REFRESH {
-            self.ui_interval = Duration::from_millis(conf.refresh);
-        }
         if self.debug {
-            self.headers.add_item("Seq");
+            self.headers.write().add_item("Seq");
+        }
+
+        self.ui_interval = Duration::from_millis(conf.refresh);
+        self.ping_interval = conf.interval;
+        self.ping_timeout = conf.timeout;
+        if conf.size as usize > DEFAULT_PAYLOAD_SIZE {
+            self.payload = vec![0u8; conf.size as usize].into();
         }
 
         // IPv4 & IPv6 clients
@@ -82,12 +99,40 @@ impl AppState<'_> {
             None
         };
 
-        Ok(self)
+        self.add_targets(targets);
+        Ok(self.into())
+    }
+
+    /// The number of ping targets in the application state.
+    pub fn len(&self) -> usize {
+        self.targets.read().len()
+    }
+
+    /// Whether the quit flag has been toggled.
+    pub fn is_quitting(&self) -> bool {
+        self.quit.load(Ordering::Relaxed)
+    }
+
+    /// Set the quit flag to true. This triggers a graceful shutdown in a short order.
+    pub fn quit(&self) {
+        self.quit.store(true, Ordering::Relaxed);
+    }
+
+    /// Schedule the next UI refresh tick.
+    pub fn ui_tick(&self) {
+        *self.ui_next_refresh.write() += self.ui_interval;
+    }
+
+    /// Add new ping targets to the application state.
+    pub fn add_targets<I: IntoIterator<Item = PingTarget>>(&self, targets: I) {
+        self.targets
+            .write()
+            .extend(targets.into_iter().map(|t| Arc::new(t)));
     }
 
     /// Pause pinging for the target at the specified index.
     pub fn toggle_target_pause(&self, index: usize) {
-        if let Some(tgt) = self.targets.get(index) {
+        if let Some(tgt) = self.targets.read().get(index) {
             tgt.toggle_pause();
         }
     }
@@ -99,17 +144,23 @@ impl Default for AppState<'_> {
             pi: ProcessInfo::new(),
             c_v4: None,
             c_v6: None,
-            targets: vec![],
-            tasks: vec![],
+            targets: vec![].into(),
+            tasks: vec![].into(),
             layout: AppLayout::default().into(),
             title: None,
             headers: TableRow::from_iter([
                 "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
-            ]),
+            ])
+            .into(),
             ui_interval: DEFAULT_REFRESH,
-            ui_next_refresh: tokio::time::Instant::now(),
+            ui_next_refresh: tokio::time::Instant::now().into(),
             verbose: false,
             debug: false,
+            quit: AtomicBool::new(false).into(),
+            ping_interval: DEFAULT_TICK,
+            ping_timeout: DEFAULT_TICK,
+            randomize: false,
+            payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 32 bytes -> 40-byte packet
         }
     }
 }
