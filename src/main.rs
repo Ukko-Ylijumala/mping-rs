@@ -16,7 +16,7 @@ use crate::{
     args::MpConfig,
     structs::{AppState, PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     tabulator::simple_tabulate,
-    tui::{TableRow, TerminalGuard, key_event_poll},
+    tui::{TableRow, TerminalGuard, key_event_hander},
     utils::setup_signal_handler,
 };
 
@@ -24,32 +24,25 @@ use futures::future::join_all;
 use miniutils::ToDisplay;
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
-use std::{
-    net::IpAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{net::IpAddr, sync::Arc, thread, time::Duration};
 use surge_ping::{Client, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError};
 use tokio::time::{self, Instant, Interval};
 
-const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
+const PAYLOAD_RND_BYTES: usize = 32;
 
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Create [PingTarget] instances for each IP address.
-fn make_targets(addrs: &[IpAddr], histsize: usize, detailed: usize) -> Vec<Arc<PingTarget>> {
+fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16) -> Vec<PingTarget> {
     addrs
         .iter()
-        .map(|addr| Arc::new(PingTarget::new(*addr, histsize, detailed)))
+        .map(|addr| PingTarget::new(*addr, histsize as usize, detailed as usize))
         .collect()
 }
 
 /// Update ping statistics based on the result. Separated into fn for target lock granularity.
 async fn update_ping_stats(
-    tgt: &Arc<PingTarget>,
+    tgt: Arc<PingTarget>,
     res: Result<(IcmpPacket, Duration), SurgeError>,
     mut rec: PacketRecord,
 ) {
@@ -96,23 +89,12 @@ async fn update_ping_stats(
 }
 
 /// Set up a ping loop for each target.
-async fn ping_loop(
-    tgt: Arc<PingTarget>,
-    client: Arc<Client>,
-    quit: Arc<AtomicBool>,
-    conf: Arc<MpConfig>,
-    payload: Arc<[u8]>,
-) {
+async fn ping_loop<'a>(tgt: Arc<PingTarget>, client: Arc<Client>, app: Arc<AppState<'a>>) {
     let id: PingIdentifier = PingIdentifier(random());
-    let mut ticker: Interval = time::interval(conf.interval.min(DEFAULT_TICK));
+    let mut ticker: Interval = time::interval(app.ping_interval);
     let mut next_ping: Instant = tokio::time::Instant::now();
-    let mut payload: Arc<[u8]> = match conf.randomize {
-        // create a new payload for the ping loop which we can randomize
-        true => payload.as_ref().to_vec().into(),
-        false => payload.clone(),
-    };
 
-    while !quit.load(Ordering::Relaxed) {
+    while !app.is_quitting() {
         ticker.tick().await;
         if tgt.is_paused() {
             // Adjust next ping time to not build a backlog while paused.
@@ -121,10 +103,37 @@ async fn ping_loop(
             next_ping = tokio::time::Instant::now();
             continue;
         }
-        if tokio::time::Instant::now() <= next_ping {
+        if tokio::time::Instant::now() < next_ping {
             continue;
         }
 
+        // We must create a new Pinger for each async context, since otherwise we'll have
+        // to wait for the previous ping to complete before sending the next one.
+        let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
+        pinger.timeout(app.ping_timeout);
+        let tgt_clone: Arc<PingTarget> = tgt.clone();
+
+        // Clone the payload slice into a new one, which we can randomize if needed.
+        // Arc::make_mut() will perform a clone-on-write if necessary.
+        let pl: Arc<[u8]> = match app.randomize {
+            true => {
+                let mut payload: Arc<[u8]> = app.payload.clone();
+                let payload: &mut [u8] = Arc::make_mut(&mut payload);
+                // Can't use a thread-local RNG here (for performance)
+                // because it's not Send'able across await points.
+                // However, we can spare CPU time by randomizing only
+                // the first 32 bytes of the payload, which should be plenty.
+                // And we already know the payload must be 32 bytes minimum.
+                fill(&mut payload[..PAYLOAD_RND_BYTES]);
+                payload.into()
+            }
+            false => app.payload.clone(),
+        };
+
+        // Update sent timestamp as late as possible before sending
+        // so that the time difference is minimized. There will still
+        // be some delay due to task scheduling etc, but this should
+        // be negligible compared to network latencies.
         let seq: u16 = {
             let mut stats = tgt.data.write();
             // update sent count here to make sure it's incremented before
@@ -141,37 +150,13 @@ async fn ping_loop(
             seq
         };
 
-        // The async ping task can be spawned either using a closure, or an
-        // async fn block. Both should be functionally equivalent.
-        // In either case the pinger is created anew for each async context.
-        //
-        // Function style (saved for reference):
-        // tokio::spawn(ping(client.clone(), tgt.clone(), conf.timeout, id, seq));
-        //
-        let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
-        pinger.timeout(conf.timeout);
-        let tgt_clone: Arc<PingTarget> = tgt.clone();
-        let pl: Arc<[u8]> = match conf.randomize {
-            true => {
-                let payload: &mut [u8] = Arc::make_mut(&mut payload);
-                // Can't use a thread-local RNG here (for performance)
-                // because it's not Send'able across await points.
-                // However, we can spare CPU time by randomizing only
-                // the first 32 bytes of the payload, which should be plenty.
-                // And we already know the payload must be 32 bytes minimum.
-                fill(&mut payload[..32]);
-                payload.into()
-            }
-            false => payload.clone(),
-        };
-
         tokio::spawn(async move {
             let rec: PacketRecord = PacketRecord::new(seq);
             let res = pinger.ping(PingSequence(seq), &pl).await;
-            update_ping_stats(&tgt_clone, res, rec).await;
+            update_ping_stats(tgt_clone, res, rec).await;
         });
 
-        next_ping += conf.interval;
+        next_ping += app.ping_interval;
     }
 }
 
@@ -234,8 +219,7 @@ async fn format_row(t: &Arc<PingTarget>, debug: bool, timeout: Duration) -> Tabl
 #[inline]
 async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration) -> Vec<TableRow> {
     // Run all row formatter tasks concurrently
-    join_all(tgts.iter().map(|t| format_row(t, debug, to)))
-        .await
+    join_all(tgts.iter().map(|t| format_row(t, debug, to))).await
 }
 
 /// Render the current frame. Display will be updated as soon as this function completes.
@@ -243,14 +227,13 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let layout = &mut state.layout.write();
     layout.update(frame.area(), &data);
 
-    let block =
-        Block::bordered().title_bottom(Line::from(format!(" Targets: {} ", state.targets.len())));
-
+    let block = Block::bordered().title_bottom(Line::from(format!(" Targets: {} ", state.len())));
+    let headers = state.headers.read();
     let table = Table::new(
         data.iter().map(|r| Row::new(r.cells())),
         &layout.tbl_constraints,
     )
-    .header(Row::new(state.headers.cells()))
+    .header(Row::new(headers.cells()))
     .column_spacing(layout.tbl_colspacing)
     .block(block)
     .row_highlight_style(Style::new().reversed())
@@ -276,65 +259,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
 
     let title = Line::from(format!("Multi-pinger v{}", conf.ver));
-    let mut app: AppState<'static> = AppState {
-        targets: make_targets(&conf.addrs, conf.histsize as usize, conf.detailed as usize),
+    let app: Arc<AppState<'static>> = AppState {
         title: Some(title.centered().style(Style::new().bold().on_green())),
         ..Default::default()
     }
-    .build(&conf)?;
+    .build(
+        &conf,
+        make_targets(&conf.addrs, conf.histsize, conf.detailed),
+    )?;
 
     // Setup table header style and cache widths. Layout is locked for this block only.
     {
-        app.headers.set_style_all(Style::new().bold().yellow());
+        let mut headers = app.headers.write();
+        headers.set_style_all(Style::new().bold().yellow());
         let mut layout = app.layout.write();
-        layout.tbl_hdr_widths = app.headers.widths();
+        layout.tbl_hdr_widths = headers.widths();
         layout.tbl_colspacing = 2;
     }
 
     // Spawn ping tasks
-    let payload: Arc<[u8]> = vec![0u8; conf.size as usize].into();
-    let quit: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-    for tgt in &app.targets {
-        let client = match tgt.addr {
-            IpAddr::V4(_) => app.c_v4.as_ref().expect("IPv4 client missing"),
-            IpAddr::V6(_) => app.c_v6.as_ref().expect("IPv6 client missing"),
-        };
-        app.tasks.push(tokio::spawn(ping_loop(
-            tgt.clone(),
-            client.clone(),
-            quit.clone(),
-            conf.clone(),
-            payload.clone(),
-        )));
+    {
+        let mut tasks = app.tasks.write();
+        for tgt in app.targets.read().iter() {
+            let client = match tgt.addr {
+                IpAddr::V4(_) => app.c_v4.as_ref().expect("IPv4 client missing"),
+                IpAddr::V6(_) => app.c_v6.as_ref().expect("IPv6 client missing"),
+            };
+            tasks.push(tokio::spawn(ping_loop(
+                tgt.clone(),
+                client.clone(),
+                app.clone(),
+            )));
+        }
     }
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
-    setup_signal_handler(quit.clone());
+    setup_signal_handler(app.quit.clone());
     let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval.as_millis(), app.verbose)?;
-    let mut tick: Interval = time::interval(DEFAULT_TICK.min(app.ui_interval));
+    let mut tick: Interval = time::interval(app.ui_interval);
+
+    // Start the key event handling thread
+    let app_clone: Arc<AppState> = app.clone();
+    let kev_handle = thread::spawn(move || key_event_hander(app_clone));
 
     // Main display loop
-    while !quit.load(Ordering::Relaxed) {
-        // If no keypress event -> wait for next tick.
-        // We also want to redraw only on UI interval, or when a keypress is handled.
-        let keypress_event: bool = key_event_poll(5, &quit, &app)?;
-        if !keypress_event {
-            tick.tick().await;
-            if tokio::time::Instant::now() < app.ui_next_refresh {
-                continue;
-            }
+    while !app.is_quitting() {
+        tick.tick().await;
+        if tokio::time::Instant::now() < *app.ui_next_refresh.read() {
+            continue;
         }
 
         // Gather data for display and render the frame
-        let data: Vec<TableRow> = gather_target_data(&app.targets, app.debug, conf.timeout).await;
+        let data: Vec<TableRow> =
+            gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await;
         guard
             .term
             .draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
 
-        // Schedule next UI refresh if no keypress event, otherwise each keypress increments the delay
-        if !keypress_event {
-            app.ui_next_refresh += app.ui_interval;
-        }
+        app.ui_tick();
     }
 
     // Cleanup
@@ -342,12 +324,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if app.debug {
         eprintln!("Main thread quitting. Waiting for tasks to terminate...");
     }
-    join_all(app.tasks).await;
+    kev_handle.join().expect("Error joining key event handler thread");
+    let mut tasks = app.tasks.write();
+    join_all(tasks.iter_mut()).await;
 
     // Print final stats
     for line in simple_tabulate(
-        &gather_target_data(&app.targets, app.debug, conf.timeout).await,
-        Some(&app.headers.strings()),
+        &gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await,
+        Some(&app.headers.read().strings()),
     ) {
         println!("{line}");
     }
