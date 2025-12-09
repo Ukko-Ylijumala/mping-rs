@@ -27,8 +27,6 @@ use tokio_util::sync::CancellationToken;
 
 const MICRO_TO_MILLI: f64 = 1e3;
 const DEFAULT_PAYLOAD_SIZE: usize = 32;
-const DEFAULT_TICK: Duration = Duration::from_millis(200); // 5 Hz
-const DEFAULT_REFRESH: Duration = Duration::from_millis(250); // 4 Hz
 static MISSING: &str = "-";
 
 /// Main application state structure. Holds shared state across threads and tasks.
@@ -54,6 +52,7 @@ pub(crate) struct AppState {
     pub ping_timeout: Duration,
     pub randomize: bool,
     pub payload: Arc<[u8]>,
+    pub internal_tick: Duration,
 }
 
 impl AppState {
@@ -81,6 +80,10 @@ impl AppState {
         if conf.size as usize > DEFAULT_PAYLOAD_SIZE {
             self.payload = vec![0u8; conf.size as usize].into();
         }
+
+        // adjust internal tick (delay) lower if it's higher than ping
+        // interval, othwerwise we'd send out fewer pings than intended
+        self.internal_tick = self.internal_tick.min(conf.interval);
 
         // IPv4 & IPv6 clients
         self.c_v4 = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
@@ -125,7 +128,7 @@ impl AppState {
     }
 
     /// Schedule the next UI refresh tick.
-    pub fn ui_tick(&self) {
+    pub fn ui_schedule_next_refresh(&self) {
         *self.ui_next_refresh.write() += self.ui_interval;
     }
 
@@ -195,15 +198,16 @@ impl Default for AppState {
                 "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
             ])
             .into(),
-            ui_interval: DEFAULT_REFRESH,
+            ui_interval: Duration::from_millis(250),
             ui_next_refresh: tokio::time::Instant::now().into(),
             verbose: false,
             debug: false,
             quit: AtomicBool::new(false).into(),
-            ping_interval: DEFAULT_TICK,
-            ping_timeout: DEFAULT_TICK,
+            ping_interval: Duration::from_secs(1),
+            ping_timeout: Duration::from_secs(2),
             randomize: false,
             payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 32 bytes -> 40-byte packet
+            internal_tick: Duration::from_millis(100), // 10 Hz default, might be overridden
         }
     }
 }
