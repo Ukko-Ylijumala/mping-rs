@@ -407,10 +407,19 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     lo.tablestate.select_column(None);
                 }
 
-                // Pause/resume the selected target
+                // Pause/resume the selected target if it's not stopped
                 (KeyCode::Char(' '), _) => {
                     if let Some(idx) = app.layout.read().tablestate.selected() {
-                        app.toggle_target_pause(idx);
+                        if !app.is_target_stopped(idx) {
+                            app.toggle_target_pause(idx);
+                        }
+                    }
+                }
+
+                // Stop (cancel) the selected target's pinging for good
+                (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
+                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                        app.stop_target(idx);
                     }
                 }
 
@@ -418,6 +427,22 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 (KeyCode::Char('R'), KeyModifiers::SHIFT) => {
                     if let Some(idx) = app.layout.read().tablestate.selected() {
                         app.reset_target_stats(idx);
+                    }
+                }
+
+                // Fully remove a target from the list
+                (KeyCode::Delete, _) => {
+                    let mut lo = app.layout.write();
+                    if let Some(idx) = lo.tablestate.selected() {
+                        app.remove_target(idx);
+
+                        // fix row selection after removal
+                        let len: usize = app.len();
+                        if len == 0 {
+                            lo.tablestate.select(None);
+                        } else if idx == len - 1 {
+                            lo.tablestate.select(Some(idx.saturating_sub(1)));
+                        }
                     }
                 }
 
