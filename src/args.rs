@@ -87,9 +87,9 @@ pub(crate) struct MpConfig {
         long,
         value_name = "ms",
         required = false,
-        value_parser = value_parser!(u64).range(100..5000),
+        value_parser = value_parser!(u64).range(50..5000),
         default_value = "250",
-        help = "TUI refresh interval in milliseconds [100-5000]"
+        help = "TUI refresh interval in milliseconds [50-5000]"
     )]
     pub refresh: u64,
 
