@@ -32,14 +32,14 @@ static MISSING: &str = "-";
 
 /// Main application state structure. Holds shared state across threads and tasks.
 /// Needs to be put into an Arc after intialization, which build() conveniently does.
-pub(crate) struct AppState<'a> {
+pub(crate) struct AppState {
     pub pi: miniutils::ProcessInfo,
     pub c_v4: Option<Arc<Client>>,
     pub c_v6: Option<Arc<Client>>,
     pub targets: RwLock<Vec<Arc<PingTarget>>>,
     pub tasks: RwLock<Vec<tokio::task::JoinHandle<()>>>,
     pub layout: RwLock<AppLayout>,
-    pub title: Option<ratatui::text::Line<'a>>,
+    pub title: Option<ratatui::text::Line<'static>>,
     /// Table headers
     pub headers: RwLock<TableRow>,
     /// UI refresh interval
@@ -55,7 +55,7 @@ pub(crate) struct AppState<'a> {
     pub payload: Arc<[u8]>,
 }
 
-impl AppState<'_> {
+impl AppState {
     /// Build the application state based on the provided configuration.
     /// - set up UI refresh interval
     /// - set up [surge_ping::Client] instances for IPv4 and IPv6 as needed
@@ -145,7 +145,7 @@ impl AppState<'_> {
     }
 }
 
-impl Default for AppState<'_> {
+impl Default for AppState {
     fn default() -> Self {
         Self {
             pi: ProcessInfo::new(),

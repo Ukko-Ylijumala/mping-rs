@@ -89,7 +89,7 @@ async fn update_ping_stats(
 }
 
 /// Set up a ping loop for each target.
-async fn ping_loop<'a>(tgt: Arc<PingTarget>, client: Arc<Client>, app: Arc<AppState<'a>>) {
+async fn ping_loop(tgt: Arc<PingTarget>, client: Arc<Client>, app: Arc<AppState>) {
     let id: PingIdentifier = PingIdentifier(random());
     let mut ticker: Interval = time::interval(app.ping_interval);
     let mut next_ping: Instant = tokio::time::Instant::now();
@@ -259,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: Arc<MpConfig> = MpConfig::parse().into();
 
     let title = Line::from(format!("Multi-pinger v{}", conf.ver));
-    let app: Arc<AppState<'static>> = AppState {
+    let app: Arc<AppState> = AppState {
         title: Some(title.centered().style(Style::new().bold().on_green())),
         ..Default::default()
     }
