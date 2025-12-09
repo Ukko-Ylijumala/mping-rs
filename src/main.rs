@@ -260,7 +260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let title = Line::from(format!("Multi-pinger v{}", conf.ver));
     let app: Arc<AppState> = AppState {
-        title: Some(title.centered().style(Style::new().bold().on_green())),
+        title: Some(title.centered().style(Style::new().bold().red().on_green())),
         ..Default::default()
     }
     .build(
