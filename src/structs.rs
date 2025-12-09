@@ -160,6 +160,15 @@ impl AppState {
             tgt.stop();
         }
     }
+
+    /// Stop pinging the target at the specified index and remove it from the target list.
+    pub fn remove_target(&self, index: usize) {
+        let mut targets = self.targets.write();
+        if let Some(tgt) = targets.get(index) {
+            tgt.stop();
+            targets.remove(index);
+        }
+    }
 }
 
 impl Default for AppState {
