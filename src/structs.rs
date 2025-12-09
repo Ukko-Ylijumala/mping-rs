@@ -114,6 +114,11 @@ impl AppState {
         self.quit.load(Ordering::Relaxed)
     }
 
+    /// Whether the quit flag has been toggled. Async version for `tokio::select!` to `await` on it.
+    pub async fn is_quitting_async(&self) -> bool {
+        self.quit.load(Ordering::Relaxed)
+    }
+
     /// Set the quit flag to true. This triggers a graceful shutdown in a short order.
     pub fn quit(&self) {
         self.quit.store(true, Ordering::Relaxed);
@@ -122,6 +127,11 @@ impl AppState {
     /// Schedule the next UI refresh tick.
     pub fn ui_tick(&self) {
         *self.ui_next_refresh.write() += self.ui_interval;
+    }
+
+    /// Whether it's time for the next UI refresh.
+    pub async fn ui_refresh_elapsed_async(&self) -> bool {
+        tokio::time::Instant::now() >= *self.ui_next_refresh.read()
     }
 
     /// Add new ping targets to the application state.
