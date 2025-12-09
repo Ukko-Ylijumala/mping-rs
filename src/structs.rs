@@ -23,6 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 use surge_ping::{Client, Config, ICMP};
+use tokio_util::sync::CancellationToken;
 
 const MICRO_TO_MILLI: f64 = 1e3;
 const DEFAULT_PAYLOAD_SIZE: usize = 32;
@@ -143,6 +144,22 @@ impl AppState {
             tgt.reset_stats();
         }
     }
+
+    /// Whether pinging is permanently stopped for the target at the specified index.
+    pub fn is_target_stopped(&self, index: usize) -> bool {
+        if let Some(tgt) = self.targets.read().get(index) {
+            tgt.is_stopped()
+        } else {
+            false
+        }
+    }
+
+    /// Stop pinging the target at the specified index. The ping task will abort permanently.
+    pub fn stop_target(&self, index: usize) {
+        if let Some(tgt) = self.targets.read().get(index) {
+            tgt.stop();
+        }
+    }
 }
 
 impl Default for AppState {
@@ -184,6 +201,7 @@ pub(crate) enum PingStatus {
     Lossy,
     Flappy,
     Paused,
+    Stopped,
     #[default]
     None,
 }
@@ -199,6 +217,7 @@ impl Display for PingStatus {
             PingStatus::Lossy => write!(f, "lossy"),
             PingStatus::Flappy => write!(f, "flapping"),
             PingStatus::Paused => write!(f, "paused"),
+            PingStatus::Stopped => write!(f, "stopped"),
             PingStatus::None => write!(f, "{MISSING}"),
         }
     }
@@ -243,6 +262,7 @@ pub(crate) struct PingTarget {
     pub addr: IpAddr,
     pub data: RwLock<PingTargetInner>,
     paused: AtomicBool,
+    cancel: CancellationToken,
 }
 
 impl PingTarget {
@@ -260,6 +280,7 @@ impl PingTarget {
             }
             .into(),
             paused: AtomicBool::new(false),
+            cancel: CancellationToken::new(),
         }
     }
 
@@ -287,6 +308,23 @@ impl PingTarget {
         if !was_paused {
             self.data.write().status = PingStatus::Paused;
         }
+    }
+
+    /// Whether pinging this target has been stopped.
+    pub fn is_stopped(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// Whether pinging this target has been stopped.
+    /// Async version for tokio::select! to `await` on it.
+    pub async fn is_stopped_async(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
+
+    /// Permanently stop pinging this target. Ping task will abort.
+    fn stop(&self) {
+        self.cancel.cancel();
+        self.data.write().status = PingStatus::Stopped;
     }
 
     /// Whether recent packet loss of las N packets exceeds the specified threshold.
