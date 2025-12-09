@@ -23,6 +23,7 @@ crossterm = "0.29"
 ratatui = "0.29"
 parking_lot = "0.12"
 itertools = "0.14"
+tokio-util = "0.7"
 #tracing = "0.1"
 
 [dependencies.tokio]
