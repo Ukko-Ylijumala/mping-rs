@@ -136,6 +136,13 @@ impl AppState<'_> {
             tgt.toggle_pause();
         }
     }
+
+    /// Reset statistics for the target at the specified index.
+    pub fn reset_target_stats(&self, index: usize) {
+        if let Some(tgt) = self.targets.read().get(index) {
+            tgt.reset_stats();
+        }
+    }
 }
 
 impl Default for AppState<'_> {
@@ -257,7 +264,7 @@ impl PingTarget {
     }
 
     /// Reset all statistics for this target as if it was never pinged.
-    pub fn reset_stats(&self) {
+    fn reset_stats(&self) {
         let mut data = self.data.write();
         data.sent = 0;
         data.recv = 0;

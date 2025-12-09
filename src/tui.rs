@@ -409,9 +409,15 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
 
                 // Pause/resume the selected target
                 (KeyCode::Char(' '), _) => {
-                    let sel_idx = app.layout.read().tablestate.selected();
-                    if let Some(idx) = sel_idx {
+                    if let Some(idx) = app.layout.read().tablestate.selected() {
                         app.toggle_target_pause(idx);
+                    }
+                }
+
+                // Reset the selected target's statistics
+                (KeyCode::Char('R'), KeyModifiers::SHIFT) => {
+                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                        app.reset_target_stats(idx);
                     }
                 }
 
