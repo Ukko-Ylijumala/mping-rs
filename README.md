@@ -7,10 +7,11 @@ mping is a small concurrent multi-pinger with a curses TUI that displays live RT
 
 ### Quick features
 - Concurrent async pings per target using Tokio and [`surge-ping`](Cargo.toml).
-- Live ncurses UI showing Sent, Recv, Latest, Mean, Min, Max and Status.
+- Live TUI showing Sent, Recv, Latest, Mean, Min, Max and Status.
+- Uses Ratatui for display and Crossterm for terminal control.
 - IPv4 and IPv6 support.
 - Graceful signal handling (see [`setup_signal_handler`](src/utils.rs)).
-- Configurable interval, timeout and ICMP payload size.
+- Configurable interval, timeout and ICMP payload size/randomization.
 
 ### Key implementation points
 - Targets are represented by [`PingTarget`](src/main.rs) and created with [`make_targets`](src/main.rs).
@@ -33,6 +34,9 @@ Note: raw ICMP sockets are required and appropriate capabilities may be needed.
 ### Usage
 - Provide one or more IP addresses and/or ranges as arguments.
 - Press Ctrl-C or "q" to exit; the program restores the terminal before quitting.
+- Target list can be scrolled with arrow up/down, page up/down and home/end
+- Selected target can be paused with <space> and pinging resetted with "R"
+- Clear selection with <backspace>
 
 SIGKILL cannot be caught, hence console may be left in an unusable state after it because Curses cleanup code has no chance to executed. For example
 ```sh
@@ -40,7 +44,7 @@ tput reset
 ```
 can be blindly entered in the terminal in that case to restore a working console.
 
-### Help message (v0.2.1)
+### Help message (v0.2.9)
 ```
 Multi-pinger utility written in Rust
 
@@ -50,14 +54,18 @@ Arguments:
   <IP1 [IP2...]>...  Space separated list of IP addresses or ranges to monitor
 
 Options:
-  -I, --interval <SECS>  Interval between pings to each target [default: 1]
-  -T, --timeout <SECS>   Timeout for each ping request [default: 2]
-  -s, --size <NUM>       Size of ICMP payload in bytes [default: 32]
-  -H, --histsize <NUM>   History size (number of ping results to keep) [default: 3600]
-  -v, --verbose          Increase output verbosity
-      --debug            Print debug information where applicable
-  -h, --help             Print help
-  -V, --version          Print version
+      --exclude=<IP1[,IP2...]>  Comma-separated IP addresses (and/or ranges) to exclude
+  -I, --interval <SECS>         Interval between pings to each target [0.01-10] [default: 1]
+  -T, --timeout <SECS>          Timeout for each ping request [0.01-5] [default: 2]
+  -s, --size <BYTES>            Size of ICMP payload (minus the 8-byte ICMP header) [32-32760] [default: 32]
+  -R, --randomize               Randomize ICMP payload data [default: no]
+  -H, --histsize <NUM>          Full history size (number of ping results to keep per target) [60-65536] [default: 3600]
+      --detailed <NUM>          Detailed recent history size (for laggy/flappy detection etc) [10-1000] [default: 100]
+      --refresh <ms>            TUI refresh interval in milliseconds [100-5000] [default: 250]
+  -v, --verbose                 Increase output verbosity
+      --debug                   Print debug information where applicable
+  -h, --help                    Print help
+  -V, --version                 Print version
 ```
 
 ### License
