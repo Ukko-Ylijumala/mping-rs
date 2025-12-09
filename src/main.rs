@@ -69,10 +69,12 @@ async fn update_ping_stats(
     };
     stats.recent.push(rec);
 
-    // Update "paused" status here if necessary, as it's the overriding status.
-    // In theory the paused state could have been changed by the task spawned by ping_loop()
+    // Update "paused"/"stopped" statuses here if necessary, as these are overriding.
+    // In theory these states could have been changed by the task spawned by ping_loop()
     // calling this function in the previous iteration before the flag toggle took effect.
-    if tgt.is_paused() && !matches!(stats.status, PingStatus::Paused) {
+    if tgt.is_stopped() && !matches!(stats.status, PingStatus::Stopped) {
+        stats.status = PingStatus::Stopped;
+    } else if tgt.is_paused() && !matches!(stats.status, PingStatus::Paused) {
         stats.status = PingStatus::Paused;
     }
 
@@ -88,75 +90,87 @@ async fn update_ping_stats(
     }
 }
 
+/// Prepare and spawn a single ping task for the given target.
+async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, id: PingIdentifier) {
+    // We must create a new Pinger for each async context, since otherwise we'll have
+    // to wait for the previous ping to complete before sending the next one.
+    let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
+    pinger.timeout(app.ping_timeout);
+
+    // Clone the payload slice into a new one, which we can randomize if needed.
+    // Arc::make_mut() will perform a clone-on-write if necessary.
+    let pl: Arc<[u8]> = match app.randomize {
+        true => {
+            let mut payload: Arc<[u8]> = app.payload.clone();
+            let payload: &mut [u8] = Arc::make_mut(&mut payload);
+            // Can't use a thread-local RNG here (for performance)
+            // because it's not Send'able across await points.
+            // However, we can spare CPU time by randomizing only
+            // the first 32 bytes of the payload, which should be plenty.
+            // And we already know the payload must be 32 bytes minimum.
+            fill(&mut payload[..PAYLOAD_RND_BYTES]);
+            payload.into()
+        }
+        false => app.payload.clone(),
+    };
+
+    // Update sent timestamp as late as possible before sending
+    // so that the time difference is minimized. There will still
+    // be some delay due to task scheduling etc, but this should
+    // be negligible compared to network latencies.
+    let seq: u16 = {
+        let mut stats = tgt.data.write();
+        // update sent count here to make sure it's incremented before
+        // sending so that the main sent count stays accurate even if
+        // ping fails or we get out of order replies etc
+        let sent: u64 = stats.sent;
+        stats.sent += 1;
+        // calculate the 16-bit sequence number from sent count,
+        // since 2^16 is the max for ICMP sequence numbers
+        let seq: u16 = (sent % 65536) as u16;
+        // store last sent seq and timestamp for master reference
+        stats.last_seq = seq;
+        stats.last_sent = Some(std::time::Instant::now());
+        seq
+    };
+
+    tokio::spawn(async move {
+        let rec: PacketRecord = PacketRecord::new(seq);
+        let res = pinger.ping(PingSequence(seq), &pl).await;
+        update_ping_stats(tgt, res, rec).await;
+    });
+}
+
 /// Set up a ping loop for each target.
-async fn ping_loop(tgt: Arc<PingTarget>, client: Arc<Client>, app: Arc<AppState>) {
+async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
+    let client = match tgt.addr {
+        IpAddr::V4(_) => app.c_v4.as_ref().expect("IPv4 client missing"),
+        IpAddr::V6(_) => app.c_v6.as_ref().expect("IPv6 client missing"),
+    };
     let id: PingIdentifier = PingIdentifier(random());
-    let mut ticker: Interval = time::interval(app.ping_interval);
+    let mut ticker: Interval = time::interval(app.internal_tick);
     let mut next_ping: Instant = tokio::time::Instant::now();
 
-    while !app.is_quitting() {
-        ticker.tick().await;
-        if tgt.is_paused() {
-            // Adjust next ping time to not build a backlog while paused.
-            // When unpaused, the next ping should be pretty much immediate
-            // and subsequent pings will resume at the normal interval.
-            next_ping = tokio::time::Instant::now();
-            continue;
-        }
-        if tokio::time::Instant::now() < next_ping {
-            continue;
-        }
+    loop {
+        tokio::select! {
+            biased;
+            true = app.is_quitting_async() => break,
+            true = tgt.is_stopped_async() => break,
+            _ = ticker.tick() => {
+                if tgt.is_paused() {
+                    // Adjust next ping time to not build a backlog while paused.
+                    // When unpaused, the next ping should be pretty much immediate
+                    // and subsequent pings will resume at the normal interval.
+                    next_ping = tokio::time::Instant::now();
+                    continue;
+                } else if tokio::time::Instant::now() < next_ping {
+                    continue;
+                }
 
-        // We must create a new Pinger for each async context, since otherwise we'll have
-        // to wait for the previous ping to complete before sending the next one.
-        let mut pinger: Pinger = client.pinger(tgt.addr, id).await;
-        pinger.timeout(app.ping_timeout);
-        let tgt_clone: Arc<PingTarget> = tgt.clone();
-
-        // Clone the payload slice into a new one, which we can randomize if needed.
-        // Arc::make_mut() will perform a clone-on-write if necessary.
-        let pl: Arc<[u8]> = match app.randomize {
-            true => {
-                let mut payload: Arc<[u8]> = app.payload.clone();
-                let payload: &mut [u8] = Arc::make_mut(&mut payload);
-                // Can't use a thread-local RNG here (for performance)
-                // because it's not Send'able across await points.
-                // However, we can spare CPU time by randomizing only
-                // the first 32 bytes of the payload, which should be plenty.
-                // And we already know the payload must be 32 bytes minimum.
-                fill(&mut payload[..PAYLOAD_RND_BYTES]);
-                payload.into()
+                ping_task(tgt.clone(), &client, &app, id).await;
+                next_ping += app.ping_interval;
             }
-            false => app.payload.clone(),
-        };
-
-        // Update sent timestamp as late as possible before sending
-        // so that the time difference is minimized. There will still
-        // be some delay due to task scheduling etc, but this should
-        // be negligible compared to network latencies.
-        let seq: u16 = {
-            let mut stats = tgt.data.write();
-            // update sent count here to make sure it's incremented before
-            // sending so that the main sent count stays accurate even if
-            // ping fails or we get out of order replies etc
-            let sent: u64 = stats.sent;
-            stats.sent += 1;
-            // calculate the 16-bit sequence number from sent count,
-            // since 2^16 is the max for ICMP sequence numbers
-            let seq: u16 = (sent % 65536) as u16;
-            // store last sent seq and timestamp for master reference
-            stats.last_seq = seq;
-            stats.last_sent = Some(std::time::Instant::now());
-            seq
-        };
-
-        tokio::spawn(async move {
-            let rec: PacketRecord = PacketRecord::new(seq);
-            let res = pinger.ping(PingSequence(seq), &pl).await;
-            update_ping_stats(tgt_clone, res, rec).await;
-        });
-
-        next_ping += app.ping_interval;
+        }
     }
 }
 
@@ -190,7 +204,9 @@ async fn format_row(t: &Arc<PingTarget>, debug: bool, timeout: Duration) -> Tabl
     }
 
     // Add full-row styling based on statuses
-    if t.is_paused() {
+    if t.is_stopped() {
+        row.set_style_all(Style::new().dim().italic().crossed_out());
+    } else if t.is_paused() {
         row.set_style_all(Style::new().dim().italic());
     } else {
         match t.data.read().status {
@@ -281,42 +297,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let mut tasks = app.tasks.write();
         for tgt in app.targets.read().iter() {
-            let client = match tgt.addr {
-                IpAddr::V4(_) => app.c_v4.as_ref().expect("IPv4 client missing"),
-                IpAddr::V6(_) => app.c_v6.as_ref().expect("IPv6 client missing"),
-            };
-            tasks.push(tokio::spawn(ping_loop(
-                tgt.clone(),
-                client.clone(),
-                app.clone(),
-            )));
+            tasks.push(tokio::spawn(ping_loop(tgt.clone(), app.clone())))
         }
     }
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(app.quit.clone());
     let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval.as_millis(), app.verbose)?;
-    let mut tick: Interval = time::interval(app.ui_interval);
+    let mut tick: Interval = time::interval(app.internal_tick);
 
     // Start the key event handling thread
     let app_clone: Arc<AppState> = app.clone();
     let kev_handle = thread::spawn(move || key_event_handler(app_clone));
 
     // Main display loop
-    while !app.is_quitting() {
-        tick.tick().await;
-        if tokio::time::Instant::now() < *app.ui_next_refresh.read() {
-            continue;
+    let mut data = gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await;
+    loop {
+        tokio::select! {
+            biased; // preferentially handle quit condition first
+            true = app.is_quitting_async() => break,
+            true = app.ui_refresh_elapsed_async() => {
+                // Gather data for display and render the frame
+                data = gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await;
+                guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
+                app.ui_schedule_next_refresh();
+            },
+            _ = tick.tick() => { /* no-op, just to keep the select! happy */ }
         }
-
-        // Gather data for display and render the frame
-        let data: Vec<TableRow> =
-            gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await;
-        guard
-            .term
-            .draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
-
-        app.ui_tick();
     }
 
     // Cleanup
@@ -324,15 +331,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if app.debug {
         eprintln!("Main thread quitting. Waiting for tasks to terminate...");
     }
-    kev_handle.join().expect("Error joining key event handler thread");
+    kev_handle
+        .join()
+        .expect("Error joining key event handler thread");
     let mut tasks = app.tasks.write();
     join_all(tasks.iter_mut()).await;
 
     // Print final stats
-    for line in simple_tabulate(
-        &gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await,
-        Some(&app.headers.read().strings()),
-    ) {
+    for line in simple_tabulate(&data, Some(&app.headers.read().strings())) {
         println!("{line}");
     }
     Ok(())
