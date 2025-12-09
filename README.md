@@ -1,6 +1,6 @@
 # mping
 
-mping is a small concurrent multi-pinger with a curses TUI that displays live RTT stats for multiple IPv4/IPv6 targets.
+mping is a small concurrent TUI multi-pinger that displays live RTT stats for multiple IPv4/IPv6 targets.
 
 - Source: [src/main.rs](src/main.rs) (entry: [`main`](src/main.rs))
 - Manifest: [Cargo.toml](Cargo.toml)
