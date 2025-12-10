@@ -27,12 +27,13 @@ use tokio_util::sync::CancellationToken;
 
 const MICRO_TO_MILLI: f64 = 1e3;
 const DEFAULT_PAYLOAD_SIZE: usize = 32;
+const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
 static MISSING: &str = "-";
 
 /// Main application state structure. Holds shared state across threads and tasks.
 /// Needs to be put into an Arc after intialization, which build() conveniently does.
 pub(crate) struct AppState {
-    pub pi: miniutils::ProcessInfo,
+    pub pi: ProcessInfo,
     pub c_v4: Option<Arc<Client>>,
     pub c_v6: Option<Arc<Client>>,
     pub targets: RwLock<Vec<Arc<PingTarget>>>,
@@ -187,7 +188,7 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self {
-            pi: ProcessInfo::new(),
+            pi: ProcessInfo::new().with_min_interval(PROCINFO_INTERVAL),
             c_v4: None,
             c_v6: None,
             targets: vec![].into(),
