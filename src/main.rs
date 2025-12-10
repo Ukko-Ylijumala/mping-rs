@@ -255,7 +255,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .row_highlight_style(Style::new().reversed())
     .column_highlight_style(Style::new().bg(Color::Indexed(240)));
 
-    let procinfo = Paragraph::new(format!(
+    let procinfo = Line::from(format!(
         "CPU: {:>7} | mem: {} | pid: {}",
         state.pi.cpu_str(),
         state.pi.mem_str(),
@@ -265,7 +265,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
     frame.render_widget(&state.title, layout.title);
     frame.render_stateful_widget(table, layout.table, &mut layout.tablestate);
-    frame.render_widget(procinfo, layout.status);
+    frame.render_widget(procinfo, layout.status_r);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
