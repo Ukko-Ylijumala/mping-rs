@@ -36,6 +36,7 @@ features = ["cargo", "derive"]
 
 [dependencies.miniutils]
 git = "https://github.com/Ukko-Ylijumala/miniutils-rs"
+version = "0.2.3"
 
 [profile.release]
 opt-level = 3
