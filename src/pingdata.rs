@@ -137,6 +137,7 @@ impl PingTarget {
     }
 
     /// Whether pinging this target has been stopped.
+    #[inline]
     pub fn is_stopped(&self) -> bool {
         self.cancel.is_cancelled()
     }
@@ -151,6 +152,12 @@ impl PingTarget {
     pub fn stop(&self) {
         self.cancel.cancel();
         self.data.write().status = PingStatus::Stopped;
+    }
+
+    /// Whether this target is (currently) considered unreachable.
+    #[inline]
+    pub fn is_unreachable(&self) -> bool {
+        matches!(self.data.read().status, PingStatus::NotReachable)
     }
 
     /// Whether recent packet loss of las N packets exceeds the specified threshold.
