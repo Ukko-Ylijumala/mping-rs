@@ -7,6 +7,7 @@
 mod args;
 mod ip_addresses;
 mod latencywin;
+mod pingdata;
 mod structs;
 mod tabulator;
 mod tui;
@@ -14,7 +15,8 @@ mod utils;
 
 use crate::{
     args::MpConfig,
-    structs::{AppState, PacketRecord, PingStatus, PingTarget, StatsSnapshot},
+    pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
+    structs::AppState,
     tabulator::simple_tabulate,
     tui::{TableRow, TerminalGuard, key_event_handler},
     utils::setup_signal_handler,
