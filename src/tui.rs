@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{structs::AppState, strings::*};
+use crate::{strings::*, structs::AppState};
 use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyModifiers},
@@ -446,7 +446,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     let mut lo = app.layout.write();
                     let step: u16 = match m {
                         KeyModifiers::SHIFT => 10,
-                        _ => lo.table.height.saturating_sub(2),
+                        _ => lo.table.height.saturating_sub(4), // 1 + borders + header
                     };
                     lo.tablestate.scroll_up_by(step);
                 }
@@ -454,7 +454,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     let mut lo = app.layout.write();
                     let step: u16 = match m {
                         KeyModifiers::SHIFT => 10,
-                        _ => lo.table.height.saturating_sub(2),
+                        _ => lo.table.height.saturating_sub(4),
                     };
                     lo.tablestate.scroll_down_by(step);
                 }
