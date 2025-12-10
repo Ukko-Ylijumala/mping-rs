@@ -8,6 +8,7 @@ mod args;
 mod ip_addresses;
 mod latencywin;
 mod pingdata;
+mod strings;
 mod structs;
 mod tabulator;
 mod tui;
@@ -16,6 +17,7 @@ mod utils;
 use crate::{
     args::MpConfig,
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
+    strings::*,
     structs::AppState,
     tabulator::simple_tabulate,
     tui::{TableRow, TerminalGuard, key_event_handler},
@@ -146,8 +148,8 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
 /// Set up a ping loop for each target.
 async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
     let client = match tgt.addr {
-        IpAddr::V4(_) => app.c_v4.as_ref().expect("IPv4 client missing"),
-        IpAddr::V6(_) => app.c_v6.as_ref().expect("IPv6 client missing"),
+        IpAddr::V4(_) => app.c_v4.as_ref().expect(ERR_V4_MISSING),
+        IpAddr::V6(_) => app.c_v6.as_ref().expect(ERR_V6_MISSING),
     };
     let id: PingIdentifier = PingIdentifier(random());
     let mut ticker: Interval = time::interval(app.internal_tick);
@@ -246,12 +248,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     layout.update(frame.area(), &data);
 
     let block = Block::bordered().title_bottom(Line::from(format!(" Targets: {} ", state.len())));
-    let headers = state.headers.read();
     let table = Table::new(
         data.iter().map(|r| Row::new(r.cells())),
         &layout.tbl_constraints,
     )
-    .header(Row::new(headers.cells()))
+    .header(Row::new(state.headers.cells()))
     .column_spacing(layout.tbl_colspacing)
     .block(block)
     .row_highlight_style(Style::new().reversed())
@@ -274,26 +275,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conf: Arc<MpConfig> = MpConfig::parse().into();
-
-    let title = Line::from(format!("Multi-pinger v{}", conf.ver));
-    let app: Arc<AppState> = AppState {
-        title: Some(title.centered().style(Style::new().bold().red().on_green())),
-        ..Default::default()
-    }
-    .build(
+    let conf: MpConfig = MpConfig::parse();
+    let app: Arc<AppState> = AppState::default().build(
         &conf,
         make_targets(&conf.addrs, conf.histsize, conf.detailed),
     )?;
-
-    // Setup table header style and cache widths. Layout is locked for this block only.
-    {
-        let mut headers = app.headers.write();
-        headers.set_style_all(Style::new().bold().yellow());
-        let mut layout = app.layout.write();
-        layout.tbl_hdr_widths = headers.widths();
-        layout.tbl_colspacing = 2;
-    }
 
     // Spawn ping tasks
     {
@@ -331,16 +317,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Cleanup
     drop(guard); // explicitly drop TUI guard to restore terminal so we can print
     if app.debug {
-        eprintln!("Main thread quitting. Waiting for tasks to terminate...");
+        eprintln!("{INFO_QUITTING}");
     }
-    kev_handle
-        .join()
-        .expect("Error joining key event handler thread");
+    kev_handle.join().expect(ERR_KEV_JOIN);
     let mut tasks = app.tasks.write();
     join_all(tasks.iter_mut()).await;
 
     // Print final stats
-    for line in simple_tabulate(&data, Some(&app.headers.read().strings())) {
+    for line in simple_tabulate(&data, Some(&app.headers.strings())) {
         println!("{line}");
     }
     Ok(())
