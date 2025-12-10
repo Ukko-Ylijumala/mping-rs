@@ -20,37 +20,44 @@ use std::{
     fmt,
     io::{Result, Stdout, stdout},
     panic,
-    rc::Rc,
-    sync::{
-        Arc,
-    },
+    sync::Arc,
     time::Duration,
 };
 
 #[derive(Debug, Default)]
 /// Layout structure for Ratatui frames.
 ///
-/// Create the initial layout with [AppLayout::default()], then call
-/// [AppLayout::update()] on each frame render to adjust to any terminal
-/// size changes. Update is a no-op if the size hasn't changed.
+/// Create the initial layout with [AppLayout::default], then call
+/// [AppLayout::update] on each frame render to adjust to terminal
+/// size changes etc. Update is a no-op if the size hasn't changed.
 ///
 /// Current layout:
 ///
 /// ```text
-/// |   title   |  (1 line)
-/// +-----------+
-/// |           |
-/// |  middle   |
-/// |           |
-/// +-----------+
-/// |   status  |  (1 line)
+/// +-------------------------+
+/// |        > title <        | (1 line)
+/// +-------------------------+
+/// |                         |
+/// | middle                  |
+/// |                         |
+/// +-------------------------+
+/// |> status    |  procinfo <| (1 line)
+/// +-------------------------+
 ///
-/// Middle is further divided into two sections with table having priority:
-/// +----------------------+
-/// |               |      |
-/// |  table        | info |
-/// |               |      |
-/// +----------------------+
+/// Middle is further divided into sections (table has priority):
+/// +-----------------+-------+
+/// |                 | info  |
+/// |                 | upper |
+/// |                 |       |
+/// |  table          |       |
+/// |                 |-------|
+/// |                 | info  |
+/// |                 | lower |
+/// +-----------------+-------+
+///
+/// We also define the following modal areas:
+/// - `popup`: centered text box (for multiline text)
+/// - `input`: centered input area (for modal text input)
 /// ```
 pub(crate) struct AppLayout {
     /// Full frame area
@@ -59,10 +66,18 @@ pub(crate) struct AppLayout {
     pub title: Rect,
     /// Main table area
     pub table: Rect,
-    /// Info area (right side)
-    pub info: Rect,
-    /// Status bar area - bottom line
-    pub status: Rect,
+    /// Info area (right side) - upper part
+    pub info_upper: Rect,
+    /// Info area (right side) - lower part
+    pub info_lower: Rect,
+    /// Status bar area - bottom line - left side
+    pub status_l: Rect,
+    /// Status bar area - bottom line - right side (process info)
+    pub status_r: Rect,
+    /// Popup area for multiline text etc
+    pub popup: Rect,
+    /// Input area for text input etc
+    pub input: Rect,
     /// Precomputed visible widths of table headers
     pub tbl_hdr_widths: Vec<usize>,
     /// Spacing between table columns
@@ -71,6 +86,8 @@ pub(crate) struct AppLayout {
     pub tbl_constraints: Vec<Constraint>,
     /// Stateful table state for managing selection, scrolling, etc.
     pub tablestate: TableState,
+    pub popup_visible: bool,
+    pub input_visible: bool,
     tbl_width: u16,
 }
 
@@ -90,29 +107,71 @@ impl AppLayout {
         self.tbl_width = self.tbl_width.max(tblsize);
 
         // Create vertical layout
-        let full: Rc<[Rect]> = Layout::vertical([
-            Constraint::Length(1), // title - 1 line
-            Constraint::Min(1),    // table
-            Constraint::Length(1), // status - 1 line
-        ])
-        .split(frame);
-        let (title, middle, status) = (full[0], full[1], full[2]);
+        let (title, middle, status) = {
+            let full = Layout::vertical([
+                Constraint::Length(1), // title - 1 line
+                Constraint::Min(1),    // table
+                Constraint::Length(1), // status - 1 line
+            ])
+            .split(frame);
+            (full[0], full[1], full[2])
+        };
 
         // split middle into table and info areas with table size being fixed
         let spacing: u16 = self.tbl_colspacing * (self.tbl_hdr_widths.len() as u16 - 1);
-        let middle: Rc<[Rect]> = Layout::horizontal([
-            Constraint::Min(self.tbl_width + spacing + 2), // table + borders
-            Constraint::Fill(1),                           // info
-        ])
-        .split(middle);
-        let (table, info) = (middle[0], middle[1]);
+        let (table, info) = {
+            let middle = Layout::horizontal([
+                Constraint::Min(self.tbl_width + spacing + 2), // table + borders
+                Constraint::Fill(1),                           // info
+            ])
+            .split(middle);
+            (middle[0], middle[1])
+        };
+
+        // split info into upper and lower parts
+        let (info_upper, info_lower) = {
+            let info = Layout::vertical([
+                Constraint::Fill(1),   // upper info
+                Constraint::Length(5), // lower info
+            ])
+            .split(info);
+            (info[0], info[1])
+        };
+
+        // split status into left and right sides
+        let (status_l, status_r) = {
+            let status = Layout::horizontal([
+                Constraint::Percentage(50), // left side
+                Constraint::Percentage(50), // right side (process info)
+            ])
+            .split(status);
+            (status[0], status[1])
+        };
+        // centered popup area (50% width/height)
+        let popup: Rect = Rect {
+            x: frame.x + frame.width / 4,
+            y: frame.y + frame.height / 4,
+            width: frame.width / 2,
+            height: frame.height / 2,
+        };
+        // centered input area (30% width, 5 lines height)
+        let input: Rect = Rect {
+            x: frame.x + frame.width * 35 / 100,
+            y: frame.y + frame.height / 2 - 1,
+            width: frame.width * 30 / 100,
+            height: 5,
+        };
 
         // Update layout rectangles
         self.frame = frame;
         self.title = title;
         self.table = table;
-        self.info = info;
-        self.status = status;
+        self.info_upper = info_upper;
+        self.info_lower = info_lower;
+        self.status_l = status_l;
+        self.status_r = status_r;
+        self.popup = popup;
+        self.input = input;
     }
 
     /// Update column widths based on data.
