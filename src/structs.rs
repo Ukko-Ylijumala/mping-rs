@@ -5,11 +5,13 @@
 use crate::{
     args::MpConfig,
     pingdata::PingTarget,
+    strings::{APP_TITLE, HEADERS},
     tui::{AppLayout, TableRow},
     utils::nice_permission_error,
 };
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
+use ratatui::{prelude::Stylize, style::Style, text::Line};
 use std::{
     net::IpAddr,
     sync::{
@@ -32,9 +34,9 @@ pub(crate) struct AppState {
     pub targets: RwLock<Vec<Arc<PingTarget>>>,
     pub tasks: RwLock<Vec<tokio::task::JoinHandle<()>>>,
     pub layout: RwLock<AppLayout>,
-    pub title: Option<ratatui::text::Line<'static>>,
+    pub title: Line<'static>,
     /// Table headers
-    pub headers: RwLock<TableRow>,
+    pub headers: TableRow,
     /// UI refresh interval
     pub ui_interval: Duration,
     /// Next scheduled UI refresh time
@@ -59,13 +61,26 @@ impl AppState {
     /// and allows socket reuse.
     pub fn build(
         mut self,
-        conf: &Arc<MpConfig>,
+        conf: &MpConfig,
         targets: Vec<PingTarget>,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         self.debug = conf.debug;
         self.verbose = conf.verbose;
+
+        // setup app title row with version and styling
+        self.title.push_span(format!(" v{}", conf.ver));
+        self.title = self.title.centered().bold().red().on_green();
+
+        // setup header styling and add debug column if needed
+        // also update layout info with header widths and column spacing
+        self.headers.set_style_all(Style::new().bold().yellow());
         if self.debug {
-            self.headers.write().add_item("Seq");
+            self.headers.add_item("Seq");
+        }
+        {
+            let mut layout = self.layout.write();
+            layout.tbl_hdr_widths = self.headers.widths();
+            layout.tbl_colspacing = 2;
         }
 
         self.ui_interval = Duration::from_millis(conf.refresh);
@@ -187,11 +202,8 @@ impl Default for AppState {
             targets: vec![].into(),
             tasks: vec![].into(),
             layout: AppLayout::default().into(),
-            title: None,
-            headers: TableRow::from_iter([
-                "Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status",
-            ])
-            .into(),
+            title: Line::from(APP_TITLE),
+            headers: TableRow::from_iter(HEADERS),
             ui_interval: Duration::from_millis(250),
             ui_next_refresh: tokio::time::Instant::now().into(),
             verbose: false,
