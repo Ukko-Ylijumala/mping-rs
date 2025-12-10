@@ -489,19 +489,32 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     }
                 }
 
-                // Fully remove a target from the list
-                (KeyCode::Delete, _) => {
+                // Fully remove a target or targets from the list
+                (KeyCode::Delete, e) => {
                     let mut lo = app.layout.write();
-                    if let Some(idx) = lo.tablestate.selected() {
-                        app.remove_target(idx);
-
-                        // fix row selection after removal
-                        let len: usize = app.len();
-                        if len == 0 {
-                            lo.tablestate.select(None);
-                        } else if idx == len - 1 {
-                            lo.tablestate.select(Some(idx.saturating_sub(1)));
+                    match e {
+                        // Stop and remove all unreachable targets from the list
+                        KeyModifiers::CONTROL => {
+                            if app.remove_all_unreachables() > 0 {
+                                // clear row selection after removal
+                                lo.tablestate.select(None);
+                            }
                         }
+                        // Stop and remove the selected target
+                        KeyModifiers::NONE => {
+                            if let Some(idx) = lo.tablestate.selected() {
+                                app.remove_target(idx);
+
+                                // fix row selection after removal
+                                let len: usize = app.len();
+                                if len == 0 {
+                                    lo.tablestate.select(None);
+                                } else if idx == len - 1 {
+                                    lo.tablestate.select(Some(idx.saturating_sub(1)));
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
 
