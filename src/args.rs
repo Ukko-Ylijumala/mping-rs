@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{ip_addresses::parse_ip_or_range, utils::parse_float_into_duration};
+use crate::{ip_addresses::parse_ip_or_range, strings::*, utils::parse_float_into_duration};
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
 use std::{collections::HashSet, fmt::Debug, net::IpAddr, process, time::Duration};
 
@@ -10,11 +10,7 @@ use std::{collections::HashSet, fmt::Debug, net::IpAddr, process, time::Duration
 #[derive(Parser, Default, Debug, Clone)]
 #[command(name = crate_name!(), version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 pub(crate) struct MpConfig {
-    #[arg(
-        required = true,
-        value_name = "IP1 [IP2...]",
-        help = "Space separated list of IP addresses or ranges to monitor"
-    )]
+    #[arg(required = true, value_name = "IP1 [IP2...]", help = HELP_TARGETS)]
     pub targets: Vec<String>,
 
     #[arg(
@@ -22,7 +18,7 @@ pub(crate) struct MpConfig {
         value_name = "IP1[,IP2...]",
         value_delimiter = ',',
         require_equals = true,
-        help = "Comma-separated IP addresses (and/or ranges) to exclude"
+        help = HELP_EXCLUDE
     )]
     pub exclude: Vec<String>,
 
@@ -33,7 +29,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "1",
-        help = "Interval between pings to each target [0.01-10]"
+        help = HELP_INTERVAL
     )]
     pub interval: Duration,
 
@@ -44,7 +40,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "2",
-        help = "Timeout for each ping request [0.01-5]"
+        help = HELP_TIMEOUT
     )]
     pub timeout: Duration,
 
@@ -55,11 +51,11 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u16).range(32..32760),
         default_value = "32",
-        help = "Size of ICMP payload (minus the 8-byte ICMP header) [32-32760]"
+        help = HELP_SIZE
     )]
     pub size: u16,
 
-    #[arg(long, short = 'R', help = "Randomize ICMP payload data [default: no]")]
+    #[arg(long, short = 'R', help = HELP_RANDOMIZE)]
     pub randomize: bool,
 
     #[arg(
@@ -69,7 +65,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u32).range(60..65536),
         default_value = "3600",
-        help = "Full history size (number of ping results to keep per target) [60-65536]"
+        help = HELP_HISTSIZE
     )]
     pub histsize: u32,
 
@@ -79,7 +75,7 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u16).range(10..1000),
         default_value = "100",
-        help = "Detailed recent history size (for laggy/flappy detection etc) [10-1000]"
+        help = HELP_DETAILED
     )]
     pub detailed: u16,
 
@@ -89,14 +85,14 @@ pub(crate) struct MpConfig {
         required = false,
         value_parser = value_parser!(u64).range(50..5000),
         default_value = "250",
-        help = "TUI refresh interval in milliseconds [50-5000]"
+        help = HELP_REFRESH
     )]
     pub refresh: u64,
 
-    #[arg(long, short = 'v', help = "Increase output verbosity")]
+    #[arg(long, short = 'v', help = HELP_VERBOSE)]
     pub verbose: bool,
 
-    #[arg(long, help = "Print debug information where applicable")]
+    #[arg(long, help = HELP_DEBUG)]
     pub debug: bool,
 
     #[arg(skip)]
@@ -117,15 +113,13 @@ impl MpConfig {
         for target in &config.targets {
             match parse_ip_or_range(target) {
                 Ok(mut ips) => {
-                    if config.verbose {
-                        if ips.len() > 1 {
-                            eprintln!("Expanded '{target}' to {} addresses", ips.len());
-                        }
+                    if config.verbose && ips.len() > 1 {
+                        eprintln!("Expanded '{target}' to {} addresses", ips.len());
                     }
                     all_addrs.append(&mut ips);
                 }
                 Err(e) => {
-                    eprintln!("Error parsing target '{target}': {e}");
+                    eprintln!("{ERR_PARSE_IP} '{target}': {e}");
                     process::exit(1);
                 }
             }
@@ -140,15 +134,13 @@ impl MpConfig {
         for exc in &config.exclude {
             match parse_ip_or_range(exc) {
                 Ok(mut ips) => {
-                    if config.verbose {
-                        if ips.len() > 1 {
-                            eprintln!("Expanded '{exc}' to {} addresses (exclusion)", ips.len());
-                        }
+                    if config.verbose && ips.len() > 1 {
+                        eprintln!("Expanded '{exc}' to {} addresses (exclusion)", ips.len());
                     }
                     exclusions.extend(ips.drain(..));
                 }
                 Err(e) => {
-                    eprintln!("Error parsing exclusion '{exc}': {e}");
+                    eprintln!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}");
                     process::exit(1);
                 }
             }
@@ -159,16 +151,13 @@ impl MpConfig {
             // let's see if we actually exclude anything
             let remainder: HashSet<IpAddr> = &seen - &exclusions;
             if remainder == seen {
-                eprintln!("WARN: exclusions did not match any target addresses.");
+                eprintln!("{WARN_NO_MATCHES}");
             } else if remainder.is_empty() {
-                eprintln!("All target addresses were excluded.");
+                eprintln!("{ERR_ALL_EXCLUDED}");
                 process::exit(1);
             } else {
                 if config.verbose {
-                    eprintln!(
-                        "Excluding {} addresses from target list",
-                        (seen.len() - remainder.len())
-                    );
+                    eprintln!("{INFO_EXCLUDE}: {}", (seen.len() - remainder.len()));
                 }
                 all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
             }
@@ -176,10 +165,10 @@ impl MpConfig {
 
         config.addrs = all_addrs;
         if config.addrs.is_empty() {
-            eprintln!("No valid IP addresses provided.");
+            eprintln!("{ERR_NO_VALID_IPS}");
             process::exit(1);
         } else if config.verbose {
-            eprintln!("Total unique addresses to monitor: {}", config.addrs.len());
+            eprintln!("{INFO_UNIQUE}: {}", config.addrs.len());
         }
 
         // clamp interval between 10ms and 10s...
@@ -203,7 +192,7 @@ impl MpConfig {
         if config.timeout > limit {
             if config.verbose {
                 eprintln!(
-                    "Adjusting timeout ({:.2}s -> {:.2}s) to avoid excessive concurrent pings (interval: {:.2}s)",
+                    "{INFO_ADJUST} ({:.2}s -> {:.2}s, interval: {:.2}s)",
                     config.timeout.as_secs_f64(),
                     limit.as_secs_f64(),
                     config.interval.as_secs_f64(),

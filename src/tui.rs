@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::structs::AppState;
+use crate::{structs::AppState, strings::*};
 use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyModifiers},
@@ -364,7 +364,7 @@ impl TerminalGuard {
     pub fn new(interval_ms: u128, verbose: bool) -> Result<Self> {
         if verbose {
             let hz: f64 = 1e3 / interval_ms as f64;
-            eprintln!("Initializing terminal UI (display refresh rate: {hz:.1} Hz)...");
+            eprintln!("{TUI_INIT}: {hz:.1} Hz.");
         }
 
         // set up the ratatui/crossterm environment (panic hook first!)
@@ -392,14 +392,14 @@ fn terminal_teardown(verbose: bool) {
     let _ = execute!(stdout(), LeaveAlternateScreen, Show);
 
     if verbose {
-        eprintln!("Terminal UI was terminated.");
+        eprintln!("{TUI_TERMINATE}");
     }
 }
 
 /// Panic handler to restore the console to a sane state if a panic occurs
 pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
     terminal_teardown(true);
-    eprintln!("Application panic: {}", info);
+    eprintln!("{APP_PANIC}: {}", info);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

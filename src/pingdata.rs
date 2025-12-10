@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::latencywin::LatencyWindow;
+use crate::{latencywin::LatencyWindow, strings::*};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{
@@ -16,7 +16,6 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 const MICRO_TO_MILLI: f64 = 1e3;
-static MISSING: &str = "-";
 
 #[derive(Debug, Default, Clone)]
 pub(crate) enum PingStatus {
@@ -215,7 +214,7 @@ impl PacketRecord {
     pub fn rtt(&self) -> Result<Duration, String> {
         match self.rtt {
             Some(rtt) => Ok(rtt),
-            None => Err("No response".to_string()),
+            None => Err(ERR_NO_RESP.into()),
         }
     }
 
@@ -299,7 +298,7 @@ impl PacketHistory {
     /// Calculate the total timespan covered by the history.
     pub fn timespan(&self) -> Result<Duration, String> {
         if self.len() < 2 {
-            return Err("Not enough records to calculate timespan".to_string());
+            return Err(ERR_NOTENOUGH.into());
         }
         let (first, last) = (self.first().unwrap().sent, self.last().unwrap().sent);
         Ok(last.duration_since(first))
@@ -339,12 +338,18 @@ impl PacketHistory {
             .count()
     }
 
+    #[inline]
+    fn no_records_check(&self) -> Result<(), String> {
+        if self.is_empty() {
+            return Err(ERR_NORECORDS.into());
+        }
+        Ok(())
+    }
+
     /// Determine the minimum RTT in the history.
     #[inline]
     pub fn min(&self) -> Result<Duration, String> {
-        if self.is_empty() {
-            return Err("No records".to_string());
-        }
+        self.no_records_check()?;
 
         match self
             .iter()
@@ -352,16 +357,14 @@ impl PacketHistory {
             .min()
         {
             Some(v) => Ok(v),
-            None => Err("Could not find min RTT".to_string()),
+            None => Err(ERR_NO_RTT.into()),
         }
     }
 
     /// Determine the maximum RTT in the history.
     #[inline]
     pub fn max(&self) -> Result<Duration, String> {
-        if self.is_empty() {
-            return Err("No records".to_string());
-        }
+        self.no_records_check()?;
 
         match self
             .iter()
@@ -369,20 +372,18 @@ impl PacketHistory {
             .max()
         {
             Some(v) => Ok(v),
-            None => Err("Could not find max RTT".to_string()),
+            None => Err(ERR_NO_RTT.into()),
         }
     }
 
     /// Calculate the mean (average) RTT in the history (or given N-sized window).
     pub fn mean(&self, n: Option<usize>) -> Result<Duration, String> {
-        if self.is_empty() {
-            return Err("No records to calculate mean RTT".to_string());
-        }
+        self.no_records_check()?;
 
         let skip: usize = match n {
             None => 0,
             Some(ws) if ws <= self.len() => self.len() - ws,
-            Some(_) => return Err("Window size exceeds history length".to_string()),
+            Some(_) => return Err(ERR_LARGE_WIN.into()),
         };
 
         let (sum, count) = self
@@ -392,7 +393,7 @@ impl PacketHistory {
             .fold((Duration::ZERO, 0u32), |(s, c), rtt| (s + rtt, c + 1));
 
         if count == 0 {
-            return Err("No valid RTTs to calculate mean".to_string());
+            return Err(ERR_NOTENOUGH.into());
         }
 
         Ok(sum / count)
