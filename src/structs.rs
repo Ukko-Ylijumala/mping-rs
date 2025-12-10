@@ -191,6 +191,20 @@ impl AppState {
             targets.remove(index);
         }
     }
+
+    /// Remove all unreachable targets and return the count if any were nuked.
+    pub fn remove_all_unreachables(&self) -> usize {
+        let mut targets = self.targets.write();
+        let orig_len: usize = targets.len();
+        targets.retain(|tgt: &Arc<PingTarget>| match tgt.is_unreachable() {
+            true => {
+                tgt.stop();
+                false
+            }
+            false => true,
+        });
+        orig_len.saturating_sub(targets.len())
+    }
 }
 
 impl Default for AppState {
