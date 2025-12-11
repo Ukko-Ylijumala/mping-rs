@@ -29,7 +29,7 @@ use miniutils::ToDisplay;
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
 use std::{net::IpAddr, sync::Arc, thread, time::Duration};
-use surge_ping::{Client, IcmpPacket, PingIdentifier, PingSequence, Pinger, SurgeError};
+use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
 use tokio::time::{self, Instant, Interval};
 
 const PAYLOAD_RND_BYTES: usize = 32;
@@ -42,29 +42,6 @@ fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16) -> Vec<PingTarge
         .iter()
         .map(|addr| PingTarget::new(*addr, histsize as usize, detailed as usize))
         .collect()
-}
-
-/// Update ping statistics based on the result. Separated into fn for target lock granularity.
-async fn update_ping_stats(
-    tgt: Arc<PingTarget>,
-    res: Result<(IcmpPacket, Duration), SurgeError>,
-    mut rec: PacketRecord,
-) {
-    let mut inner = tgt.data.write();
-    let status: PingStatus = match res {
-        Ok((_, dur)) => {
-            inner.recv += 1;
-            inner.rtts.push(dur.as_micros() as u32);
-            rec.set_rtt(dur);
-            PingStatus::Ok
-        }
-        Err(e) => match e {
-            SurgeError::Timeout { .. } => PingStatus::Timeout,
-            _ => PingStatus::Error(e.to_display()),
-        },
-    };
-    let _ = inner.set_status(status);
-    inner.recent.push(rec);
 }
 
 /// Prepare and spawn a single ping task for the given target.
@@ -114,7 +91,7 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
     tokio::spawn(async move {
         let rec: PacketRecord = PacketRecord::new(seq);
         let res = pinger.ping(PingSequence(seq), &pl).await;
-        update_ping_stats(tgt, res, rec).await;
+        tgt.update_stats(res, rec).await;
     });
 }
 
