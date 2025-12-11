@@ -189,7 +189,10 @@ impl PingTarget {
             }
             Err(e) => match e {
                 SurgeError::Timeout { .. } => PingStatus::Timeout,
-                _ => PingStatus::Error(e.to_string()),
+                _ => {
+                    inner.sent -= 1; // don't count errors, as the packet was never sent
+                    PingStatus::Error(e.to_string())
+                },
             },
         };
         inner.recent.push(rec);
