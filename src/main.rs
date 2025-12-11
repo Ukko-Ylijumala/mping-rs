@@ -181,11 +181,48 @@ async fn format_row(tgt: &Arc<PingTarget>, debug: bool, timeout: Duration) -> Ta
     row
 }
 
-/// Gather current data from all targets.
-#[inline]
-async fn gather_target_data(tgts: &[Arc<PingTarget>], debug: bool, to: Duration) -> Vec<TableRow> {
-    // Run all row formatter tasks concurrently
-    join_all(tgts.iter().map(|t| format_row(t, debug, to))).await
+/// Gather current stringified data from some or all targets.
+///
+/// For large target lists, gathering data for all can be slow, hence
+/// it makes sense to only gather data for the currently visible targets
+/// in the TUI table. This function supports both modes via the `all` param.
+async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
+    let tgts = state.targets.read();
+    let items: usize = tgts.len();
+    let rows: usize = state.layout.read().tbl_usable_rows();
+
+    // Full list requested, or we have fewer targets than rows
+    if all || items <= rows {
+        return join_all(
+            tgts.iter()
+                .map(|t| format_row(t, state.debug, state.ping_timeout)),
+        )
+        .await;
+    }
+
+    // Since the target list is longer than the table height, we have to fake
+    // empty rows for Ratatui to render the full table. We create those to fill
+    // the space. Depending on the offset, we need to do this at the start, end
+    // or both. Chaining the Vec iterators makes this fairly straightforward.
+    let offset: usize = state.layout.read().tablestate.offset();
+    let end_pos: usize = offset + rows;
+    let pre: Vec<TableRow> = vec![TableRow::new(); offset];
+    let post: Vec<TableRow> = vec![TableRow::new(); items.saturating_sub(end_pos)];
+    let visible: &[Arc<PingTarget>] = &tgts[offset..items.min(end_pos)];
+
+    // Combine the Vec iterators
+    pre.into_iter()
+        .chain(
+            join_all(
+                visible
+                    .iter()
+                    .map(|t| format_row(t, state.debug, state.ping_timeout)),
+            )
+            .await
+            .into_iter(),
+        )
+        .chain(post.into_iter())
+        .collect()
 }
 
 /// Render the current frame. Display will be updated as soon as this function completes.
@@ -195,10 +232,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
     let block = Block::bordered().title_bottom(Line::from(format!(" Targets: {} ", state.len())));
     let table = Table::new(
-        data.iter().map(|r| Row::new(r.cells())),
+        data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
         &layout.tbl_constraints,
     )
-    .header(Row::new(state.headers.cells()))
+    .header((&state.headers).into())
     .column_spacing(layout.tbl_colspacing)
     .block(block)
     .row_highlight_style(Style::new().reversed())
@@ -215,6 +252,17 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     frame.render_widget(&state.title, layout.title);
     frame.render_stateful_widget(table, layout.table, &mut layout.tablestate);
     frame.render_widget(procinfo, layout.status_r);
+
+    if state.debug {
+        let ts = &layout.tablestate;
+        let dbg = Line::from(format!(
+            " Data: {}, offset: {}, selected: {}",
+            data.len(),
+            ts.offset(),
+            ts.selected().map_or("none".into(), |s| s.to_string()),
+        ));
+        frame.render_widget(dbg, layout.status_l);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -245,14 +293,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kev_handle = thread::spawn(move || key_event_handler(app_clone));
 
     // Main display loop
-    let mut data = gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await;
+    let mut data = gather_target_data(&app, true).await;
     loop {
         tokio::select! {
             biased; // preferentially handle quit condition first
             true = app.is_quitting_async() => break,
             true = app.ui_refresh_elapsed_async() => {
                 // Gather data for display and render the frame
-                data = gather_target_data(&app.targets.read(), app.debug, app.ping_timeout).await;
+                data = gather_target_data(&app, false).await;
                 guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
                 app.ui_schedule_next_refresh();
             },
