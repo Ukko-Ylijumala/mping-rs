@@ -16,6 +16,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use surge_ping::{IcmpPacket, SurgeError};
 use tokio_util::sync::CancellationToken;
 
 const MICROS_PER_MILLI: f64 = 1e3;
@@ -120,21 +121,6 @@ impl PingTargetInner {
         false
     }
 
-    /// Set the raw status of this target. Must be one of:
-    /// - [PingStatus::Ok]
-    /// - [PingStatus::Timeout]
-    /// - [PingStatus::Error]
-    pub fn set_status(&mut self, status: PingStatus) -> Result<(), String> {
-        if !matches!(
-            status,
-            PingStatus::Ok | PingStatus::Timeout | PingStatus::Error(_)
-        ) {
-            return Err(format!("Invalid status"));
-        }
-        self.raw_status = status;
-        Ok(())
-    }
-
     /// Determine the effective status of this target based on recent history analysis.
     /// Does NOT return "paused" or "stopped" states (as that requires access to parent).
     #[inline]
@@ -185,6 +171,28 @@ impl PingTarget {
             paused: AtomicBool::new(false),
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Update statistics based on the result of a ping attempt and the associated packet record.
+    pub async fn update_stats(
+        &self,
+        res: Result<(IcmpPacket, Duration), SurgeError>,
+        mut rec: PacketRecord,
+    ) {
+        let mut inner = self.data.write();
+        inner.raw_status = match res {
+            Ok((_, dur)) => {
+                inner.recv += 1;
+                inner.rtts.push(dur.as_micros() as u32);
+                rec.set_rtt(dur);
+                PingStatus::Ok
+            }
+            Err(e) => match e {
+                SurgeError::Timeout { .. } => PingStatus::Timeout,
+                _ => PingStatus::Error(e.to_string()),
+            },
+        };
+        inner.recent.push(rec);
     }
 
     /// Reset all statistics for this target as if it was never pinged.
