@@ -14,7 +14,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Cell, TableState},
+    widgets::{Cell, Row, TableState},
 };
 use std::{
     fmt,
@@ -23,6 +23,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
+const TBL_WASTED_ROWS: u16 = 3; // borders + header
 
 #[derive(Debug, Default)]
 /// Layout structure for Ratatui frames.
@@ -174,6 +176,11 @@ impl AppLayout {
         self.input = input;
     }
 
+    /// Get the number of usable rows in the table area (excluding borders and header).
+    pub fn tbl_usable_rows(&self) -> usize {
+        self.table.height.saturating_sub(TBL_WASTED_ROWS) as usize
+    }
+
     /// Update column widths based on data.
     fn update_col_widths(&mut self, data: &[TableRow]) -> u16 {
         // Start with header widths as minimums
@@ -263,12 +270,23 @@ impl fmt::Display for TableItem {
 }
 
 /// Row of [TableItem]s for Ratatui tables. Each item carries its own styling already.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct TableRow {
     items: Vec<TableItem>,
 }
 
 impl TableRow {
+    /// Create a new empty [TableRow].
+    pub fn new() -> Self {
+        Self { items: Vec::new() }
+    }
+
+    /// Create a row with given number of empty cells.
+    pub fn empty(cells: usize) -> Self {
+        Self::from_iter(vec![""; cells])
+    }
+
+    /// Create a [TableRow] from an iterator of items that can be converted to strings.
     pub fn from_iter<I, S>(iter: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -346,6 +364,12 @@ impl<'a> IntoIterator for &'a TableRow {
 
     fn into_iter(self) -> Self::IntoIter {
         self.items.iter()
+    }
+}
+
+impl<'a> From<&'a TableRow> for Row<'a> {
+    fn from(tr: &'a TableRow) -> Self {
+        Row::new(tr.cells())
     }
 }
 
@@ -446,7 +470,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     let mut lo = app.layout.write();
                     let step: u16 = match m {
                         KeyModifiers::SHIFT => 10,
-                        _ => lo.table.height.saturating_sub(4), // 1 + borders + header
+                        _ => lo.tbl_usable_rows() as u16 - 1,
                     };
                     lo.tablestate.scroll_up_by(step);
                 }
@@ -454,7 +478,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     let mut lo = app.layout.write();
                     let step: u16 = match m {
                         KeyModifiers::SHIFT => 10,
-                        _ => lo.table.height.saturating_sub(4),
+                        _ => lo.tbl_usable_rows() as u16 - 1,
                     };
                     lo.tablestate.scroll_down_by(step);
                 }
