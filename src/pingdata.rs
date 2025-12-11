@@ -77,7 +77,7 @@ impl PingTargetInner {
 
     #[inline]
     pub fn is_laggy(&self, n: usize, threshold: f64) -> Result<bool, String> {
-        let long_mean: f64 = self.rtts.mean().map(|m: f64| m).unwrap_or(0.0);
+        let long_mean: f64 = self.rtts.mean().unwrap_or(0.0);
         let recent_mean: Duration = self.recent.mean(Some(n))?;
         Ok(recent_mean.as_micros() as f64 > long_mean * threshold)
     }
@@ -489,7 +489,11 @@ impl HistorySnapshot {
         let last_out_of_order: bool = if data.len() >= 2 {
             let last: u16 = data.last().unwrap().seq;
             let second_last: u16 = data.iter().rev().nth(1).unwrap().seq;
-            last < second_last
+            let delta: u16 = last.wrapping_sub(second_last);
+            // If delta > 32768, it wrapped the "wrong way" -> out of order.
+            // I'm told this is the "standard" way to check for u16 wraparound
+            // in sequence numbers, so let's go with it.
+            delta > 32768
         } else {
             false
         };
