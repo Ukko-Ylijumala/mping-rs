@@ -10,14 +10,21 @@ use std::{
     fmt::Display,
     net::IpAddr,
     ops::Index,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
 
-const MICRO_TO_MILLI: f64 = 1e3;
+const MICROS_PER_MILLI: f64 = 1e3;
+const DEFAULT_WIN: usize = 10; // Window size (N packets) for recent history analysis
+const FLAP_THRESH: usize = 4; // Number of up/down transitions to consider "flappy"
+const LOSSY_THRESH: f64 = 0.5; // Packet loss % to consider "lossy"
+const LAGGY_FACTOR: f64 = 2.0; // Multiplier over historical mean to consider "laggy"
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) enum PingStatus {
     Ok,
     Timeout,
@@ -56,7 +63,14 @@ pub(crate) struct PingTargetInner {
     pub rtts: LatencyWindow, // RTTs in microseconds (rolling window)
     /// Detailed history of recent sent/received packets
     pub recent: PacketHistory,
-    pub status: PingStatus,
+    /// Raw last known status from pinging. Can only be one of:
+    /// - [PingStatus::Ok]
+    /// - [PingStatus::Timeout]
+    /// - [PingStatus::Error]
+    ///
+    /// For derived statuses like [PingStatus::Laggy], [PingStatus::Lossy],
+    /// etc, use [PingTarget::effective_status] instead.
+    raw_status: PingStatus,
     /// Authoritative last sent sequence number
     pub last_seq: u16,
     /// Authoritative last sent timestamp. Will be slightly before actual send time. The
@@ -65,21 +79,84 @@ pub(crate) struct PingTargetInner {
 }
 
 impl PingTargetInner {
+    /// Whether recent packet loss of las N packets exceeds the specified % threshold.
     #[inline]
     pub fn is_lossy(&self, n: usize, threshold: f64) -> bool {
         self.recent.recent_losses(n) as f64 / n as f64 >= threshold
     }
 
+    /// Whether last N results show at least `threshold` transitions between up/down.
     #[inline]
     pub fn is_flappy(&self, n: usize, threshold: usize) -> bool {
         self.recent.recent_transitions(n) >= threshold
     }
 
+    /// Whether recent N RTTs are significantly above historical mean.
+    /// `factor` is a multiplier (e.g. `2.0` means "twice as high").
     #[inline]
-    pub fn is_laggy(&self, n: usize, threshold: f64) -> Result<bool, String> {
+    pub fn is_laggy(&self, n: usize, factor: f64) -> Result<bool, String> {
         let long_mean: f64 = self.rtts.mean().unwrap_or(0.0);
         let recent_mean: Duration = self.recent.mean(Some(n))?;
-        Ok(recent_mean.as_micros() as f64 > long_mean * threshold)
+        Ok(recent_mean.as_micros() as f64 > long_mean * factor)
+    }
+
+    /// Whether this target is (currently) considered unreachable. Logic:
+    /// - If [DEFAULT_WIN] packets have been sent and none received -> unreachable
+    /// - If last [DEFAULT_WIN] * 5 packets were all lost -> unreachable
+    /// - Errors are NOT considered as unreachable.
+    #[inline]
+    pub fn is_unreachable(&self) -> bool {
+        if matches!(self.raw_status, PingStatus::Error(_)) {
+            return false;
+        }
+        if self.sent as usize > DEFAULT_WIN && self.recv == 0 {
+            return true;
+        } else if self.recent.len() > DEFAULT_WIN {
+            let num: usize = (DEFAULT_WIN * 5).min(self.recent.len());
+            if self.recent.recent_losses(num) == num {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Set the raw status of this target. Must be one of:
+    /// - [PingStatus::Ok]
+    /// - [PingStatus::Timeout]
+    /// - [PingStatus::Error]
+    pub fn set_status(&mut self, status: PingStatus) -> Result<(), String> {
+        if !matches!(
+            status,
+            PingStatus::Ok | PingStatus::Timeout | PingStatus::Error(_)
+        ) {
+            return Err(format!("Invalid status"));
+        }
+        self.raw_status = status;
+        Ok(())
+    }
+
+    /// Determine the effective status of this target based on recent history analysis.
+    /// Does NOT return "paused" or "stopped" states (as that requires access to parent).
+    #[inline]
+    pub fn effective_status(&self) -> PingStatus {
+        if &self.raw_status == &PingStatus::Timeout && self.is_unreachable() {
+            return PingStatus::NotReachable;
+        }
+
+        match &self.raw_status {
+            PingStatus::Ok | PingStatus::Timeout => {
+                if self.is_flappy(DEFAULT_WIN, FLAP_THRESH) {
+                    PingStatus::Flappy
+                } else if self.is_lossy(DEFAULT_WIN, LOSSY_THRESH) {
+                    PingStatus::Lossy
+                } else if self.is_laggy(DEFAULT_WIN, LAGGY_FACTOR).unwrap_or(false) {
+                    PingStatus::Laggy
+                } else {
+                    self.raw_status.clone()
+                }
+            }
+            _ => self.raw_status.clone(),
+        }
     }
 }
 
@@ -117,7 +194,7 @@ impl PingTarget {
         data.recv = 0;
         data.rtts.clear();
         data.recent.clear();
-        data.status = PingStatus::None;
+        data.raw_status = PingStatus::None;
         data.last_seq = 0;
         data.last_sent = None;
     }
@@ -132,7 +209,7 @@ impl PingTarget {
     pub fn toggle_pause(&self) {
         let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
         if !was_paused {
-            self.data.write().status = PingStatus::Paused;
+            self.data.write().raw_status = PingStatus::Paused;
         }
     }
 
@@ -151,31 +228,43 @@ impl PingTarget {
     /// Permanently stop pinging this target. Ping task will abort.
     pub fn stop(&self) {
         self.cancel.cancel();
-        self.data.write().status = PingStatus::Stopped;
+        self.data.write().raw_status = PingStatus::Stopped;
     }
 
     /// Whether this target is (currently) considered unreachable.
     #[inline]
     pub fn is_unreachable(&self) -> bool {
-        matches!(self.data.read().status, PingStatus::NotReachable)
+        self.data.read().is_unreachable()
     }
 
-    /// Whether recent packet loss of las N packets exceeds the specified threshold.
-    pub fn is_lossy(&self, n: usize, threshold: f64) -> bool {
-        self.data.read().is_lossy(n, threshold)
+    /// Whether recent packet loss is above the default threshold.
+    pub fn is_lossy(&self) -> bool {
+        self.data.read().is_lossy(DEFAULT_WIN, LOSSY_THRESH)
     }
 
     /// Whether recent packet history shows flappiness (frequent up/down transitions)
-    pub fn is_flappy(&self, n: usize, threshold: usize) -> bool {
-        self.data.read().is_flappy(n, threshold)
+    pub fn is_flappy(&self) -> bool {
+        self.data.read().is_flappy(DEFAULT_WIN, FLAP_THRESH)
     }
 
-    /// Whether recent N RTTs are significantly above historical mean.
-    pub fn is_laggy(&self, n: usize, threshold_factor: f64) -> bool {
-        match self.data.read().is_laggy(n, threshold_factor) {
+    /// Whether recent RTTs are significantly above historical mean.
+    pub fn is_laggy(&self) -> bool {
+        match self.data.read().is_laggy(DEFAULT_WIN, LAGGY_FACTOR) {
             Ok(v) => v,
             Err(_) => false,
         }
+    }
+
+    /// Determine the effective status of this target, considering pauses,
+    /// stops, and recent history analysis. Can return all states.
+    pub fn effective_status(&self) -> PingStatus {
+        if self.is_stopped() {
+            return PingStatus::Stopped;
+        }
+        if self.is_paused() {
+            return PingStatus::Paused;
+        }
+        self.data.read().effective_status()
     }
 }
 
@@ -469,12 +558,10 @@ pub(crate) struct HistorySnapshot {
 impl HistorySnapshot {
     /// Extract recent history statistics from [PacketHistory].
     fn new_from(data: &PacketHistory) -> Self {
-        let inspect_win: usize = 10;
-
         let gaps_in_seqs: bool = {
             let mut expected_seq: Option<u16> = None;
             let mut gaps: bool = false;
-            for rec in data.iter().rev().take(inspect_win) {
+            for rec in data.iter().rev().take(DEFAULT_WIN) {
                 if let Some(exp) = expected_seq {
                     if rec.seq.wrapping_add(1) != exp {
                         gaps = true;
@@ -510,7 +597,7 @@ impl HistorySnapshot {
 
             gaps_in_seqs,
             last_out_of_order,
-            recent_losses: data.recent_losses(inspect_win),
+            recent_losses: data.recent_losses(DEFAULT_WIN),
             loss_pct: data.loss(),
 
             min: match data.min() {
@@ -545,6 +632,7 @@ pub(crate) struct StatsSnapshot {
     pub mean: Option<f64>,
     pub last: Option<u32>,
     pub stdev: Option<f64>,
+    /// Current effective status of the target. DOES NOT contain "paused" or "stopped" states.
     pub status: PingStatus,
     /// History of recent sent/received packets
     pub hist: HistorySnapshot,
@@ -561,7 +649,8 @@ impl StatsSnapshot {
     /// Extract a [StatsSnapshot] from [PingTargetInner]
     ///
     /// - `timeout` is the overall ping timeout duration.
-    pub fn new_from(data: &PingTargetInner, timeout: Duration) -> Self {
+    pub fn new_from(tgt: &Arc<PingTarget>, timeout: Duration) -> Self {
+        let data = tgt.data.read();
         let now: Instant = Instant::now();
         let (mean, min, max) = match data.rtts.mean_min_max() {
             Ok((mean, mi, ma)) => (Some(mean), Some(mi), Some(ma)),
@@ -582,7 +671,7 @@ impl StatsSnapshot {
                 Ok(v) => Some(v),
                 Err(_) => None,
             },
-            status: data.status.clone(),
+            status: data.effective_status(),
             hist: HistorySnapshot::new_from(&data.recent),
             latest_seq: data.last_seq,
             latest_sent: data.last_sent.unwrap_or(now),
@@ -625,7 +714,7 @@ impl StatsSnapshot {
     #[inline]
     pub fn min_str(&self) -> String {
         match self.min {
-            Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
+            Some(v) => format!("{:.2}", v as f64 / MICROS_PER_MILLI),
             None => MISSING.to_string(),
         }
     }
@@ -634,7 +723,7 @@ impl StatsSnapshot {
     #[inline]
     pub fn max_str(&self) -> String {
         match self.max {
-            Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
+            Some(v) => format!("{:.2}", v as f64 / MICROS_PER_MILLI),
             None => MISSING.to_string(),
         }
     }
@@ -643,7 +732,7 @@ impl StatsSnapshot {
     #[inline]
     pub fn last_str(&self) -> String {
         match self.last {
-            Some(v) => format!("{:.2}", v as f64 / MICRO_TO_MILLI),
+            Some(v) => format!("{:.2}", v as f64 / MICROS_PER_MILLI),
             None => MISSING.to_string(),
         }
     }
@@ -652,7 +741,7 @@ impl StatsSnapshot {
     #[inline]
     pub fn mean_str(&self) -> String {
         match self.mean {
-            Some(v) => format!("{:.2}", v / MICRO_TO_MILLI),
+            Some(v) => format!("{:.2}", v / MICROS_PER_MILLI),
             None => MISSING.to_string(),
         }
     }
@@ -661,7 +750,7 @@ impl StatsSnapshot {
     #[inline]
     pub fn stdev_str(&self) -> String {
         match self.stdev {
-            Some(v) => format!("{:.2}", v / MICRO_TO_MILLI),
+            Some(v) => format!("{:.2}", v / MICROS_PER_MILLI),
             None => MISSING.to_string(),
         }
     }
