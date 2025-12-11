@@ -50,48 +50,21 @@ async fn update_ping_stats(
     res: Result<(IcmpPacket, Duration), SurgeError>,
     mut rec: PacketRecord,
 ) {
-    let mut stats = tgt.data.write();
-    match res {
+    let mut inner = tgt.data.write();
+    let status: PingStatus = match res {
         Ok((_, dur)) => {
-            stats.recv += 1;
-            stats.rtts.push(dur.as_micros() as u32);
-            stats.status = PingStatus::Ok;
+            inner.recv += 1;
+            inner.rtts.push(dur.as_micros() as u32);
             rec.set_rtt(dur);
+            PingStatus::Ok
         }
-        Err(e) => {
-            stats.status = match e {
-                SurgeError::Timeout { .. } => {
-                    if stats.sent > 10 && stats.recv == 0 {
-                        PingStatus::NotReachable
-                    } else {
-                        PingStatus::Timeout
-                    }
-                }
-                _ => PingStatus::Error(e.to_display()),
-            };
-        }
+        Err(e) => match e {
+            SurgeError::Timeout { .. } => PingStatus::Timeout,
+            _ => PingStatus::Error(e.to_display()),
+        },
     };
-    stats.recent.push(rec);
-
-    // Update "paused"/"stopped" statuses here if necessary, as these are overriding.
-    // In theory these states could have been changed by the task spawned by ping_loop()
-    // calling this function in the previous iteration before the flag toggle took effect.
-    if tgt.is_stopped() && !matches!(stats.status, PingStatus::Stopped) {
-        stats.status = PingStatus::Stopped;
-    } else if tgt.is_paused() && !matches!(stats.status, PingStatus::Paused) {
-        stats.status = PingStatus::Paused;
-    }
-
-    // Update status based on recent history if applicable
-    if matches!(stats.status, PingStatus::Ok | PingStatus::Timeout) {
-        if stats.is_flappy(10, 5) {
-            stats.status = PingStatus::Flappy
-        } else if stats.is_lossy(5, 0.5) {
-            stats.status = PingStatus::Lossy
-        } else if stats.is_laggy(10, 2.0).unwrap_or(false) {
-            stats.status = PingStatus::Laggy
-        }
-    }
+    let _ = inner.set_status(status);
+    inner.recent.push(rec);
 }
 
 /// Prepare and spawn a single ping task for the given target.
@@ -179,12 +152,8 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
 }
 
 /// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
-async fn format_row(t: &Arc<PingTarget>, debug: bool, timeout: Duration) -> TableRow {
-    let snap: StatsSnapshot = {
-        // Holding the lock inside this block only should minimize contention.
-        // Do all the expensive string formatting afterwards.
-        StatsSnapshot::new_from(&t.data.read(), timeout)
-    };
+async fn format_row(tgt: &Arc<PingTarget>, debug: bool, timeout: Duration) -> TableRow {
+    let snap: StatsSnapshot = StatsSnapshot::new_from(&tgt, timeout);
     let status: String = match &snap.status {
         PingStatus::Error(e) if debug => e.to_string(),
         _ => snap.status.to_display(),
@@ -192,7 +161,7 @@ async fn format_row(t: &Arc<PingTarget>, debug: bool, timeout: Duration) -> Tabl
 
     // Do all the (expensive) string formatting after releasing the lock.
     let mut row: TableRow = TableRow::from_iter([
-        t.addr.to_string(),
+        tgt.addr.to_string(),
         snap.sent.to_string(),
         snap.recv.to_string(),
         snap.loss_str(),
@@ -208,12 +177,12 @@ async fn format_row(t: &Arc<PingTarget>, debug: bool, timeout: Duration) -> Tabl
     }
 
     // Add full-row styling based on statuses
-    if t.is_stopped() {
+    if tgt.is_stopped() {
         row.set_style_all(Style::new().dim().italic().crossed_out());
-    } else if t.is_paused() {
+    } else if tgt.is_paused() {
         row.set_style_all(Style::new().dim().italic());
     } else {
-        match t.data.read().status {
+        match snap.status {
             PingStatus::Error(_) => {
                 row.set_style_all(Style::new().on_red());
             }
