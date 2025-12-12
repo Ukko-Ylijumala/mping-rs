@@ -293,16 +293,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let kev_handle = thread::spawn(move || key_event_handler(app_clone));
 
     // Main display loop
-    let mut data = gather_target_data(&app, true).await;
     loop {
         tokio::select! {
-            biased; // preferentially handle quit condition first
+            biased; // preferentially handle quit condition first, then rest in order
             true = app.is_quitting_async() => break,
             true = app.ui_refresh_elapsed_async() => {
                 // Gather data for display and render the frame
-                data = gather_target_data(&app, false).await;
+                let data = gather_target_data(&app, false).await;
                 guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
                 app.ui_schedule_next_refresh();
+            },
+            _ = app.key_event.notified() => {
+                // Immediate refresh on key event. NOTE: don't reschedule next refresh!
+                let data = gather_target_data(&app, false).await;
+                guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
+                // sleep a little to avoid busy looping during key event bursts
+                tokio::time::sleep(Duration::from_millis(5)).await;
             },
             _ = tick.tick() => { /* no-op, just to keep the select! happy */ }
         }
@@ -318,7 +324,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     join_all(tasks.iter_mut()).await;
 
     // Print final stats
-    for line in simple_tabulate(&data, Some(&app.headers.strings())) {
+    let data: Vec<TableRow> = gather_target_data(&app, true).await;
+    let rows: usize = app.layout.read().tbl_usable_rows().min(data.len());
+    for line in simple_tabulate(&data[..rows], Some(&app.headers.strings())) {
         println!("{line}");
     }
     Ok(())
