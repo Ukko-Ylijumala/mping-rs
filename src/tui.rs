@@ -2,18 +2,24 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{strings::*, structs::AppState};
+use crate::{
+    macros::{delegate_read, delegate_write},
+    strings::*,
+    structs::AppState,
+};
 use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use parking_lot::RwLock;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span},
     widgets::{Cell, Row, TableState},
 };
 use std::{
@@ -209,6 +215,105 @@ impl AppLayout {
             .collect();
 
         sum_widths as u16
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// Mutable convenience line wrapper for Ratatui [Line]s. It allows
+/// in-place modification of the line content and styling.
+#[derive(Debug, Default)]
+pub(crate) struct MutableLine<'a>(RwLock<Line<'a>>);
+
+impl<'a> MutableLine<'a> {
+    pub fn new() -> Self {
+        Self {
+            0: Line::default().into(),
+        }
+    }
+
+    pub fn new_from<T: Into<Line<'a>>>(s: T) -> Self {
+        Self { 0: s.into().into() }
+    }
+
+    /// Apply a [Style] to a (new) MutableLine using a (consuming) builder pattern.
+    pub fn with_style(self, s: Style) -> Self {
+        {
+            // Take the Line out of the lock, apply the consuming style(...) which
+            // returns a new Line, and put it back to avoid moving out of the guard.
+            let mut lock = self.0.write();
+            let updated = std::mem::take(&mut *lock).style(s);
+            *lock = updated;
+        }
+        self
+    }
+
+    /// Read access to the inner Line via a closure.
+    #[inline]
+    pub fn with<R>(&self, f: impl FnOnce(&Line<'a>) -> R) -> R {
+        f(&*self.0.read())
+    }
+
+    /// Write access to the inner Line via a closure.
+    #[inline]
+    pub fn with_mut<R>(&self, f: impl FnOnce(&mut Line<'a>) -> R) -> R {
+        f(&mut *self.0.write())
+    }
+
+    /// Try read access to the inner Line via a closure that may fail.
+    #[inline]
+    pub fn try_with<R>(&self, f: impl FnOnce(&Line<'a>) -> Option<R>) -> Option<R> {
+        f(&*self.0.read())
+    }
+
+    /// Replace the entire line
+    pub fn replace<T: Into<Line<'a>>>(&self, l: T) {
+        *self.0.write() = l.into();
+    }
+
+    /// Clear the line content.
+    pub fn clear(&self) {
+        *self.0.write() = Line::default();
+    }
+
+    /// Get a clone of the current inner [Line] (for rendering)
+    #[inline]
+    pub fn as_line(&self) -> Line<'a> {
+        self.with(|l| l.clone())
+    }
+
+    // Pass-through methods to Line via macros
+    delegate_read!(width -> usize);
+    delegate_read!(to_string -> String);
+    delegate_write!(bold);
+    delegate_write!(italic);
+    delegate_write!(underlined);
+    delegate_write!(reset_style);
+    delegate_write!(style, style: Style);
+    delegate_write!(push_span, <T: Into<Span<'a>>>, span: T);
+}
+
+impl Clone for MutableLine<'_> {
+    fn clone(&self) -> Self {
+        Self {
+            0: RwLock::new(self.0.read().clone()),
+        }
+    }
+}
+
+// Implement From for arbitrary text types for MutableLine
+impl<'a, T: Into<Line<'a>>> From<T> for MutableLine<'a> {
+    fn from(item: T) -> Self {
+        MutableLine::new_from(item)
+    }
+}
+
+impl fmt::Display for MutableLine<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for span in &self.0.read().spans {
+            write!(f, "{span}")?;
+        }
+        Ok(())
     }
 }
 
