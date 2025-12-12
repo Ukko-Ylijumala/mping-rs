@@ -25,6 +25,7 @@ use ratatui::{
 use std::{
     fmt,
     io::{Result, Stdout, stdout},
+    ops::Index,
     panic,
     sync::Arc,
     time::Duration,
@@ -475,6 +476,14 @@ impl<'a> IntoIterator for &'a TableRow {
 impl<'a> From<&'a TableRow> for Row<'a> {
     fn from(tr: &'a TableRow) -> Self {
         Row::new(tr.cells())
+    }
+}
+
+impl Index<usize> for TableRow {
+    type Output = TableItem;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.items[index]
     }
 }
 
