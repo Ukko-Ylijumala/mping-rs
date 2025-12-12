@@ -6,7 +6,7 @@ use crate::{
     args::MpConfig,
     pingdata::PingTarget,
     strings::{APP_TITLE, HEADERS},
-    tui::{AppLayout, TableRow},
+    tui::{AppLayout, MutableLine, TableRow},
     utils::nice_permission_error,
 };
 use miniutils::ProcessInfo;
@@ -51,6 +51,8 @@ pub(crate) struct AppState {
     pub payload: Arc<[u8]>,
     pub internal_tick: Duration,
     pub key_event: Notify,
+    /// Status line is the last line at the bottom left-side of the UI.
+    pub status_line: MutableLine<'static>,
 }
 
 impl AppState {
@@ -231,6 +233,7 @@ impl Default for AppState {
             payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 32 bytes -> 40-byte packet
             internal_tick: Duration::from_millis(100),       // 10 Hz default, might be overridden
             key_event: Notify::new(),
+            status_line: MutableLine::new_from(""),
         }
     }
 }
