@@ -21,6 +21,7 @@ use std::{
     time::Duration,
 };
 use surge_ping::{Client, Config, ICMP};
+use tokio::sync::Notify;
 
 const DEFAULT_PAYLOAD_SIZE: usize = 32;
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
@@ -49,6 +50,7 @@ pub(crate) struct AppState {
     pub randomize: bool,
     pub payload: Arc<[u8]>,
     pub internal_tick: Duration,
+    pub key_event: Notify,
 }
 
 impl AppState {
@@ -228,6 +230,7 @@ impl Default for AppState {
             randomize: false,
             payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 32 bytes -> 40-byte packet
             internal_tick: Duration::from_millis(100),       // 10 Hz default, might be overridden
+            key_event: Notify::new(),
         }
     }
 }
