@@ -432,7 +432,10 @@ pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
 /// It listens for keyboard events and updates the application state accordingly.
 pub(crate) fn key_event_handler(state: Arc<AppState>) {
     while !state.is_quitting() {
-        let _ = key_event_poll(50, &state);
+        if key_event_poll(50, &state).is_ok_and(|e| e) {
+            // notify the main loop about the key event for immediate refresh
+            state.key_event.notify_one();
+        }
     }
 }
 
