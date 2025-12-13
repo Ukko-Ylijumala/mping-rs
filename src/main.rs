@@ -229,7 +229,7 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
 /// Render the current frame. Display will be updated as soon as this function completes.
 fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let layout = &mut state.layout.write();
-    layout.update(frame.area(), &data);
+    layout.maybe_update(frame.area(), &data);
     let n: usize = state.len();
 
     // Border blocks with titles

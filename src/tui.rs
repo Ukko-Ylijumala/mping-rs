@@ -32,6 +32,8 @@ use std::{
 };
 
 const TBL_WASTED_ROWS: u16 = 3; // borders + header
+const TBL_WASTED_COLS: u16 = 2; // borders
+const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
 
 #[derive(Debug, Default)]
 /// Layout structure for Ratatui frames.
@@ -63,11 +65,10 @@ const TBL_WASTED_ROWS: u16 = 3; // borders + header
 /// |                 | info  |
 /// |                 | lower |
 /// +-----------------+-------+
-///
+/// ```
 /// We also define the following modal areas:
 /// - `popup`: centered text box (for multiline text)
 /// - `input`: centered input area (for modal text input)
-/// ```
 pub(crate) struct AppLayout {
     /// Full frame area
     pub frame: Rect,
@@ -91,7 +92,7 @@ pub(crate) struct AppLayout {
     pub tbl_hdr_widths: Vec<usize>,
     /// Spacing between table columns
     pub tbl_colspacing: u16,
-    /// Current column width Constraints
+    /// Current column width [Constraint]s
     pub tbl_constraints: Vec<Constraint>,
     /// Stateful table state for managing selection, scrolling, etc.
     pub tablestate: TableState,
@@ -102,18 +103,23 @@ pub(crate) struct AppLayout {
 
 impl AppLayout {
     /// Update the layout based on the full frame area (if it has changed),
-    /// and the table size (if needed). Updated column [Constraint]s are available
-    /// after this call in `tbl_constraints`.
-    pub fn update(&mut self, frame: Rect, data: &[TableRow]) {
+    /// and the table size (if needed).
+    ///
+    /// Updated column [Constraint]s are available afterwards in `tbl_constraints`.
+    pub fn maybe_update(&mut self, frame: Rect, data: &[TableRow]) {
         // No need to recalculate if frame size and table size are unchanged
-        let tblsize: u16 = self.update_col_widths(data);
-        if frame == self.frame && tblsize == self.tbl_width {
+        let tbl_width: u16 = self.update_col_widths(data);
+        if frame == self.frame && tbl_width == self.tbl_width {
             return;
         };
+        self.update(frame, tbl_width);
+    }
 
+    /// Recalculate the layout areas regardless of if it's needed or not.
+    pub fn update(&mut self, frame: Rect, table_width: u16) {
         // Ensure the table area does not shrink from its previous size.
         // Constant resizes are annoying and distracting.
-        self.tbl_width = self.tbl_width.max(tblsize);
+        self.tbl_width = self.tbl_width.max(table_width);
 
         // Create vertical layout
         let (title, middle, status) = {
@@ -130,8 +136,8 @@ impl AppLayout {
         let spacing: u16 = self.tbl_colspacing * (self.tbl_hdr_widths.len() as u16 - 1);
         let (table, info) = {
             let middle = Layout::horizontal([
-                Constraint::Min(self.tbl_width + spacing + 2), // table + borders
-                Constraint::Fill(1),                           // info
+                Constraint::Min(self.tbl_width + spacing + TBL_WASTED_COLS), // table + borders
+                Constraint::Fill(1),                                         // info
             ])
             .split(middle);
             (middle[0], middle[1])
@@ -188,8 +194,8 @@ impl AppLayout {
         self.table.height.saturating_sub(TBL_WASTED_ROWS) as usize
     }
 
-    /// Update column widths based on data.
-    fn update_col_widths(&mut self, data: &[TableRow]) -> u16 {
+    /// Update column widths based on data. Returns total table width without any spacing.
+    pub fn update_col_widths(&mut self, data: &[TableRow]) -> u16 {
         // Start with header widths as minimums
         let mut widths: Vec<usize> = self.tbl_hdr_widths.clone();
         let mut sum_widths: usize = 0;
@@ -586,7 +592,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 (KeyCode::PageUp, m) => {
                     let mut lo = app.layout.write();
                     let step: u16 = match m {
-                        KeyModifiers::SHIFT => 10,
+                        KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
                         _ => lo.tbl_usable_rows() as u16 - 1,
                     };
                     lo.tablestate.scroll_up_by(step);
@@ -594,7 +600,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 (KeyCode::PageDown, m) => {
                     let mut lo = app.layout.write();
                     let step: u16 = match m {
-                        KeyModifiers::SHIFT => 10,
+                        KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
                         _ => lo.tbl_usable_rows() as u16 - 1,
                     };
                     lo.tablestate.scroll_down_by(step);
