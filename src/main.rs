@@ -7,6 +7,7 @@
 mod args;
 mod ip_addresses;
 mod latencywin;
+mod macros;
 mod pingdata;
 mod strings;
 mod structs;
@@ -229,40 +230,74 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
 fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let layout = &mut state.layout.write();
     layout.update(frame.area(), &data);
+    let n: usize = state.len();
 
-    let block = Block::bordered().title_bottom(Line::from(format!(" Targets: {} ", state.len())));
+    // Border blocks with titles
+    let block = Block::bordered();
+    let b_tbl = block
+        .clone()
+        .title_bottom(Line::from(format!(" Targets: {} ", n)));
+    let b_info_upper = block.clone().title_top(" Info ");
+
+    // Data table
     let table = Table::new(
         data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
         &layout.tbl_constraints,
     )
     .header((&state.headers).into())
     .column_spacing(layout.tbl_colspacing)
-    .block(block)
+    .block(b_tbl)
     .row_highlight_style(Style::new().reversed())
     .column_highlight_style(Style::new().bg(Color::Indexed(240)));
 
+    // Info areas
+    let info_upper = Paragraph::new(format!(
+        " Selected: {}",
+        &layout
+            .tablestate
+            .selected()
+            .map_or("none".into(), |i| state.targets.read()[i.min(n - 1)]
+                .addr
+                .to_string())
+    ))
+    .block(b_info_upper);
+
+    let info_lower = Paragraph::new(format!(
+        " Interval: {}\n Timeout : {}\n Payload : {} bytes ",
+        state.ping_interval.as_millis(),
+        state.ping_timeout.as_millis(),
+        state.payload.len(),
+    ));
+
     let procinfo = Line::from(format!(
-        "CPU: {:>7} | mem: {} | pid: {}",
+        "CPU: {:>7} | mem: {} | pid: {} ",
         state.pi.cpu_str(),
         state.pi.mem_str(),
         state.pi.pid,
     ))
     .alignment(Alignment::Right);
 
+    state.status_line.replace(match state.debug {
+        true => format!(
+            " Data: {}, offset: {}, selected: {}",
+            data.len(),
+            &layout.tablestate.offset(),
+            &layout
+                .tablestate
+                .selected()
+                .map_or("none".into(), |i| i.to_string())
+        ),
+        false => " mping initialized and running. Press 'q' to quit.".into(),
+    });
+
+    // Render all components. Order matters for layering; later ones overwrite earlier ones,
+    // faking z-index behavior even though we're not working with "real" windows.
     frame.render_widget(&state.title, layout.title);
     frame.render_stateful_widget(table, layout.table, &mut layout.tablestate);
     frame.render_widget(procinfo, layout.status_r);
-
-    if state.debug {
-        let ts = &layout.tablestate;
-        let dbg = Line::from(format!(
-            " Data: {}, offset: {}, selected: {}",
-            data.len(),
-            ts.offset(),
-            ts.selected().map_or("none".into(), |s| s.to_string()),
-        ));
-        frame.render_widget(dbg, layout.status_l);
-    }
+    frame.render_widget(info_upper, layout.info_upper);
+    frame.render_widget(info_lower, layout.info_lower);
+    frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
