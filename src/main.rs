@@ -263,7 +263,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .block(b_info_upper);
 
     let info_lower = Paragraph::new(format!(
-        " Interval: {}\n Timeout : {}\n Payload : {} bytes ",
+        " Interval: {} ms\n Timeout : {} ms\n Payload : {} bytes ",
         state.ping_interval.as_millis(),
         state.ping_timeout.as_millis(),
         state.payload.len(),
