@@ -614,13 +614,16 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 }
 
                 // Pause/resume the selected target if it's not stopped
-                (KeyCode::Char(' '), _) => {
-                    if let Some(idx) = app.layout.read().tablestate.selected() {
-                        if !app.is_target_stopped(idx) {
+                (KeyCode::Char(' '), m) => match m {
+                    KeyModifiers::CONTROL => app.pause_all_targets(),
+                    KeyModifiers::SHIFT => app.resume_all_targets(),
+                    KeyModifiers::NONE => {
+                        if let Some(idx) = app.layout.read().tablestate.selected() {
                             app.toggle_target_pause(idx);
                         }
                     }
-                }
+                    _ => {}
+                },
 
                 // Stop (cancel) the selected target's pinging for good
                 (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
@@ -637,9 +640,9 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 }
 
                 // Fully remove a target or targets from the list
-                (KeyCode::Delete, e) => {
+                (KeyCode::Delete, m) => {
                     let mut lo = app.layout.write();
-                    match e {
+                    match m {
                         // Stop and remove all unreachable targets from the list
                         KeyModifiers::CONTROL => {
                             if app.remove_all_unreachables() > 0 {
