@@ -164,6 +164,20 @@ impl AppState {
         }
     }
 
+    /// Pause pinging for all targets.
+    pub fn pause_all_targets(&self) {
+        for tgt in self.targets.read().iter() {
+            tgt.pause();
+        }
+    }
+
+    /// Resume pinging for all targets.
+    pub fn resume_all_targets(&self) {
+        for tgt in self.targets.read().iter() {
+            tgt.resume();
+        }
+    }
+
     /// Reset statistics for the target at the specified index.
     pub fn reset_target_stats(&self, index: usize) {
         if let Some(tgt) = self.targets.read().get(index) {
