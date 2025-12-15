@@ -11,7 +11,7 @@ use crate::{
 };
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
-use ratatui::{prelude::Stylize, style::Style, text::Line};
+use ratatui::{prelude::Stylize, style::Style, text::Line, widgets::Paragraph};
 use std::{
     net::IpAddr,
     sync::{
@@ -53,6 +53,7 @@ pub(crate) struct AppState {
     pub key_event: Notify,
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
+    pub popup_contents: RwLock<Option<PopupContents>>,
 }
 
 impl AppState {
@@ -248,8 +249,26 @@ impl Default for AppState {
             internal_tick: Duration::from_millis(100),       // 10 Hz default, might be overridden
             key_event: Notify::new(),
             status_line: MutableLine::new_from(""),
+            popup_contents: None.into(),
         }
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+/// Contents for popup dialog in the UI.
+#[derive(Debug)]
+pub(crate) enum PopupContents {
+    Table(Vec<String>),
+    Paragraph(String),
+    Line(String),
+}
+
+impl PopupContents {
+    pub fn to_para(&self) -> Paragraph<'static> {
+        match self {
+            PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
+            PopupContents::Table(s) => Paragraph::new(s.join("\n")),
+        }
+    }
+}
