@@ -5,7 +5,8 @@
 use crate::{
     macros::{delegate_read, delegate_write},
     strings::*,
-    structs::AppState,
+    structs::{AppState, PopupContents},
+    tabulator::simple_tabulate,
 };
 use crossterm::{
     cursor::{Hide, Show},
@@ -665,6 +666,24 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                             }
                         }
                         _ => {}
+                    }
+                }
+
+                (KeyCode::Char('h') | KeyCode::F(1), _) => {
+                    let mut lo = app.layout.write();
+                    match lo.popup_visible {
+                        false => {
+                            // show help popup
+                            *app.popup_contents.write() = Some(PopupContents::Table(
+                                simple_tabulate(HELP_KEYS, Some(&["Key(s)", "Action"])),
+                            ));
+                            lo.popup_visible = true;
+                        }
+                        true => {
+                            // hide popup
+                            *app.popup_contents.write() = None;
+                            lo.popup_visible = false;
+                        }
                     }
                 }
 
