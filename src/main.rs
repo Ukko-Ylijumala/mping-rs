@@ -303,7 +303,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     if layout.popup_visible {
         if let Some(popup) = &*state.popup_contents.read() {
             frame.render_widget(Clear, layout.popup);
-            frame.render_widget(popup.to_para().block(block), layout.popup);
+            frame.render_widget(
+                popup.to_para().block(block.padding(Padding::horizontal(1))),
+                layout.popup,
+            );
         }
     }
 }
