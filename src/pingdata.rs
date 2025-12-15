@@ -109,7 +109,10 @@ impl PingTargetInner {
     /// - Errors are NOT considered as unreachable.
     #[inline]
     pub fn is_unreachable(&self) -> bool {
-        if matches!(self.raw_status, PingStatus::Error(_)) {
+        if matches!(
+            self.raw_status,
+            PingStatus::Error(_) | PingStatus::Paused | PingStatus::Resuming
+        ) {
             return false;
         }
         if self.sent as usize > DEFAULT_WIN && self.recv == 0 {
@@ -218,19 +221,19 @@ impl PingTarget {
         self.paused.load(Ordering::Relaxed)
     }
 
-    /// Pause pinging unconditionally.
+    /// Pause pinging for this target.
     pub fn pause(&self) {
-        if !self.is_stopped() {
-            self.data.write().raw_status = PingStatus::Paused;
+        if !self.is_stopped() && !self.is_paused() {
             self.paused.store(true, Ordering::Relaxed);
+            self.data.write().raw_status = PingStatus::Paused;
         }
     }
 
-    /// Resume pinging unconditionally.
+    /// Resume pinging for this target.
     pub fn resume(&self) {
-        if !self.is_stopped() {
-            self.data.write().raw_status = PingStatus::Resuming;
+        if !self.is_stopped() && self.is_paused() {
             self.paused.store(false, Ordering::Relaxed);
+            self.data.write().raw_status = PingStatus::Resuming;
         }
     }
 
@@ -238,7 +241,9 @@ impl PingTarget {
     pub fn toggle_pause(&self) {
         if !self.is_stopped() {
             let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
-            if !was_paused {
+            if was_paused {
+                self.data.write().raw_status = PingStatus::Resuming;
+            } else {
                 self.data.write().raw_status = PingStatus::Paused;
             }
         }
@@ -263,8 +268,12 @@ impl PingTarget {
     }
 
     /// Whether this target is (currently) considered unreachable.
+    /// A stopped target is never "unreachable" in this context.
     #[inline]
     pub fn is_unreachable(&self) -> bool {
+        if self.is_stopped() {
+            return false;
+        }
         self.data.read().is_unreachable()
     }
 
