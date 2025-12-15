@@ -62,8 +62,8 @@ pub static INFO_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs sy
     sudo sysctl -w net.ipv4.ping_group_range=\"<start> <end>\"\n";
 
 // App keybindings help text
-pub static HELP_KEYS: [[&str; 2]; 12] = [
-    ["q, Ctrl-C",      "Quit the program"],
+pub static HELP_KEYS: [[&str; 2]; 14] = [
+    ["q, CTRL-C",      "Quit the program"],
     ["h, F1",          "Show/hide this help screen"],
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
@@ -71,8 +71,10 @@ pub static HELP_KEYS: [[&str; 2]; 12] = [
     ["Home, End",      "Jump to top/bottom of target list"],
     ["Backspace",      "Clear row and column selections"],
     ["<space>",        "Toggle pause/resume pinging for selected target"],
+    ["CTRL-<space>",   "Pause pinging for all targets"],
+    ["SHIFT-<space>",  "Resume pinging for all targets"],
     ["R",              "Reset ping statistics for selected target"],
     ["S",              "Stop pinging the selected target permanently"],
     ["Delete",         "Stop pinging the selected target and remove it"],
-    ["Ctrl+Delete",    "Stop and remove all unreachable targets"],
+    ["CTRL+Delete",    "Stop and remove all unreachable targets"],
 ];
