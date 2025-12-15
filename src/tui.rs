@@ -615,26 +615,25 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 }
 
                 // Pause/resume the selected target if it's not stopped
-                (KeyCode::Char(' '), m) => match m {
-                    KeyModifiers::CONTROL => app.pause_all_targets(),
-                    KeyModifiers::SHIFT => app.resume_all_targets(),
-                    KeyModifiers::NONE => {
-                        if let Some(idx) = app.layout.read().tablestate.selected() {
-                            app.toggle_target_pause(idx);
-                        }
+                (KeyCode::Char(' '), _) => {
+                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                        app.toggle_target_pause(idx);
                     }
-                    _ => {}
-                },
+                }
+
+                // Pause/resume all targets
+                (KeyCode::Char('p'), _) => app.pause_all_targets(),
+                (KeyCode::Char('P'), _) => app.resume_all_targets(),
 
                 // Stop (cancel) the selected target's pinging for good
-                (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
+                (KeyCode::Char('S'), _) => {
                     if let Some(idx) = app.layout.read().tablestate.selected() {
                         app.stop_target(idx);
                     }
                 }
 
                 // Reset the selected target's statistics
-                (KeyCode::Char('R'), KeyModifiers::SHIFT) => {
+                (KeyCode::Char('R'), _) => {
                     if let Some(idx) = app.layout.read().tablestate.selected() {
                         app.reset_target_stats(idx);
                     }
