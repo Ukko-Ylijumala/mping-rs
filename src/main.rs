@@ -287,7 +287,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .selected()
                 .map_or("none".into(), |i| i.to_string())
         ),
-        false => " mping initialized and running. Press 'q' to quit.".into(),
+        false => " mping initialized and running. Press 'q' to quit, 'h' for help.".into(),
     });
 
     // Render all components. Order matters for layering; later ones overwrite earlier ones,
@@ -298,6 +298,14 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     frame.render_widget(info_upper, layout.info_upper);
     frame.render_widget(info_lower, layout.info_lower);
     frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
+
+    // Render popup if visible and has contents
+    if layout.popup_visible {
+        if let Some(popup) = &*state.popup_contents.read() {
+            frame.render_widget(Clear, layout.popup);
+            frame.render_widget(popup.to_para().block(block), layout.popup);
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
