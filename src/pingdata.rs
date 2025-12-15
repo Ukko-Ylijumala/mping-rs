@@ -35,6 +35,7 @@ pub(crate) enum PingStatus {
     Lossy,
     Flappy,
     Paused,
+    Resuming,
     Stopped,
     #[default]
     None,
@@ -51,6 +52,7 @@ impl Display for PingStatus {
             PingStatus::Lossy => write!(f, "lossy"),
             PingStatus::Flappy => write!(f, "flapping"),
             PingStatus::Paused => write!(f, "paused"),
+            PingStatus::Resuming => write!(f, "resuming"),
             PingStatus::Stopped => write!(f, "stopped"),
             PingStatus::None => write!(f, "{MISSING}"),
         }
@@ -192,7 +194,7 @@ impl PingTarget {
                 _ => {
                     inner.sent -= 1; // don't count errors, as the packet was never sent
                     PingStatus::Error(e.to_string())
-                },
+                }
             },
         };
         inner.recent.push(rec);
@@ -216,11 +218,29 @@ impl PingTarget {
         self.paused.load(Ordering::Relaxed)
     }
 
+    /// Pause pinging unconditionally.
+    pub fn pause(&self) {
+        if !self.is_stopped() {
+            self.data.write().raw_status = PingStatus::Paused;
+            self.paused.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Resume pinging unconditionally.
+    pub fn resume(&self) {
+        if !self.is_stopped() {
+            self.data.write().raw_status = PingStatus::Resuming;
+            self.paused.store(false, Ordering::Relaxed);
+        }
+    }
+
     /// Toggle paused state for this target.
     pub fn toggle_pause(&self) {
-        let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
-        if !was_paused {
-            self.data.write().raw_status = PingStatus::Paused;
+        if !self.is_stopped() {
+            let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
+            if !was_paused {
+                self.data.write().raw_status = PingStatus::Paused;
+            }
         }
     }
 
