@@ -54,6 +54,7 @@ pub(crate) struct AppState {
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
     pub popup_contents: RwLock<Option<PopupContents>>,
+    perf: AtomicBool,
 }
 
 impl AppState {
@@ -71,6 +72,7 @@ impl AppState {
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         self.debug = conf.debug;
         self.verbose = conf.verbose;
+        self.perf = conf.perf.into();
 
         // setup app title row with version and styling
         self.title.push_span(format!(" v{}", conf.ver));
@@ -124,6 +126,17 @@ impl AppState {
     /// The number of ping targets in the application state.
     pub fn len(&self) -> usize {
         self.targets.read().len()
+    }
+
+    /// Whether perf mode is enabled (aka. reduce task spawn overhead).
+    #[inline]
+    pub fn perf(&self) -> bool {
+        self.perf.load(Ordering::Relaxed)
+    }
+
+    /// Toggle perf mode on/off.
+    pub fn toggle_perf(&self) {
+        self.perf.fetch_xor(true, Ordering::SeqCst);
     }
 
     /// Whether the quit flag has been toggled.
@@ -250,6 +263,7 @@ impl Default for AppState {
             key_event: Notify::new(),
             status_line: MutableLine::new_from(""),
             popup_contents: None.into(),
+            perf: AtomicBool::new(false),
         }
     }
 }
