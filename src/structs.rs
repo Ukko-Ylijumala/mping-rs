@@ -16,7 +16,7 @@ use std::{
     net::IpAddr,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -54,6 +54,7 @@ pub(crate) struct AppState {
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
     pub popup_contents: RwLock<Option<PopupContents>>,
+    spawned_tasks: AtomicU64,
     perf: AtomicBool,
 }
 
@@ -126,6 +127,17 @@ impl AppState {
     /// The number of ping targets in the application state.
     pub fn len(&self) -> usize {
         self.targets.read().len()
+    }
+
+    /// The number of spawned ping tasks so far.
+    pub fn spawned_tasks(&self) -> u64 {
+        self.spawned_tasks.load(Ordering::Relaxed)
+    }
+
+    /// Increment the spawned tasks counter by one.
+    #[inline]
+    pub fn inc_spawned_tasks(&self) {
+        self.spawned_tasks.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Whether perf mode is enabled (aka. reduce task spawn overhead).
@@ -263,6 +275,7 @@ impl Default for AppState {
             key_event: Notify::new(),
             status_line: MutableLine::new_from(""),
             popup_contents: None.into(),
+            spawned_tasks: AtomicU64::new(0),
             perf: AtomicBool::new(false),
         }
     }
