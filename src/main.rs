@@ -430,8 +430,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Print final stats
     let data: Vec<TableRow> = gather_target_data(&app, true).await;
-    let rows: usize = app.layout.read().tbl_usable_rows().min(data.len());
-    for line in simple_tabulate(&data[..rows], Some(&app.headers.strings())) {
+    // Display the same rows as were visible in the TUI
+    let offset: usize = app.layout.read().tablestate.offset();
+    let end: usize = (app.layout.read().tbl_usable_rows() + offset).min(data.len());
+    for line in simple_tabulate(&data[offset..end], Some(&app.headers.strings())) {
         println!("{line}");
     }
     Ok(())
