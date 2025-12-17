@@ -2,9 +2,12 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{ip_addresses::parse_ip_or_range, strings::*, utils::parse_float_into_duration};
+use crate::{
+    strings::*,
+    utils::{parse_float_into_duration, parse_ip_addresses},
+};
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
-use std::{collections::HashSet, fmt::Debug, net::IpAddr, process, time::Duration};
+use std::{fmt::Debug, net::IpAddr, process, time::Duration};
 
 /// Configuration struct for the program.
 #[derive(Parser, Default, Debug, Clone)]
@@ -111,62 +114,7 @@ impl MpConfig {
         let mut config: MpConfig = <MpConfig as Parser>::parse();
         config.ver = crate_version!().to_string();
 
-        // Parse all targets and expand them into individual IPs
-        let mut all_addrs: Vec<IpAddr> = Vec::new();
-        for target in &config.targets {
-            match parse_ip_or_range(target) {
-                Ok(mut ips) => {
-                    if config.verbose && ips.len() > 1 {
-                        eprintln!("Expanded '{target}' to {} addresses", ips.len());
-                    }
-                    all_addrs.append(&mut ips);
-                }
-                Err(e) => {
-                    eprintln!("{ERR_PARSE_IP} '{target}': {e}");
-                    process::exit(1);
-                }
-            }
-        }
-
-        // Remove duplicates while preserving order
-        let mut seen: HashSet<IpAddr> = HashSet::new();
-        all_addrs.retain(|ip: &IpAddr| seen.insert(*ip));
-
-        // Parse exclusions and expand them into individual IPs
-        let mut exclusions: HashSet<IpAddr> = HashSet::new();
-        for exc in &config.exclude {
-            match parse_ip_or_range(exc) {
-                Ok(mut ips) => {
-                    if config.verbose && ips.len() > 1 {
-                        eprintln!("Expanded '{exc}' to {} addresses (exclusion)", ips.len());
-                    }
-                    exclusions.extend(ips.drain(..));
-                }
-                Err(e) => {
-                    eprintln!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}");
-                    process::exit(1);
-                }
-            }
-        }
-
-        // Apply exclusions if needed
-        if !exclusions.is_empty() {
-            // let's see if we actually exclude anything
-            let remainder: HashSet<IpAddr> = &seen - &exclusions;
-            if remainder == seen {
-                eprintln!("{WARN_NO_MATCHES}");
-            } else if remainder.is_empty() {
-                eprintln!("{ERR_ALL_EXCLUDED}");
-                process::exit(1);
-            } else {
-                if config.verbose {
-                    eprintln!("{INFO_EXCLUDE}: {}", (seen.len() - remainder.len()));
-                }
-                all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
-            }
-        }
-
-        config.addrs = all_addrs;
+        config.addrs = parse_ip_addresses(&config.targets, Some(&config.exclude), config.verbose);
         if config.addrs.is_empty() {
             eprintln!("{ERR_NO_VALID_IPS}");
             process::exit(1);
