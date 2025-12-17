@@ -89,6 +89,9 @@ pub(crate) struct MpConfig {
     )]
     pub refresh: u64,
 
+    #[arg(long, help = HELP_PERF)]
+    pub perf: bool,
+
     #[arg(long, short = 'v', help = HELP_VERBOSE)]
     pub verbose: bool,
 

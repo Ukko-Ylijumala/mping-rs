@@ -53,6 +53,7 @@ pub static HELP_RANDOMIZE: &str = "Randomize ICMP payload data [default: no]";
 pub static HELP_HISTSIZE: &str = "Full history size (number of ping results to keep per target) [60 - 65536]";
 pub static HELP_DETAILED: &str = "Detailed recent history size (for laggy/flappy detection etc) [10 - 1000]";
 pub static HELP_REFRESH: &str = "TUI refresh interval in milliseconds [50 - 5000]";
+pub static HELP_PERF: &str = "Try to be more performant by reducing task spawn overhead";
 pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";
 pub static INFO_CAPS: &str = "This program requires CAP_NET_RAW to send ICMP packets.
