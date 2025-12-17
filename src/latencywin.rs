@@ -228,6 +228,18 @@ impl LatencyWindow {
         Ok(self.sum / self.len as f64)
     }
 
+    /// Returns up to `n` most recent samples from the buffer as a Vec.
+    pub fn recent_samples(&self, n: usize) -> Result<Vec<u32>, String> {
+        self.no_samples_check()?;
+        let count: usize = self.len.min(n);
+        let mut samples: Vec<u32> = Vec::with_capacity(count);
+        for i in 0..count {
+            let idx: usize = (self.head + self.cap - count + i) % self.cap;
+            samples.push(self.buf[idx]);
+        }
+        Ok(samples)
+    }
+
     /**
     Computes sample standard deviation over the last `n` samples.
 
