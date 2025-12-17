@@ -23,15 +23,17 @@ use std::{
     time::Duration,
 };
 
-/// Set up handlers for various termination signals.
-///
-/// Currently we handle:
-///   - [SIGINT] - `Ctrl-C`
-///   - [SIGTERM] - `kill -15` from shell or systemd etc
-///   - [SIGQUIT] - `Ctrl-\`. This normally creates a core dump, but here we just exit cleanly.
-///
-/// NOTE: some (many? most?) console emulators do not process SIGINT when in raw mode,
-/// hence Ctrl-C might need to be handled manually in a key event loop instead.
+/**
+Set up handlers for various termination signals.
+
+Currently we handle:
+  - [SIGINT] - `Ctrl-C`
+  - [SIGTERM] - `kill -15` from shell or systemd etc
+  - [SIGQUIT] - `Ctrl-\`. This normally creates a core dump, but here we just exit cleanly.
+
+NOTE: some (many? most?) console emulators do not process SIGINT when in raw mode,
+hence Ctrl-C might need to be handled manually in a key event loop instead.
+*/
 pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
     // Signals to listen for
     let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).expect(ERR_SIGNALS);
@@ -88,10 +90,12 @@ pub(crate) fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
     }
 }
 
-/// Parse and expand a list of space separated IPv4/v6 addresses
-/// (single, range, CIDR), taking exclusions into account if applicable.
-///
-/// Removes duplicates and preserves order of first occurrence.
+/**
+Parse and expand a list of space separated IPv4/v6 addresses
+(single, range, CIDR), taking exclusions into account if applicable.
+
+Removes duplicates and preserves order of first occurrence.
+*/
 pub(crate) fn parse_ip_addresses(
     targets: &[String],
     exclude: Option<&[String]>,

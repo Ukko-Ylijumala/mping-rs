@@ -27,7 +27,7 @@ const DEFAULT_PAYLOAD_SIZE: usize = 32;
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
 
 /// Main application state structure. Holds shared state across threads and tasks.
-/// Needs to be put into an Arc after intialization, which build() conveniently does.
+/// Needs to be put into an Arc after intialization, which `build()` conveniently does.
 pub(crate) struct AppState {
     pub pi: ProcessInfo,
     pub c_v4: Option<Arc<Client>>,
@@ -59,13 +59,15 @@ pub(crate) struct AppState {
 }
 
 impl AppState {
-    /// Build the application state based on the provided configuration.
-    /// - set up UI refresh interval
-    /// - set up [surge_ping::Client] instances for IPv4 and IPv6 as needed
-    /// - add provided ping targets
-    ///
-    /// NOTE: sharing a client across multiple targets is (async) safe
-    /// and allows socket reuse.
+    /**
+    Build the application state based on the provided configuration.
+    - set up UI refresh interval
+    - set up [surge_ping::Client] instances for IPv4 and IPv6 as needed
+    - add provided ping targets
+
+    NOTE: sharing a client across multiple targets is (async) safe
+    and allows socket reuse.
+    */
     pub fn build(
         mut self,
         conf: &MpConfig,

@@ -37,39 +37,41 @@ const TBL_WASTED_COLS: u16 = 2; // borders
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
 
 #[derive(Debug, Default)]
-/// Layout structure for Ratatui frames.
-///
-/// Create the initial layout with [AppLayout::default], then call
-/// [AppLayout::update] on each frame render to adjust to terminal
-/// size changes etc. Update is a no-op if the size hasn't changed.
-///
-/// Current layout:
-///
-/// ```text
-/// +-------------------------+
-/// |        > title <        | (1 line)
-/// +-------------------------+
-/// |                         |
-/// | middle                  |
-/// |                         |
-/// +-------------------------+
-/// |> status    |  procinfo <| (1 line)
-/// +-------------------------+
-///
-/// Middle is further divided into sections (table has priority):
-/// +-----------------+-------+
-/// |                 | info  |
-/// |                 | upper |
-/// |                 |       |
-/// |  table          |       |
-/// |                 |-------|
-/// |                 | info  |
-/// |                 | lower |
-/// +-----------------+-------+
-/// ```
-/// We also define the following modal areas:
-/// - `popup`: centered text box (for multiline text)
-/// - `input`: centered input area (for modal text input)
+/**
+Layout structure for Ratatui frames.
+
+Create the initial layout with [AppLayout::default], then call
+[AppLayout::update] on each frame render to adjust to terminal
+size changes etc. Update is a no-op if the size hasn't changed.
+
+Current layout:
+
+```text
++-------------------------+
+|        > title <        | (1 line)
++-------------------------+
+|                         |
+| middle                  |
+|                         |
++-------------------------+
+|> status    |  procinfo <| (1 line)
++-------------------------+
+
+Middle is further divided into sections (table has priority):
++-----------------+-------+
+|                 | info  |
+|                 | upper |
+|                 |       |
+|  table          |       |
+|                 |-------|
+|                 | info  |
+|                 | lower |
++-----------------+-------+
+```
+We also define the following modal areas:
+- `popup`: centered text box (for multiline text)
+- `input`: centered input area (for modal text input)
+*/
 pub(crate) struct AppLayout {
     /// Full frame area
     pub frame: Rect,
@@ -103,10 +105,12 @@ pub(crate) struct AppLayout {
 }
 
 impl AppLayout {
-    /// Update the layout based on the full frame area (if it has changed),
-    /// and the table size (if needed).
-    ///
-    /// Updated column [Constraint]s are available afterwards in `tbl_constraints`.
+    /**
+    Update the layout based on the full frame area (if it has changed),
+    and the table size (if needed).
+
+    Updated column [Constraint]s are available afterwards in `tbl_constraints`.
+    */
     pub fn maybe_update(&mut self, frame: Rect, data: &[TableRow]) {
         // No need to recalculate if frame size and table size are unchanged
         let tbl_width: u16 = self.update_col_widths(data);
@@ -496,10 +500,12 @@ impl Index<usize> for TableRow {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// RAII guard object for TUI console using [ratatui] and [crossterm].
-/// - sets up a panic handler to restore normal terminal on panic
-/// - initializes a full-screen TUI on creation (the RAII part)
-/// - restores the normal terminal on drop (automatic cleanup)
+/**
+RAII guard object for TUI console using [ratatui] and [crossterm].
+- sets up a panic handler to restore normal terminal on panic
+- initializes a full-screen TUI on creation (the RAII part)
+- restores the normal terminal on drop (automatic cleanup)
+*/
 pub struct TerminalGuard {
     pub term: Terminal<CrosstermBackend<Stdout>>,
     verbose: bool,
@@ -560,13 +566,15 @@ pub(crate) fn key_event_handler(state: Arc<AppState>) {
     }
 }
 
-/// Crossterm key event polling helper
-/// ### Arguments
-/// - `wait_ms`: milliseconds to wait for an event (before returning `Ok(false)`)
-/// - `app`: Application state reference
-///
-/// ### Returns
-/// - `Ok(bool)` indicating whether a handled key event occurred
+/**
+Crossterm key event polling helper
+### Arguments
+- `wait_ms`: milliseconds to wait for an event (before returning `Ok(false)`)
+- `app`: Application state reference
+
+### Returns
+- `Ok(bool)` indicating whether a handled key event occurred
+*/
 fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
         if let Event::Key(e) = event::read()? {

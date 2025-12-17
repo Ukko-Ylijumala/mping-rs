@@ -135,10 +135,12 @@ impl MpConfig {
             d => d,
         };
 
-        // If necessary, tweak the timeout so that we can't have an excessive number of
-        // pending pings (tasks) to the same target. This is a simple heuristic to avoid
-        // overwhelming the application with too many concurrent pings if the user has
-        // set an unreasonably high timeout combined with a very low interval.
+        /*
+        If necessary, tweak the timeout so that we can't have an excessive number of
+        pending pings (tasks) to the same target. This is a simple heuristic to avoid
+        overwhelming the application with too many concurrent pings if the user has
+        set an unreasonably high timeout combined with a very low interval.
+        */
         let limit: Duration = config.interval * 4; // max. 4 pending pings per target
         if config.timeout > limit {
             if config.verbose {

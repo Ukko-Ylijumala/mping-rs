@@ -12,32 +12,34 @@ use std::{cmp::max, collections::VecDeque};
 
 const MIN_WINDOW_SIZE: usize = 3;
 
-/// O(1) amortized rolling latency window over the last N samples.
-///
-/// Maintains a fixed-size sliding window of latency samples and computes
-/// statistical metrics efficiently. All values are stored in microseconds
-/// as u32, and calculations use f64 for precision.
-///
-/// ## Capacity
-/// The window capacity is clamped to a minimum of 3 samples to ensure
-/// statistical operations are meaningful.
-///
-/// ## Numerical Considerations
-/// Variance is computed using the computational formula which is efficient
-/// but may lose precision for extremely large values or very small variance.
-/// Suitable for typical (network) latency monitoring (µs to ms range).
-///
-/// ## Example
-/// ```
-/// use latencywin::LatencyWindow;
-///
-/// let mut win = LatencyWindow::new(100);
-/// win.push(1500);  // 1.5ms in µs
-/// win.push(2000);  // 2.0ms
-/// 
-/// let (mean, min, max) = win.mean_min_max().unwrap();
-/// println!("Mean: {:.2}ms", mean / 1e3);
-/// ```
+/**
+O(1) amortized rolling latency window over the last N samples.
+
+Maintains a fixed-size sliding window of latency samples and computes
+statistical metrics efficiently. All values are stored in microseconds
+as u32, and calculations use f64 for precision.
+
+## Capacity
+The window capacity is clamped to a minimum of 3 samples to ensure
+statistical operations are meaningful.
+
+## Numerical Considerations
+Variance is computed using the computational formula which is efficient
+but may lose precision for extremely large values or very small variance.
+Suitable for typical (network) latency monitoring (µs to ms range).
+
+## Example
+```
+use latencywin::LatencyWindow;
+
+let mut win = LatencyWindow::new(100);
+win.push(1500);  // 1.5ms in µs
+win.push(2000);  // 2.0ms
+
+let (mean, min, max) = win.mean_min_max().unwrap();
+println!("Mean: {:.2}ms", mean / 1e3);
+```
+*/
 #[derive(Debug, Default)]
 pub struct LatencyWindow {
     cap: usize,
@@ -94,17 +96,21 @@ impl LatencyWindow {
             self.sum += val_f - old;
             self.sum_sq += val_f * val_f - old * old;
 
-            // The global “logical index” of the evicted element is idx - cap,
-            // but we only track indices of pushed elements in queues;
-            // we’ll drop out-of-range by age below.
+            /*
+            The global “logical index” of the evicted element is idx - cap,
+            but we only track indices of pushed elements in queues;
+            we’ll drop out-of-range by age below.
+            */
         }
 
         // Compute population variance and stdev
         if self.len > 1 {
             let len_f: f64 = self.len as f64;
-            // Due to floating-point rounding errors in the computational formula,
-            // variance could become slightly negative (e.g. -1e-15),
-            // even though mathematically it should not. Guard against that here.
+            /*
+            Due to floating-point rounding errors in the computational formula,
+            variance could become slightly negative (e.g. -1e-15),
+            even though mathematically it should not. Guard against that here.
+            */
             let mut variance: f64 = (self.sum_sq - (self.sum * self.sum / len_f)) / len_f;
             if variance < 0.0 {
                 variance = 0.0;
@@ -222,17 +228,19 @@ impl LatencyWindow {
         Ok(self.sum / self.len as f64)
     }
 
-    /// Computes sample standard deviation over the last `n` samples.
-    ///
-    /// Uses Bessel's correction (N-1 divisor) for unbiased sample variance.
-    /// This is an O(n) operation that scans backwards from the most recent sample.
-    ///
-    /// ## Arguments
-    /// * `n` - Number of recent samples to include (1 ≤ n ≤ len)
-    ///
-    /// ## Returns
-    /// * `Ok(stdev)` - Sample standard deviation
-    /// * `Err(_)` - If n is out of range or window is empty
+    /**
+    Computes sample standard deviation over the last `n` samples.
+
+    Uses Bessel's correction (N-1 divisor) for unbiased sample variance.
+    This is an O(n) operation that scans backwards from the most recent sample.
+
+    ## Arguments
+    * `n` - Number of recent samples to include (1 ≤ n ≤ len)
+
+    ## Returns
+    * `Ok(stdev)` - Sample standard deviation
+    * `Err(_)` - If n is out of range or window is empty
+    */
     pub fn stdev_n(&self, n: usize) -> Result<f64, String> {
         self.no_samples_check()?;
         if n == 1 {
@@ -268,12 +276,14 @@ impl LatencyWindow {
     }
 }
 
-/// Naive reference calculation for sum of squares, which here means
-/// the sum of the squared differences between data values and the mean.
-///
-/// If `is_sample` == `true`, uses Bessel's correction (N-1 divisor),
-/// meaning the result is the sample variance; otherwise uses
-/// N divisor (population variance).
+/**
+Naive reference calculation for sum of squares, which here means
+the sum of the squared differences between data values and the mean.
+
+If `is_sample` == `true`, uses Bessel's correction (N-1 divisor),
+meaning the result is the sample variance; otherwise uses
+N divisor (population variance).
+*/
 pub fn sum_of_squares(data: &[u32], is_sample: bool) -> f64 {
     #[cfg(test)]
     {

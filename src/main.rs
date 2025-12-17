@@ -48,16 +48,20 @@ fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16) -> Vec<PingTarge
         .collect()
 }
 
-/// Helper to mark a ping as sent and calculate the next sequence number.
-/// Update sent timestamp as late as possible before sending so that the time
-/// difference is minimized. There will still  be some delay due to task
-/// scheduling etc, but this should be negligible compared to network latencies.
+/**
+Helper to mark a ping as sent and calculate the next sequence number.
+Update sent timestamp as late as possible before sending so that the time
+difference is minimized. There will still  be some delay due to task
+scheduling etc, but this should be negligible compared to network latencies.
+*/
 #[inline]
 fn mark_sent_and_next_seq(tgt: &PingTarget) -> u16 {
     let mut stats = tgt.data.write();
-    // update sent count here to make sure it's incremented before
-    // sending so that the main sent count stays accurate even if
-    // ping fails or we get out of order replies etc
+    /*
+    update sent count here to make sure it's incremented before
+    sending so that the main sent count stays accurate even if
+    ping fails or we get out of order replies etc
+    */
     let sent: u64 = stats.sent;
     stats.sent += 1;
 
@@ -79,11 +83,13 @@ fn build_payload(app: &AppState) -> Arc<[u8]> {
         true => {
             let mut payload: Arc<[u8]> = app.payload.clone();
             let payload: &mut [u8] = Arc::make_mut(&mut payload);
-            // Can't use a thread-local RNG here (for performance)
-            // because it's not Send'able across await points.
-            // However, we can spare CPU time by randomizing only
-            // the first 32 bytes of the payload, which should be plenty.
-            // And we already know the payload must be 32 bytes minimum.
+            /*
+            Can't use a thread-local RNG here (for performance)
+            because it's not Send'able across await points.
+            However, we can spare CPU time by randomizing only
+            the first 32 bytes of the payload, which should be plenty.
+            And we already know the payload must be 32 bytes minimum.
+            */
             fill(&mut payload[..PAYLOAD_RND_BYTES]);
             payload.into()
         }
@@ -156,9 +162,11 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
             _ = ticker.tick() => {
                 let now = tokio::time::Instant::now();
                 if tgt.is_paused() {
-                    // Adjust next ping time to not build a backlog while paused.
-                    // When unpaused, the next ping should be pretty much immediate
-                    // and subsequent pings will resume at the normal interval.
+                    /*
+                    Adjust next ping time to not build a backlog while paused.
+                    When unpaused, the next ping should be pretty much immediate
+                    and subsequent pings will resume at the normal interval.
+                    */
                     next_ping = now;
                     continue;
                 } else if now < next_ping {
@@ -239,11 +247,13 @@ async fn format_row(tgt: &Arc<PingTarget>, debug: bool, timeout: Duration) -> Ta
     row
 }
 
-/// Gather current stringified data from some or all targets.
-///
-/// For large target lists, gathering data for all can be slow, hence
-/// it makes sense to only gather data for the currently visible targets
-/// in the TUI table. This function supports both modes via the `all` param.
+/**
+Gather current stringified data from some or all targets.
+
+For large target lists, gathering data for all can be slow, hence
+it makes sense to only gather data for the currently visible targets
+in the TUI table. This function supports both modes via the `all` param.
+*/
 async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
     let tgts = state.targets.read();
     let items: usize = tgts.len();
@@ -258,10 +268,12 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
         .await;
     }
 
-    // Since the target list is longer than the table height, we have to fake
-    // empty rows for Ratatui to render the full table. We create those to fill
-    // the space. Depending on the offset, we need to do this at the start, end
-    // or both. Chaining the Vec iterators makes this fairly straightforward.
+    /*
+    Since the target list is longer than the table height, we have to fake
+    empty rows for Ratatui to render the full table. We create those to fill
+    the space. Depending on the offset, we need to do this at the start, end
+    or both. Chaining the Vec iterators makes this fairly straightforward.
+    */
     let offset: usize = state.layout.read().tablestate.offset();
     let end_pos: usize = offset + rows;
     let pre: Vec<TableRow> = vec![TableRow::new(); offset];

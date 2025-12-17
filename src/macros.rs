@@ -2,27 +2,29 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-/// Delegate read-only method calls to something enclosed in a [parking_lot::RwLock].
-/// The structure containing the lock must implement a method `with` that provides
-/// read access to the inner value.
-///
-/// Think of it as a poor man's [std::ops::Deref] implementation for RwLock-wrapped types.
-/// ## Example
-/// ```ignore
-/// use parking_lot::RwLock;
-/// use ratatui::text::Line;
-///
-/// pub struct Wrapper<'a>(RwLock<Line<'a>>);
-///
-/// impl<'a> Wrapper<'a> {
-///     fn with<R>(&self, f: impl FnOnce(&Line<'a>) -> R) -> R {
-///         f(&*self.0.read())
-///     }
-///
-///    // Define the methods to delegate (ie. pass through to the inner Line)
-///    delegate_read!(width -> usize);
-/// }
-/// ```
+/**
+Delegate read-only method calls to something enclosed in a [parking_lot::RwLock].
+The structure containing the lock must implement a method `with` that provides
+read access to the inner value.
+
+Think of it as a poor man's [std::ops::Deref] implementation for RwLock-wrapped types.
+## Example
+```ignore
+use parking_lot::RwLock;
+use ratatui::text::Line;
+
+pub struct Wrapper<'a>(RwLock<Line<'a>>);
+
+impl<'a> Wrapper<'a> {
+    fn with<R>(&self, f: impl FnOnce(&Line<'a>) -> R) -> R {
+        f(&*self.0.read())
+    }
+
+   // Define the methods to delegate (ie. pass through to the inner Line)
+   delegate_read!(width -> usize);
+}
+```
+*/
 macro_rules! delegate_read {
     ($name:ident -> $ret:ty) => {
         pub fn $name(&self) -> $ret {
@@ -31,29 +33,31 @@ macro_rules! delegate_read {
     };
 }
 
-/// Delegate mutating method calls to something enclosed in a [parking_lot::RwLock].
-/// The structure containing the lock must implement a method `with_mut` that provides
-/// write access to the inner value.
-///
-/// Think of it as a poor man's [std::ops::DerefMut] implementation for RwLock-wrapped types.
-/// ## Example
-/// ```ignore
-/// use parking_lot::RwLock;
-/// use ratatui::text::Line;
-///
-/// pub struct Wrapper<'a>(RwLock<Line<'a>>);
-///
-/// impl<'a> Wrapper<'a> {
-///     fn with_mut<R>(&self, f: impl FnOnce(&mut Line<'a>) -> R) -> R {
-///         f(&mut *self.0.write())
-///     }
-///
-///    // Define the methods to delegate (ie. pass through to the inner Line)
-///    delegate_write!(bold);
-///    delegate_write!(style, style: Style);
-///    delegate_write!(push_span, <T: Into<Span<'a>>>, span: T);
-/// }
-/// ```
+/**
+Delegate mutating method calls to something enclosed in a [parking_lot::RwLock].
+The structure containing the lock must implement a method `with_mut` that provides
+write access to the inner value.
+
+Think of it as a poor man's [std::ops::DerefMut] implementation for RwLock-wrapped types.
+## Example
+```ignore
+use parking_lot::RwLock;
+use ratatui::text::Line;
+
+pub struct Wrapper<'a>(RwLock<Line<'a>>);
+
+impl<'a> Wrapper<'a> {
+    fn with_mut<R>(&self, f: impl FnOnce(&mut Line<'a>) -> R) -> R {
+        f(&mut *self.0.write())
+    }
+
+   // Define the methods to delegate (ie. pass through to the inner Line)
+   delegate_write!(bold);
+   delegate_write!(style, style: Style);
+   delegate_write!(push_span, <T: Into<Span<'a>>>, span: T);
+}
+```
+*/
 macro_rules! delegate_write {
     // No arguments, chainable (returns Self)
     ($name:ident) => {

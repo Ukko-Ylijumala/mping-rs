@@ -5,12 +5,14 @@
 use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-/// Parse an IP address, CIDR, or IP range from a string.
-/// Supported formats:
-/// - Single IP: 10.10.10.1
-/// - CIDR: 10.10.10.0/28
-/// - Short range: 10.10.10.1-10 (last octet range)
-/// - Full range: 10.10.10.1-10.10.10.10
+/**
+Parse an IP address, CIDR, or IP range from a string.
+Supported formats:
+- Single IP: 10.10.10.1
+- CIDR: 10.10.10.0/28
+- Short range: 10.10.10.1-10 (last octet range)
+- Full range: 10.10.10.1-10.10.10.10
+*/
 pub fn parse_ip_or_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     // Try single IP first
     if let Ok(ip) = arg.parse::<IpAddr>() {
@@ -35,9 +37,11 @@ pub fn parse_ip_or_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     Err(format!("Invalid IP address, CIDR, or range: {arg}"))
 }
 
-/// Parse an IP range in the format:
-/// - 10.10.10.1-10 (short form, last octet only)
-/// - 10.10.10.1-10.10.10.10 (full form)
+/**
+Parse an IP range in the format:
+- 10.10.10.1-10 (short form, last octet only)
+- 10.10.10.1-10.10.10.10 (full form)
+*/
 pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     let parts: Vec<&str> = arg.split('-').collect();
     if parts.len() != 2 {

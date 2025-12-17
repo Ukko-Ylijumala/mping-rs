@@ -80,14 +80,16 @@ fn tabulate(data: Vec<Vec<String>>, hdr: bool, out: &mut Vec<String>, missing: O
     }
 }
 
-/// Format a collection of rows as a table for printing.
-///
-/// ## Arguments
-/// * `data` - Iterator of rows (each row is an iterator of items)
-/// * `headers` - Optional slice of column headers
-///
-/// ## Returns
-///   * Vec of Strings containing the formatted table
+/**
+Format a collection of rows as a table for printing.
+
+## Arguments
+* `data` - Iterator of rows (each row is an iterator of items)
+* `headers` - Optional slice of column headers
+
+## Returns
+  * Vec of Strings containing the formatted table
+*/
 pub fn simple_tabulate<I, R, T>(data: I, headers: Option<&[&str]>) -> Vec<String>
 where
     I: IntoIterator<Item = R>,
@@ -116,16 +118,18 @@ where
     formatted
 }
 
-/// Format a collection of rows as a table for printing. Handles Option<T> values,
-/// replacing None with the provided `missing` string.
-///
-/// ## Arguments
-/// * `data` - Iterator of rows (each row is an iterator of items)
-/// * `headers` - Optional slice of column headers
-/// * `missing` - String to replace None values with
-///
-/// ## Returns
-///   * Vec of Strings containing the formatted table
+/**
+Format a collection of rows as a table for printing. Handles Option<T> values,
+replacing None with the provided `missing` string.
+
+## Arguments
+* `data` - Iterator of rows (each row is an iterator of items)
+* `headers` - Optional slice of column headers
+* `missing` - String to replace None values with
+
+## Returns
+  * Vec of Strings containing the formatted table
+*/
 pub fn tabulate_with_missing<I, R, T>(
     data: I,
     headers: Option<&[&str]>,

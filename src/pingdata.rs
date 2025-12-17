@@ -66,13 +66,15 @@ pub(crate) struct PingTargetInner {
     pub rtts: LatencyWindow, // RTTs in microseconds (rolling window)
     /// Detailed history of recent sent/received packets
     pub recent: PacketHistory,
-    /// Raw last known status from pinging. Can only be one of:
-    /// - [PingStatus::Ok]
-    /// - [PingStatus::Timeout]
-    /// - [PingStatus::Error]
-    ///
-    /// For derived statuses like [PingStatus::Laggy], [PingStatus::Lossy],
-    /// etc, use [PingTarget::effective_status] instead.
+    /**
+    Raw last known status from pinging. Can only be one of:
+    - [PingStatus::Ok]
+    - [PingStatus::Timeout]
+    - [PingStatus::Error]
+
+    For derived statuses like [PingStatus::Laggy], [PingStatus::Lossy],
+    etc, use [PingTarget::effective_status] instead.
+    */
     raw_status: PingStatus,
     /// Authoritative last sent sequence number
     pub last_seq: u16,
@@ -103,10 +105,12 @@ impl PingTargetInner {
         Ok(recent_mean.as_micros() as f64 > long_mean * factor)
     }
 
-    /// Whether this target is (currently) considered unreachable. Logic:
-    /// - If [DEFAULT_WIN] packets have been sent and none received -> unreachable
-    /// - If last [DEFAULT_WIN] * 5 packets were all lost -> unreachable
-    /// - Errors are NOT considered as unreachable.
+    /**
+    Whether this target is (currently) considered unreachable. Logic:
+    - If [DEFAULT_WIN] packets have been sent and none received -> unreachable
+    - If last [DEFAULT_WIN] * 5 packets were all lost -> unreachable
+    - Errors are NOT considered as unreachable.
+    */
     #[inline]
     pub fn is_unreachable(&self) -> bool {
         if matches!(
@@ -160,10 +164,12 @@ pub(crate) struct PingTarget {
 }
 
 impl PingTarget {
-    /// Create a new [PingTarget] for the specified IP address.
-    ///
-    /// - `histsize` specifies the size of the full RTT latency window.
-    /// - `detailed` specifies the number of more detailed recent packet stats to keep.
+    /**
+    Create a new [PingTarget] for the specified IP address.
+
+    - `histsize` specifies the size of the full RTT latency window.
+    - `detailed` specifies the number of more detailed recent packet stats to keep.
+    */
     pub fn new(addr: IpAddr, histsize: usize, detailed: usize) -> Self {
         Self {
             addr,
@@ -617,9 +623,11 @@ impl HistorySnapshot {
             let last: u16 = data.last().unwrap().seq;
             let second_last: u16 = data.iter().rev().nth(1).unwrap().seq;
             let delta: u16 = last.wrapping_sub(second_last);
-            // If delta > 32768, it wrapped the "wrong way" -> out of order.
-            // I'm told this is the "standard" way to check for u16 wraparound
-            // in sequence numbers, so let's go with it.
+            /*
+            If delta > 32768, it wrapped the "wrong way" -> out of order.
+            I'm told this is the "standard" way to check for u16 wraparound
+            in sequence numbers, so let's go with it.
+            */
             delta > 32768
         } else {
             false
@@ -658,11 +666,13 @@ impl HistorySnapshot {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Snapshot of ping statistics at a point in time.
-///
-/// Includes stringifying methods for display purposes.
-/// Unless otherwise noted, RTT values are stored as
-/// microseconds and displayed as milliseconds.
+/**
+Snapshot of ping statistics at a point in time.
+
+Includes stringifying methods for display purposes.
+Unless otherwise noted, RTT values are stored as
+microseconds and displayed as milliseconds.
+*/
 #[derive(Debug)]
 pub(crate) struct StatsSnapshot {
     pub sent: u64,
@@ -728,10 +738,12 @@ impl StatsSnapshot {
         }
     }
 
-    /// Whether the latest sent packet is still considered "in flight" (not yet timed out).
-    ///
-    /// NOTE: This is based on this snapshot's creation timestamp (`now`), not the current
-    /// time, so it may be slightly out of date. Sufficient for display purposes.
+    /**
+    Whether the latest sent packet is still considered "in flight" (not yet timed out).
+
+    NOTE: This is based on this snapshot's creation timestamp (`now`), not the current
+    time, so it may be slightly out of date. Sufficient for display purposes.
+    */
     #[inline]
     fn is_latest_inflight(&self) -> bool {
         self.timeout > self.when.duration_since(self.latest_sent)
