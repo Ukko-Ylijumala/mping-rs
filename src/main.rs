@@ -329,7 +329,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .addr
                 .to_string())
     ))
-    .block(b_info_upper);
+    .block(b_info_upper.clone());
 
     let info_lower = Paragraph::new(format!(
         " Interval: {} ms\n Timeout : {} ms\n Payload : {} bytes\n Tasks   : {} ",
@@ -338,6 +338,69 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         state.payload.len(),
         state.spawned_tasks()
     ));
+
+    // Recent RTT graphs for selected target if there's enough data for it.
+    if let Some(idx) = layout.tablestate.selected() {
+        let target: &Arc<PingTarget> = &state.targets.read()[idx.min(n - 1)];
+        let num: usize = target.data.read().recv.min(100) as usize;
+        let rtt_data: Vec<(f64, f64)> = target.get_recent_rtts(num);
+        if !rtt_data.is_empty() {
+            let max_rtt: f64 = rtt_data.iter().map(|&(_, y)| y).fold(0.0, f64::max);
+
+            // Split info_upper into [graph, hist] areas
+            let graph = Layout::vertical([
+                Constraint::Length(5),
+                Constraint::Length(20),
+                Constraint::Length(1), // empty spacer
+                Constraint::Length(11),
+            ])
+            .split(b_info_upper.inner(layout.info_upper));
+            let (graph_area, hist_area) = (graph[1], graph[3]);
+            let inner_block = Block::new()
+                .borders(Borders::TOP)
+                .border_type(BorderType::QuadrantOutside)
+                .title_alignment(Alignment::Center);
+
+            let datasets = Dataset::default()
+                .name("RTT (ms)")
+                .marker(symbols::Marker::Braille)
+                .style(Style::default().fg(Color::Cyan))
+                .graph_type(GraphType::Line)
+                .data(&rtt_data);
+            let rtt_chart = Chart::new(vec![datasets])
+                .block(inner_block.clone().title(" Round-Trip Time graph "))
+                .x_axis(
+                    Axis::default()
+                        .bounds([0.0, rtt_data.len() as f64 - 1.0])
+                        .labels(["Start".bold(), "Now".bold()]),
+                )
+                .y_axis(
+                    Axis::default()
+                        .bounds([0.0, max_rtt * 1.1])
+                        .labels(vec!["0".bold(), format!("{:.0}", max_rtt).bold()]),
+                );
+
+            let buckets = target
+                .get_rtt_histogram(10, num)
+                .iter()
+                .map(|b| {
+                    Bar::default()
+                        .value(b.count)
+                        .label(format!("{:.1}-{:.1}", b.low, b.high).into())
+                        .style(Style::default().fg(Color::Green))
+                })
+                .collect::<Vec<_>>();
+            let histogram = BarChart::default()
+                .block(inner_block.title(" RTT Histogram (ms) "))
+                .data(BarGroup::default().bars(&buckets))
+                .bar_width(1)
+                .bar_gap(0)
+                .direction(Direction::Horizontal);
+
+            frame.render_widget(rtt_chart, graph_area);
+            frame.render_widget(histogram, hist_area);
+        }
+    }
 
     let procinfo = Line::from(format!(
         "CPU: {:>7} | mem: {} | pid: {} ",
