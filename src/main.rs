@@ -25,11 +25,14 @@ use crate::{
     utils::setup_signal_handler,
 };
 
-use futures::future::join_all;
+use futures::{
+    future::join_all,
+    stream::{FuturesUnordered, StreamExt},
+};
 use miniutils::ToDisplay;
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
-use std::{net::IpAddr, sync::Arc, thread, time::Duration};
+use std::{future::Future, net::IpAddr, sync::Arc, thread, time::Duration};
 use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
 use tokio::time::{self, Instant, Interval};
 
@@ -45,16 +48,34 @@ fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16) -> Vec<PingTarge
         .collect()
 }
 
-/// Prepare and spawn a single ping task for the given target.
-async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, id: PingIdentifier) {
-    // We must create a new Pinger for each async context, since otherwise we'll have
-    // to wait for the previous ping to complete before sending the next one.
-    let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
-    pinger.timeout(app.ping_timeout);
+/// Helper to mark a ping as sent and calculate the next sequence number.
+/// Update sent timestamp as late as possible before sending so that the time
+/// difference is minimized. There will still  be some delay due to task
+/// scheduling etc, but this should be negligible compared to network latencies.
+#[inline]
+fn mark_sent_and_next_seq(tgt: &PingTarget) -> u16 {
+    let mut stats = tgt.data.write();
+    // update sent count here to make sure it's incremented before
+    // sending so that the main sent count stays accurate even if
+    // ping fails or we get out of order replies etc
+    let sent: u64 = stats.sent;
+    stats.sent += 1;
 
-    // Clone the payload slice into a new one, which we can randomize if needed.
-    // Arc::make_mut() will perform a clone-on-write if necessary.
-    let pl: Arc<[u8]> = match app.randomize {
+    // calculate the 16-bit sequence number from sent count,
+    // since 2^16 is the max for ICMP sequence numbers
+    let seq: u16 = (sent % 65_536) as u16;
+
+    // store last sent seq and timestamp for master reference
+    stats.last_seq = seq;
+    stats.last_sent = Some(std::time::Instant::now());
+    seq
+}
+
+/// Helper to clone the payload slice into a new one, which we can randomize if
+/// needed. Internally, [Arc::make_mut] will perform a clone-on-write if necessary.
+#[inline]
+fn build_payload(app: &AppState) -> Arc<[u8]> {
+    match app.randomize {
         true => {
             let mut payload: Arc<[u8]> = app.payload.clone();
             let payload: &mut [u8] = Arc::make_mut(&mut payload);
@@ -67,28 +88,40 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
             payload.into()
         }
         false => app.payload.clone(),
-    };
+    }
+}
 
-    // Update sent timestamp as late as possible before sending
-    // so that the time difference is minimized. There will still
-    // be some delay due to task scheduling etc, but this should
-    // be negligible compared to network latencies.
-    let seq: u16 = {
-        let mut stats = tgt.data.write();
-        // update sent count here to make sure it's incremented before
-        // sending so that the main sent count stays accurate even if
-        // ping fails or we get out of order replies etc
-        let sent: u64 = stats.sent;
-        stats.sent += 1;
-        // calculate the 16-bit sequence number from sent count,
-        // since 2^16 is the max for ICMP sequence numbers
-        let seq: u16 = (sent % 65536) as u16;
-        // store last sent seq and timestamp for master reference
-        stats.last_seq = seq;
-        stats.last_sent = Some(std::time::Instant::now());
-        seq
-    };
+/// Build a future that performs a single ping for the given target.
+fn build_ping_future(
+    tgt: Arc<PingTarget>,
+    c: Arc<Client>,
+    app: Arc<AppState>,
+    id: PingIdentifier,
+) -> impl Future<Output = ()> + Send + 'static {
+    let pl: Arc<[u8]> = build_payload(&app);
 
+    async move {
+        let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
+        pinger.timeout(app.ping_timeout);
+
+        let seq: u16 = mark_sent_and_next_seq(&tgt);
+        let rec: PacketRecord = PacketRecord::new(seq);
+        let res = pinger.ping(PingSequence(seq), &pl).await;
+        tgt.update_stats(res, rec).await;
+    }
+}
+
+/// Prepare and spawn a single ping task for the given target.
+async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, id: PingIdentifier) {
+    // We must create a new Pinger for each async context, since otherwise we'll have
+    // to wait for the previous ping to complete before sending the next one.
+    let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
+    pinger.timeout(app.ping_timeout);
+
+    let pl: Arc<[u8]> = build_payload(&app);
+    let seq: u16 = mark_sent_and_next_seq(&tgt);
+
+    app.inc_spawned_tasks();
     tokio::spawn(async move {
         let rec: PacketRecord = PacketRecord::new(seq);
         let res = pinger.ping(PingSequence(seq), &pl).await;
@@ -106,27 +139,48 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
     let mut ticker: Interval = time::interval(app.internal_tick);
     let mut next_ping: Instant = tokio::time::Instant::now();
 
+    // These variables are used only if perf mode is enabled
+    let interval: f64 = app.ping_interval.as_secs_f64().max(1e-6); // 1 us min to avoid div by zero
+    let timeout: f64 = app.ping_timeout.as_secs_f64();
+    let max_inflight: usize = ((timeout / interval).ceil() as usize).clamp(1, 4);
+    let mut inflight = FuturesUnordered::new();
+
     loop {
         tokio::select! {
             biased;
             true = app.is_quitting_async() => break,
             true = tgt.is_stopped_async() => break,
+
+            Some(_) = inflight.next(), if app.perf() => { /* stats updated inside future */ }
+
             _ = ticker.tick() => {
+                let now = tokio::time::Instant::now();
                 if tgt.is_paused() {
                     // Adjust next ping time to not build a backlog while paused.
                     // When unpaused, the next ping should be pretty much immediate
                     // and subsequent pings will resume at the normal interval.
-                    next_ping = tokio::time::Instant::now();
+                    next_ping = now;
                     continue;
-                } else if tokio::time::Instant::now() < next_ping {
+                } else if now < next_ping {
                     continue;
                 }
 
-                ping_task(tgt.clone(), &client, &app, id).await;
+                if app.perf() {
+                    if inflight.len() >= max_inflight {
+                        next_ping = now + app.ping_interval;
+                        continue;
+                    }
+                    inflight.push(build_ping_future(tgt.clone(), client.clone(), app.clone(), id));
+                } else {
+                    ping_task(tgt.clone(), &client, &app, id).await;
+                }
                 next_ping += app.ping_interval;
             }
         }
     }
+
+    // Drain outstanding pings (bounded by timeout, same practical behavior as with spawned tasks)
+    while inflight.next().await.is_some() {}
 }
 
 /// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
@@ -263,10 +317,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .block(b_info_upper);
 
     let info_lower = Paragraph::new(format!(
-        " Interval: {} ms\n Timeout : {} ms\n Payload : {} bytes ",
+        " Interval: {} ms\n Timeout : {} ms\n Payload : {} bytes\n Tasks   : {} ",
         state.ping_interval.as_millis(),
         state.ping_timeout.as_millis(),
         state.payload.len(),
+        state.spawned_tasks()
     ));
 
     let procinfo = Line::from(format!(
@@ -325,7 +380,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let mut tasks = app.tasks.write();
         for tgt in app.targets.read().iter() {
-            tasks.push(tokio::spawn(ping_loop(tgt.clone(), app.clone())))
+            tasks.push(tokio::spawn(ping_loop(tgt.clone(), app.clone())));
+            app.inc_spawned_tasks();
         }
     }
 
