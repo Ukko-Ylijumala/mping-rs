@@ -668,6 +668,11 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     }
                 }
 
+                // Toggle "performance" mode
+                (KeyCode::F(10), _) => {
+                    app.toggle_perf();
+                }
+
                 (KeyCode::Char('h') | KeyCode::F(1), _) => {
                     let mut lo = app.layout.write();
                     match lo.popup_visible {
