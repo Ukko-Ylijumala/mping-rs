@@ -151,7 +151,7 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
             true = app.is_quitting_async() => break,
             true = tgt.is_stopped_async() => break,
 
-            Some(_) = inflight.next(), if app.perf() => { /* stats updated inside future */ }
+            Some(_) = inflight.next(), if !inflight.is_empty() => { /* stats updated inside future */ }
 
             _ = ticker.tick() => {
                 let now = tokio::time::Instant::now();
@@ -179,8 +179,11 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
         }
     }
 
-    // Drain outstanding pings (bounded by timeout, same practical behavior as with spawned tasks)
-    while inflight.next().await.is_some() {}
+    // Drain outstanding pings (bounded by timeout, same practical behavior as with spawned tasks).
+    // However, if the app is quitting, just abandon the tasks or we will incur delays.
+    if !app.is_quitting() {
+        while inflight.next().await.is_some() {}
+    }
 }
 
 /// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
