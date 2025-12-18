@@ -25,6 +25,12 @@ use tokio::sync::Notify;
 
 const DEFAULT_PAYLOAD_SIZE: usize = 32;
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
+#[cfg(target_os = "linux")]
+static SYSTEM_TTL: u8 = 64; // default TTL for Linux
+#[cfg(target_os = "macos")]
+static SYSTEM_TTL: u8 = 64; // default TTL for macOS
+#[cfg(target_os = "windows")]
+static SYSTEM_TTL: u8 = 128; // default TTL for Windows
 
 /// Main application state structure. Holds shared state across threads and tasks.
 /// Needs to be put into an Arc after intialization, which `build()` conveniently does.
