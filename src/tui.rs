@@ -67,6 +67,21 @@ Middle is further divided into sections (table has priority):
 |                 | info  |
 |                 | lower |
 +-----------------+-------+
+
+And finally the info upper section is divided into:
++-----------+
+|           |
+|   text    |
+|           |
+|-----------|
+|           |
+|   graph   |
+|           |
+|-----------|
+|           |
+| histogram |
+|           |
++-----------+
 ```
 We also define the following modal areas:
 - `popup`: centered text box (for multiline text)
@@ -81,6 +96,12 @@ pub(crate) struct AppLayout {
     pub table: Rect,
     /// Info area (right side) - upper part
     pub info_upper: Rect,
+    /// Info area (right side) - upper part - text lines
+    pub i_upper_text: Rect,
+    /// Info area (right side) - upper part - graph
+    pub i_upper_graph: Rect,
+    /// Info area (right side) - upper part - histogram
+    pub i_upper_histo: Rect,
     /// Info area (right side) - lower part
     pub info_lower: Rect,
     /// Status bar area - bottom line - left side
@@ -158,6 +179,17 @@ impl AppLayout {
             (info[0], info[1])
         };
 
+        // Split info_upper into [info_top, graph, hist] areas
+        let (info_top, graph_area, hist_area) = {
+            let info_split = Layout::vertical([
+                Constraint::Length(5),
+                Constraint::Length(20),
+                Constraint::Length(11),
+            ])
+            .split(info_upper);
+            (info_split[0], info_split[1], info_split[2])
+        };
+
         // split status into left and right sides
         let (status_l, status_r) = {
             let status = Layout::horizontal([
@@ -187,6 +219,9 @@ impl AppLayout {
         self.title = title;
         self.table = table;
         self.info_upper = info_upper;
+        self.i_upper_text = info_top;
+        self.i_upper_graph = graph_area;
+        self.i_upper_histo = hist_area;
         self.info_lower = info_lower;
         self.status_l = status_l;
         self.status_r = status_r;
