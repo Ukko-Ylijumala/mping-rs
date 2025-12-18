@@ -16,7 +16,7 @@ use std::{
     ops::Index,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -165,6 +165,7 @@ pub(crate) struct PingTarget {
     pub data: RwLock<PingTargetInner>,
     paused: AtomicBool,
     cancel: CancellationToken,
+    hops: AtomicU8,
 }
 
 impl PingTarget {
@@ -183,6 +184,7 @@ impl PingTarget {
                 ..Default::default()
             }
             .into(),
+            hops: AtomicU8::new(0),
             paused: AtomicBool::new(false),
             cancel: CancellationToken::new(),
         }
@@ -211,6 +213,16 @@ impl PingTarget {
             },
         };
         inner.recent.push(rec);
+    }
+
+    /// Set the hop count for this target.
+    pub fn set_hops(&self, hops: u8) {
+        self.hops.store(hops, Ordering::Relaxed);
+    }
+
+    /// Get the last known hop count for this target, if any. Returns 0 if unknown.
+    pub fn hops(&self) -> u8 {
+        self.hops.load(Ordering::Relaxed)
     }
 
     /// Reset all statistics for this target as if it was never pinged.
