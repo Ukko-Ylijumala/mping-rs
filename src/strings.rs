@@ -11,6 +11,7 @@ pub static MISSING: &str = "-";
 // main.rs
 pub static ERR_V4_MISSING: &str = "IPv4 client missing";
 pub static ERR_V6_MISSING: &str = "IPv6 client missing";
+pub static APP_RUNNING: &str = "mping initialized. Press 'q' to quit, 'h' for help.";
 pub static ERR_KEV_JOIN: &str = "Error joining key event handler thread";
 pub static INFO_QUITTING: &str = "Main thread quitting. Waiting for tasks to terminate...";
 

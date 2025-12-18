@@ -420,7 +420,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .selected()
                 .map_or("none".into(), |i| i.to_string())
         ),
-        false => " mping initialized and running. Press 'q' to quit, 'h' for help.".into(),
+        false => format!(" {APP_RUNNING}"),
     });
 
     // Render all components. Order matters for layering; later ones overwrite earlier ones,

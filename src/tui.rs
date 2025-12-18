@@ -161,8 +161,8 @@ impl AppLayout {
         // split status into left and right sides
         let (status_l, status_r) = {
             let status = Layout::horizontal([
-                Constraint::Percentage(50), // left side
-                Constraint::Percentage(50), // right side (process info)
+                Constraint::Fill(1), // left side
+                Constraint::Min(43), // right side (process info)
             ])
             .split(status);
             (status[0], status[1])
