@@ -10,6 +10,7 @@ categories = ["network-programming"]
 keywords = ["icmp", "ping", "networking", "ncurses", "async"]
 publish = false
 edition = "2024"
+default-run = "mping"
 
 [dependencies]
 surge-ping = "0.8.3"
@@ -45,3 +46,11 @@ opt-level = 3
 lto = true
 # Enable to make release builds include debug info
 #debug = true
+
+[[bin]]
+name = "mping"
+path = "src/main.rs"
+
+[[bin]]
+name = "hopcount"
+path = "src/hopcount_bin.rs"
