@@ -317,7 +317,13 @@ impl PingTarget {
         self.data.read().effective_status()
     }
 
-    /// Get recent RTT samples as `(index, value)` pairs for graphing. Values are in milliseconds.
+    /**
+    Get recent RTT samples as `(index, value)` pairs for graphing.
+    Values are in milliseconds.
+
+    `n` specifies the maximum number of samples to return, but
+    less than `n` may be returned if fewer samples are available.
+    */
     pub fn get_recent_rtts(&self, n: usize) -> Vec<(f64, f64)> {
         let rtts: Vec<u32> = self
             .data
@@ -331,11 +337,16 @@ impl PingTarget {
             .collect()
     }
 
-    /// Get RTT histogram buckets for recent N samples.
-    ///
-    /// This will call [PingTarget::get_recent_rtts] internally, so if you
-    /// already have the RTT data, consider using [make_histogram_buckets]
-    /// directly to avoid double work.
+    /**
+    Get RTT histogram buckets for recent N samples.
+
+    `n` specifies the maximum number of samples to return, but
+    less than `n` may be returned if fewer samples are available.
+
+    This will call [PingTarget::get_recent_rtts] internally, so if you
+    already have the RTT data, consider using [make_histogram_buckets]
+    directly to avoid double work.
+    */
     pub fn get_rtt_histogram(&self, bins: usize, n: usize) -> Vec<HistogramBucket> {
         let rtts: Vec<f64> = self.get_recent_rtts(n).iter().map(|&(_, s)| s).collect();
         make_histogram_buckets(rtts, bins)
@@ -724,9 +735,11 @@ pub(crate) struct StatsSnapshot {
 }
 
 impl StatsSnapshot {
-    /// Extract a [StatsSnapshot] from [PingTargetInner]
-    ///
-    /// - `timeout` is the overall ping timeout duration.
+    /**
+    Extract a [StatsSnapshot] from [PingTargetInner]
+
+    - `timeout` is the overall ping timeout duration.
+    */
     pub fn new_from(tgt: &Arc<PingTarget>, timeout: Duration) -> Self {
         let data = tgt.data.read();
         let now: Instant = Instant::now();
