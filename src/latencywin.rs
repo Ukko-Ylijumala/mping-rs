@@ -229,6 +229,9 @@ impl LatencyWindow {
     }
 
     /// Returns up to `n` most recent samples from the buffer as a Vec.
+    /// 
+    /// Number of samples returned may be less than `n` if fewer samples
+    /// in total are available.
     pub fn recent_samples(&self, n: usize) -> Result<Vec<u32>, String> {
         self.no_samples_check()?;
         let count: usize = self.len.min(n);
