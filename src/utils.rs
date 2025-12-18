@@ -159,3 +159,41 @@ pub(crate) fn parse_ip_addresses(
 
     all_addrs
 }
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// A single histogram bucket for data distribution.
+#[derive(Debug, Clone)]
+pub struct HistogramBucket {
+    pub low: f64,
+    pub high: f64,
+    pub count: u64,
+}
+
+/// Create histogram buckets from a set of floating point data.
+pub fn make_histogram_buckets(data: Vec<f64>, bins: usize) -> Vec<HistogramBucket> {
+    if data.is_empty() {
+        return vec![];
+    }
+
+    let min: f64 = data.iter().fold(f64::INFINITY, |a: f64, &b| a.min(b));
+    let max: f64 = data.iter().fold(0.0, |a: f64, &b| a.max(b));
+    let bin_width: f64 = (max - min) / bins as f64;
+    let mut counts: Vec<u64> = vec![0u64; bins];
+
+    for &entry in &data {
+        let bin_idx: usize = ((entry - min) / bin_width).floor() as usize;
+        let bin_idx: usize = bin_idx.min(bins - 1); // clamp to last bin
+        counts[bin_idx] += 1;
+    }
+
+    counts
+        .iter()
+        .enumerate()
+        .map(|(i, &count)| {
+            let low = min + (i as f64 * bin_width);
+            let high = low + bin_width;
+            HistogramBucket { low, high, count }
+        })
+        .collect()
+}

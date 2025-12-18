@@ -2,7 +2,11 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{latencywin::LatencyWindow, strings::*};
+use crate::{
+    latencywin::LatencyWindow,
+    strings::*,
+    utils::{HistogramBucket, make_histogram_buckets},
+};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{
@@ -315,8 +319,12 @@ impl PingTarget {
 
     /// Get recent RTT samples as `(index, value)` pairs for graphing. Values are in milliseconds.
     pub fn get_recent_rtts(&self, n: usize) -> Vec<(f64, f64)> {
-        let data = self.data.read();
-        let rtts: Vec<u32> = data.rtts.recent_samples(n).unwrap_or_else(|_| vec![]);
+        let rtts: Vec<u32> = self
+            .data
+            .read()
+            .rtts
+            .recent_samples(n)
+            .unwrap_or_else(|_| vec![]);
         rtts.iter()
             .enumerate()
             .map(|(i, &rtt)| (i as f64, rtt as f64 / MICROS_PER_MILLI)) // x: index, y: ms
@@ -324,41 +332,14 @@ impl PingTarget {
     }
 
     /// Get RTT histogram buckets for recent N samples.
+    ///
+    /// This will call [PingTarget::get_recent_rtts] internally, so if you
+    /// already have the RTT data, consider using [make_histogram_buckets]
+    /// directly to avoid double work.
     pub fn get_rtt_histogram(&self, bins: usize, n: usize) -> Vec<HistogramBucket> {
         let rtts: Vec<f64> = self.get_recent_rtts(n).iter().map(|&(_, s)| s).collect();
-        if rtts.is_empty() {
-            return vec![];
-        }
-
-        let min_rtt: f64 = rtts.iter().fold(f64::INFINITY, |a: f64, &b| a.min(b));
-        let max_rtt: f64 = rtts.iter().fold(0.0, |a: f64, &b| a.max(b));
-        let bin_width: f64 = (max_rtt - min_rtt) / bins as f64;
-        let mut counts: Vec<u64> = vec![0u64; bins];
-
-        for &rtt in &rtts {
-            let bin_idx: usize = ((rtt - min_rtt) / bin_width).floor() as usize;
-            let bin_idx: usize = bin_idx.min(bins - 1); // clamp to last bin
-            counts[bin_idx] += 1;
-        }
-
-        counts
-            .iter()
-            .enumerate()
-            .map(|(i, &count)| {
-                let low = min_rtt + (i as f64 * bin_width);
-                let high = low + bin_width;
-                HistogramBucket { low, high, count }
-            })
-            .collect()
+        make_histogram_buckets(rtts, bins)
     }
-}
-
-/// A single histogram bucket for RTT distribution.
-#[derive(Debug, Clone)]
-pub(crate) struct HistogramBucket {
-    pub low: f64,
-    pub high: f64,
-    pub count: u64,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
