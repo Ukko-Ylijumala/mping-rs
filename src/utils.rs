@@ -80,7 +80,7 @@ pub(crate) fn nice_permission_error(err: &Error, ip_ver: &str) -> Box<dyn std::e
 }
 
 /// Parse a floating point number into a Duration.
-pub(crate) fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
+pub fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
     match arg.parse::<f64>() {
         Ok(secs) if secs > 0.0 => {
             let millis = (secs * 1e3).round() as u64;
@@ -96,7 +96,7 @@ Parse and expand a list of space separated IPv4/v6 addresses
 
 Removes duplicates and preserves order of first occurrence.
 */
-pub(crate) fn parse_ip_addresses(
+pub fn parse_ip_addresses(
     targets: &[String],
     exclude: Option<&[String]>,
     verbose: bool,
