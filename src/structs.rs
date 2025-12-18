@@ -75,6 +75,7 @@ impl AppState {
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
         self.debug = conf.debug;
         self.verbose = conf.verbose;
+        self.randomize = conf.randomize;
         self.perf = conf.perf.into();
 
         // setup app title row with version and styling
