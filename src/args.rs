@@ -53,7 +53,7 @@ pub(crate) struct MpConfig {
         value_name = "BYTES",
         required = false,
         value_parser = value_parser!(u16).range(32..32760),
-        default_value = "32",
+        default_value = "48",
         help = HELP_SIZE
     )]
     pub size: u16,

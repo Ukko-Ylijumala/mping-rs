@@ -23,14 +23,14 @@ use std::{
 use surge_ping::{Client, Config, ICMP};
 use tokio::sync::Notify;
 
-const DEFAULT_PAYLOAD_SIZE: usize = 32;
+pub const DEFAULT_PAYLOAD_SIZE: usize = 48;
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
 #[cfg(target_os = "linux")]
-static SYSTEM_TTL: u8 = 64; // default TTL for Linux
+pub static SYSTEM_TTL: u8 = 64;
 #[cfg(target_os = "macos")]
-static SYSTEM_TTL: u8 = 64; // default TTL for macOS
+pub static SYSTEM_TTL: u8 = 64;
 #[cfg(target_os = "windows")]
-static SYSTEM_TTL: u8 = 128; // default TTL for Windows
+pub static SYSTEM_TTL: u8 = 128;
 
 /// Main application state structure. Holds shared state across threads and tasks.
 /// Needs to be put into an Arc after intialization, which `build()` conveniently does.
@@ -103,7 +103,7 @@ impl AppState {
         self.ui_interval = Duration::from_millis(conf.refresh);
         self.ping_interval = conf.interval;
         self.ping_timeout = conf.timeout;
-        if conf.size as usize > DEFAULT_PAYLOAD_SIZE {
+        if conf.size as usize != DEFAULT_PAYLOAD_SIZE {
             self.payload = vec![0u8; conf.size as usize].into();
         }
 
@@ -279,7 +279,7 @@ impl Default for AppState {
             ping_interval: Duration::from_secs(1),
             ping_timeout: Duration::from_secs(2),
             randomize: false,
-            payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 32 bytes -> 40-byte packet
+            payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 48 bytes -> 56-byte packet
             internal_tick: Duration::from_millis(100),       // 10 Hz default, might be overridden
             key_event: Notify::new(),
             status_line: MutableLine::new_from(""),
