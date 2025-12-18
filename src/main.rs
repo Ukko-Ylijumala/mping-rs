@@ -22,7 +22,7 @@ use crate::{
     structs::AppState,
     tabulator::simple_tabulate,
     tui::{TableRow, TerminalGuard, key_event_handler},
-    utils::setup_signal_handler,
+    utils::{make_histogram_buckets, setup_signal_handler},
 };
 
 use futures::{
@@ -37,6 +37,7 @@ use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
 use tokio::time::{self, Instant, Interval};
 
 const PAYLOAD_RND_BYTES: usize = 32;
+const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -295,21 +296,120 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
         .collect()
 }
 
-/// Render the current frame. Display will be updated as soon as this function completes.
+/**
+Render the current frame. Display will be updated as soon as this function completes.
+
+NOTE: the order of statements inside the function body is arranged such that
+the time of holding the targets lock is minimized to reduce contention.
+*/
 fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let layout = &mut state.layout.write();
     layout.maybe_update(frame.area(), &data);
-    let n: usize = state.len();
+    let tgts = state.targets.read();
+    let num_tgts: usize = tgts.len();
+    let selected = layout
+        .tablestate
+        .selected()
+        // TableState::selected can return an out-of-bounds index, so clamp it here.
+        .and_then(|i: usize| tgts.get(i.min(num_tgts - 1)));
 
-    // Border blocks with titles
+    ////////// Border blocks with titles //////////
     let block = Block::bordered();
     let b_tbl = block
         .clone()
-        .title_bottom(Line::from(format!(" Targets: {} ", n)));
+        .title_bottom(Line::from(format!(" Targets: {} ", num_tgts)));
     let b_info_upper = block.clone().title_top(" Info ");
 
-    // Data table
-    let table = Table::new(
+    ////////// Info areas //////////
+    let w_info_upper = Paragraph::new(format!(
+        " Selected: {}",
+        &selected.map_or("none".into(), |t| t.addr.to_string())
+    ))
+    .block(b_info_upper.clone());
+
+    ////////// Recent RTT graph and histogram for selected target. //////////
+    if let Some(target) = selected {
+        let rtt_data: Vec<(f64, f64)> = target.get_recent_rtts(GRAPH_SAMPLES);
+        // release targets read lock here, not needed anymore
+        drop(tgts);
+
+        if !rtt_data.is_empty() {
+            let samples: usize = rtt_data.len();
+            let sample_t: f64 = samples as f64 * state.ping_interval.as_secs_f64();
+            // get both values and max RTT in one pass
+            let mut values: Vec<f64> = vec![];
+            let max_rtt: f64 = rtt_data
+                .iter()
+                .map(|&(_, y)| {
+                    values.push(y);
+                    y
+                })
+                .fold(0.0, f64::max);
+
+            // Carve out areas for graph and histogram and define the inner Block.
+            // We need to do this since the outer enclosing Block includes borders.
+            let a_graph = b_info_upper.inner(layout.i_upper_graph);
+            let a_histo = b_info_upper.inner(layout.i_upper_histo);
+            let b_inner = Block::new()
+                .borders(Borders::TOP)
+                .border_type(BorderType::QuadrantOutside)
+                .title_alignment(Alignment::Center);
+
+            // RTT line graph widget
+            let dataset = Dataset::default()
+                .name("RTT (ms)")
+                .marker(symbols::Marker::Braille)
+                .style(Style::default().fg(Color::Cyan))
+                .graph_type(GraphType::Line)
+                .data(&rtt_data);
+            let w_rtt_chart = Chart::new(vec![dataset])
+                .block(b_inner.clone().title(" Round-Trip Time graph "))
+                .x_axis(
+                    Axis::default()
+                        .bounds([0.0, samples as f64 - 1.0])
+                        .labels([format!("-{:.0}s", sample_t).bold(), "Now".bold()]),
+                )
+                .y_axis(
+                    Axis::default()
+                        .bounds([0.0, max_rtt * 1.1])
+                        .labels(vec!["0".bold(), format!("{:.0}", max_rtt).bold()]),
+                );
+
+            // RTT histogram widget
+            let bars = make_histogram_buckets(values, 8)
+                .iter()
+                .map(|b| {
+                    Bar::default()
+                        .value(b.count)
+                        .label(format!("{:.1}-{:.1}", b.low, b.high).into())
+                        .style(Style::default().fg(Color::Green))
+                })
+                .collect::<Vec<_>>();
+            let w_histogram = BarChart::default()
+                .block(b_inner.title(" RTT Histogram (ms) "))
+                .data(BarGroup::default().bars(&bars))
+                .bar_width(1)
+                .bar_gap(0)
+                .direction(Direction::Horizontal);
+
+            frame.render_widget(w_rtt_chart, a_graph);
+            frame.render_widget(w_histogram, a_histo);
+        }
+    }
+
+    ////////// Lower info area - bottom right corner //////////
+    let w_info_lower = Paragraph::new(format!(
+        "Interval: {} ms\nTimeout : {} ms\nPayload : {} bytes{}\nTasks   : {}",
+        state.ping_interval.as_millis(),
+        state.ping_timeout.as_millis(),
+        state.payload.len(),
+        if state.randomize { " (randomized)" } else { "" },
+        state.spawned_tasks()
+    ))
+    .block(Block::new().padding(Padding::left(1)));
+
+    ////////// Data table //////////
+    let w_table = Table::new(
         data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
         &layout.tbl_constraints,
     )
@@ -319,90 +419,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .row_highlight_style(Style::new().reversed())
     .column_highlight_style(Style::new().bg(Color::Indexed(240)));
 
-    // Info areas
-    let info_upper = Paragraph::new(format!(
-        " Selected: {}",
-        &layout
-            .tablestate
-            .selected()
-            .map_or("none".into(), |i| state.targets.read()[i.min(n - 1)]
-                .addr
-                .to_string())
-    ))
-    .block(b_info_upper.clone());
-
-    let info_lower = Paragraph::new(format!(
-        " Interval: {} ms\n Timeout : {} ms\n Payload : {} bytes\n Tasks   : {} ",
-        state.ping_interval.as_millis(),
-        state.ping_timeout.as_millis(),
-        state.payload.len(),
-        state.spawned_tasks()
-    ));
-
-    // Recent RTT graphs for selected target if there's enough data for it.
-    if let Some(idx) = layout.tablestate.selected() {
-        let target: &Arc<PingTarget> = &state.targets.read()[idx.min(n - 1)];
-        let num: usize = target.data.read().recv.min(100) as usize;
-        let rtt_data: Vec<(f64, f64)> = target.get_recent_rtts(num);
-        if !rtt_data.is_empty() {
-            let max_rtt: f64 = rtt_data.iter().map(|&(_, y)| y).fold(0.0, f64::max);
-
-            // Split info_upper into [graph, hist] areas
-            let graph = Layout::vertical([
-                Constraint::Length(5),
-                Constraint::Length(20),
-                Constraint::Length(1), // empty spacer
-                Constraint::Length(11),
-            ])
-            .split(b_info_upper.inner(layout.info_upper));
-            let (graph_area, hist_area) = (graph[1], graph[3]);
-            let inner_block = Block::new()
-                .borders(Borders::TOP)
-                .border_type(BorderType::QuadrantOutside)
-                .title_alignment(Alignment::Center);
-
-            let datasets = Dataset::default()
-                .name("RTT (ms)")
-                .marker(symbols::Marker::Braille)
-                .style(Style::default().fg(Color::Cyan))
-                .graph_type(GraphType::Line)
-                .data(&rtt_data);
-            let rtt_chart = Chart::new(vec![datasets])
-                .block(inner_block.clone().title(" Round-Trip Time graph "))
-                .x_axis(
-                    Axis::default()
-                        .bounds([0.0, rtt_data.len() as f64 - 1.0])
-                        .labels(["Start".bold(), "Now".bold()]),
-                )
-                .y_axis(
-                    Axis::default()
-                        .bounds([0.0, max_rtt * 1.1])
-                        .labels(vec!["0".bold(), format!("{:.0}", max_rtt).bold()]),
-                );
-
-            let buckets = target
-                .get_rtt_histogram(10, num)
-                .iter()
-                .map(|b| {
-                    Bar::default()
-                        .value(b.count)
-                        .label(format!("{:.1}-{:.1}", b.low, b.high).into())
-                        .style(Style::default().fg(Color::Green))
-                })
-                .collect::<Vec<_>>();
-            let histogram = BarChart::default()
-                .block(inner_block.title(" RTT Histogram (ms) "))
-                .data(BarGroup::default().bars(&buckets))
-                .bar_width(1)
-                .bar_gap(0)
-                .direction(Direction::Horizontal);
-
-            frame.render_widget(rtt_chart, graph_area);
-            frame.render_widget(histogram, hist_area);
-        }
-    }
-
-    let procinfo = Line::from(format!(
+    ////////// CPU & process info - bottom line, right side //////////
+    let w_procinfo = Line::from(format!(
         "CPU: {:>7} | mem: {} | pid: {} ",
         state.pi.cpu_str(),
         state.pi.mem_str(),
@@ -410,9 +428,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     ))
     .alignment(Alignment::Right);
 
+    ////////// Status line - bottom line, left side //////////
     state.status_line.replace(match state.debug {
         true => format!(
-            " Data: {}, offset: {}, selected: {}",
+            " Data: {}, offset: {}, idx: {}",
             data.len(),
             &layout.tablestate.offset(),
             &layout
@@ -426,10 +445,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     // Render all components. Order matters for layering; later ones overwrite earlier ones,
     // faking z-index behavior even though we're not working with "real" windows.
     frame.render_widget(&state.title, layout.title);
-    frame.render_stateful_widget(table, layout.table, &mut layout.tablestate);
-    frame.render_widget(procinfo, layout.status_r);
-    frame.render_widget(info_upper, layout.info_upper);
-    frame.render_widget(info_lower, layout.info_lower);
+    frame.render_stateful_widget(w_table, layout.table, &mut layout.tablestate);
+    frame.render_widget(w_procinfo, layout.status_r);
+    // NOTE: we're writing to `info_upper` instead of `i_upper_text` to get the border around it all.
+    frame.render_widget(w_info_upper, layout.info_upper);
+    frame.render_widget(w_info_lower, layout.info_lower);
     frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
 
     // Render popup if visible and has contents
