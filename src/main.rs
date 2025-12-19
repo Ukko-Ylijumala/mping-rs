@@ -324,9 +324,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     ////////// Info areas //////////
     let w_info_upper = Paragraph::new(if let Some(t) = selected {
         format!(
-            " Target  : {}\n Distance: {}",
+            " Target  : {}\n Reverse : {}\n Distance: {}",
             t.addr.to_string(),
-            t.hops().to_string()
+            &t.rev,
+            t.hops().to_string(),
         )
     } else {
         " Select a target to see detailed info.".into()
