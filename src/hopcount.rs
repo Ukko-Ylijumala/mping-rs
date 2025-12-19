@@ -2,30 +2,29 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::structs::{DEFAULT_PAYLOAD_SIZE, SYSTEM_TTL};
+use crate::structs::DEFAULT_PAYLOAD_SIZE;
 use pnet_packet::{
     Packet,
-    icmp::{IcmpTypes, echo_request::MutableEchoRequestPacket},
-    ipv4::MutableIpv4Packet,
+    icmp::{self, IcmpPacket, IcmpTypes, echo_request::MutableEchoRequestPacket},
 };
 use socket2::{self, Domain, Protocol, Socket, Type};
 use std::{
-    mem::MaybeUninit,
+    mem::{MaybeUninit, transmute},
     net::{IpAddr, SocketAddr},
     time::Duration,
 };
 
-const BIND_IPV4: &str = "0.0.0.0:0";
-const BIND_IPV6: &str = "[::]:0";
+const BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
+const BIND_SOCKET_IPV6: &str = "[::]:0";
 const ID_VALUE: u16 = 0xb00b; // (very!) arbitrary identifier
 const ICMP_HEADER_SIZE: usize = 8; // ICMP header size
-const IP_HEADER_SIZE: usize = 20; // IPv4 header size without options
 
 /// Estimate hop count for a single target using one ICMP Echo Request/Reply.
 /// Returns (estimated_hops, received_ttl) on success.
-pub fn determine_hops(target: IpAddr, timeout: Duration) -> Result<(u8, u8), String> {
+pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<(u8, u8), String> {
     // Create a mutable buffer and build an ICMP Echo Request packet in it
     let mut icmp_buffer = [0u8; ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE];
+    // Create a mutable wrapper around the buffer
     let mut echo_packet =
         MutableEchoRequestPacket::new(&mut icmp_buffer).ok_or("Failed to create echo packet")?;
 
@@ -33,42 +32,31 @@ pub fn determine_hops(target: IpAddr, timeout: Duration) -> Result<(u8, u8), Str
     echo_packet.set_identifier(ID_VALUE);
     echo_packet.set_sequence_number(1);
 
-    //let checksum = pnet_packet::icmp::checksum(&echo_packet.to_immutable());
-    //echo_packet.set_checksum(checksum);
+    // pnet's checksum expects an IcmpPacket wrapper, so build one from the echo packet bytes
+    let icmp_packet = IcmpPacket::new(echo_packet.packet())
+        .ok_or("Failed to create IcmpPacket for checksumming")?;
+    let checksum = icmp::checksum(&icmp_packet);
+    echo_packet.set_checksum(checksum);
+    drop(echo_packet); // drop the wrapper
 
-    // For IPv4 we need to wrap in IP header (required for raw sockets on some platforms)
-    // For simplicity, we'll handle IPv4 explicitly; IPv6 raw sockets often work without IP header.
-    let packet_to_send: Vec<u8> = if target.is_ipv4() {
-        let mut ip_buffer = vec![0u8; IP_HEADER_SIZE + icmp_buffer.len()];
-        let mut ip_packet =
-            MutableIpv4Packet::new(&mut ip_buffer).ok_or("Failed to create IPv4 packet")?;
-
-        ip_packet.set_version(4);
-        ip_packet.set_header_length(5); // no options
-        ip_packet.set_total_length((IP_HEADER_SIZE + icmp_buffer.len()) as u16);
-        ip_packet.set_ttl(SYSTEM_TTL); // outgoing TTL
-
-        //ip_packet.set_protocol(pnet_packet::ip::IpNextHeaderProtocols::Icmp);
-        //ip_packet.set_source("0.0.0.0".parse().unwrap()); // OS will fill correct source
-
-        ip_packet.set_destination(target.to_string().parse().unwrap());
-
-        ip_packet.set_payload(&icmp_buffer);
-        ip_packet.packet().to_vec()
-    } else {
-        // IPv6 raw sockets usually accept just the ICMPv6 payload
-        icmp_buffer.to_vec()
-    };
+    if debug {
+        eprintln!("ICMP hdr: {:x?}", &icmp_buffer[..ICMP_HEADER_SIZE]);
+    }
 
     // Bind to unspecified address (let OS choose source IP)
     let local_addr: SocketAddr = if target.is_ipv4() {
-        BIND_IPV4.parse().unwrap()
+        BIND_SOCKET_IPV4.parse().unwrap()
     } else {
-        BIND_IPV6.parse().unwrap()
+        BIND_SOCKET_IPV6.parse().unwrap()
     };
     let target_sockaddr: socket2::SockAddr = SocketAddr::new(target, 0).into();
 
-    eprintln!("Local address: {}, remote address: {:?}", local_addr, target_sockaddr);
+    if debug {
+        eprintln!(
+            "Local address: {}, remote address: {:?}",
+            local_addr, target_sockaddr
+        );
+    }
 
     // Create raw ICMP socket (requires CAP_NET_RAW or root)
     let socket = Socket::new(
@@ -82,7 +70,13 @@ pub fn determine_hops(target: IpAddr, timeout: Duration) -> Result<(u8, u8), Str
     )
     .map_err(|e| format!("Failed to create raw socket: {e}"))?;
 
-    eprintln!("Raw socket created for ICMP{}: {:?}", if target.is_ipv4() { "v4" } else { "v6" }, socket);
+    if debug {
+        eprintln!(
+            "Raw socket created for ICMP{}: {:?}",
+            if target.is_ipv4() { "v4" } else { "v6" },
+            socket
+        );
+    }
 
     // Set receive timeout and bind to the local socket
     socket
@@ -92,24 +86,28 @@ pub fn determine_hops(target: IpAddr, timeout: Duration) -> Result<(u8, u8), Str
         .bind(&local_addr.into())
         .map_err(|e| format!("Bind failed: {e}"))?;
 
-    eprintln!("Socket bound to {:?}", socket.local_addr().unwrap());
-    eprintln!("Sending ICMP Echo Request to {}", target);
+    if debug {
+        eprintln!("Sending ICMP Echo Request to {}", target);
+    }
 
     // Send the packet
     socket
-        .send_to(&packet_to_send, &target_sockaddr)
+        .send_to(&icmp_buffer, &target_sockaddr)
         .map_err(|e| format!("Send failed: {e}"))?;
-
-    eprintln!("Waiting for ICMP Echo Reply from {}", target);
 
     let mut recv_buffer: [MaybeUninit<u8>; 1500] = [const { MaybeUninit::uninit() }; 1500];
     let (bytes_read, _from) = socket
         .recv_from(&mut recv_buffer)
         .map_err(|e| format!("Receive failed: {e}"))?;
 
+    // We can safely assume that the bytes in `recv_buffer` are initialized up to `bytes_read`.
+    if debug {
+        let recv_vec: Vec<u8> =
+            unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(&recv_buffer[..bytes_read]).to_vec() };
+        eprintln!("Received {} bytes back: {:x?}", bytes_read, &recv_vec);
+    }
+
     // Parse IP header to get TTL.
-    // We can safely assume that the data in `recv_buffer`
-    // is now initialized at least up to bytes_read.
     let received_ttl = if target.is_ipv4() {
         // IPv4: IP header is first 20 bytes (assuming no options)
         if bytes_read < 20 {
@@ -134,3 +132,58 @@ pub fn determine_hops(target: IpAddr, timeout: Duration) -> Result<(u8, u8), Str
 
     Ok((estimated_hops, received_ttl))
 }
+
+
+/*
+AI slop below, disregard this block! I'm leaving it here for posterity. Teaches
+me right for trusting AI to generate code for something I don't know well enough.
+
+To be fair, it generated a passable function scaffold, but it also wanted to add
+an IP header around the ICMP packet, which appears to be unnecessary here.
+Technically, it seems that the wrapping works, but it leads to a malformed ICMP
+packet on the wire, f.ex. tcpdump shows this:
+
+    ICMP type-#69, length 76
+
+which is wrong; ICMP type should be 8 (Echo Req). The generated headers start with:
+
+    [45, 0, 0, 4c, b0, a, 0, 0, 40, 1, ...]
+
+and this 69 (0x45) is the first byte of the IP header (version + IHL). Looks like
+the kernel wraps this in yet another IP header, leading to confusion.
+
+*sigh* a few hours wasted chasing this down...
+--------
+
+use pnet_packet::{ip::IpNextHeaderProtocols, ipv4::{self, MutableIpv4Packet}};
+
+const IP_SOURCE_ADDR: &str = "0.0.0.0"; // OS will fill correct source address
+const IP_HEADER_SIZE: usize = 20; // IPv4 header size without options
+const IP_PACKET_SIZE: usize = IP_HEADER_SIZE + ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE;
+
+    // For IPv4 we need to wrap in IP header (required for raw sockets on some platforms)
+    // For simplicity, we'll handle IPv4 explicitly; IPv6 raw sockets often work without IP header.
+    let packet_to_send: Vec<u8> = if target.is_ipv4() {
+        let mut ip_buffer = vec![0u8; IP_PACKET_SIZE];
+        let mut ip_packet =
+            MutableIpv4Packet::new(&mut ip_buffer).ok_or("Failed to create IPv4 packet")?;
+
+        ip_packet.set_version(4);
+        ip_packet.set_header_length(5); // no options
+        ip_packet.set_total_length(IP_PACKET_SIZE as u16);
+        ip_packet.set_ttl(SYSTEM_TTL); // outgoing TTL
+        ip_packet.set_identification(ID_VALUE);
+        ip_packet.set_next_level_protocol(IpNextHeaderProtocols::Icmp);
+
+        ip_packet.set_source(IP_SOURCE_ADDR.parse().unwrap());
+        ip_packet.set_destination(target.to_string().parse().unwrap());
+
+        ip_packet.set_payload(&icmp_buffer);
+        ip_packet.set_checksum(ipv4::checksum(&ip_packet.to_immutable()));
+
+        ip_packet.packet().to_vec()
+    } else {
+        // IPv6 raw sockets usually accept just the ICMPv6 payload
+        icmp_buffer.to_vec()
+    };
+    */
