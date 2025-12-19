@@ -2,15 +2,15 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use mping::{determine_hops, parse_float_into_duration};
 use clap::{Parser, crate_authors, value_parser};
+use mping::{determine_hops, parse_float_into_duration};
 use std::{net::IpAddr, time::Duration};
 
 /// Configuration struct for hopcount.
 #[derive(Parser, Debug)]
 #[command(
     name = "hopcount",
-    version = "0.1.0",
+    version = "0.1.2",
     author = crate_authors!(),
     about = "Estimate hop counts using ICMP Echo Requests")]
 struct Args {
@@ -35,6 +35,8 @@ struct Args {
     #[arg(long, help = "Enable debug output")]
     pub debug: bool,
 
+    #[arg(long, short = 'q', help = "Just print the hop count, nothing else")]
+    pub quiet: bool,
 }
 
 fn main() {
@@ -42,16 +44,26 @@ fn main() {
 
     match determine_hops(args.target, args.timeout, args.debug) {
         Ok((hops, ttl)) => {
-            println!(
-                "Estimated hop count to {} (received TTL {}): {}",
-                args.target, ttl, hops
-            );
+            if args.quiet {
+                println!("{hops}");
+            } else {
+                println!(
+                    "Estimated hop count to {} (received TTL {ttl}): {hops}",
+                    args.target
+                );
+            }
         }
         Err(e) => {
-            eprintln!("Error determining hop count to {}: {}", args.target, e);
-            eprintln!("Hint: if permission is denied, try running with elevated privileges (sudo).");
-            eprintln!("Another workaround might be to set the CAP_NET_RAW capability on the binary:");
-            eprintln!("    sudo setcap cap_net_raw+ep <path/to/hopcount>");
+            if args.quiet {
+                eprintln!("{e}");
+            } else {
+                eprintln!("Error determining hop count to {}: {e}", args.target);
+                eprintln!(
+                    "If permission is denied, try running with sudo or set the CAP_NET_RAW capability on the binary:"
+                );
+                eprintln!("    sudo setcap cap_net_raw+ep <path/to/hopcount>");
+            }
+            std::process::exit(1);
         }
     }
 }
