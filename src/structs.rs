@@ -26,6 +26,7 @@ use tokio::sync::Notify;
 
 pub const DEFAULT_PAYLOAD_SIZE: usize = 48;
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
+const UPDATE_TASK_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(target_os = "linux")]
 pub static SYSTEM_TTL: u8 = 64;
 #[cfg(target_os = "macos")]
@@ -214,10 +215,18 @@ impl AppState {
         }
     }
 
-    /// Update information for the target at the specified index.
+    /// Update information for the target at the specified index. Nonblocking.
     pub fn update_target_info(&self, index: usize) {
         if let Some(tgt) = self.targets.read().get(index) {
-            tgt.determine_hops(Duration::from_secs(2));
+            let tgt = tgt.clone();
+            // `determine_hops` is blocking, so spawn a thread for it to not block the caller.
+            //
+            // NOTE: we specifically can't use `tokio::spawn` here because `determine_hops`
+            // will eventually acquire a write lock to one/some of its fields, and there's a
+            // very good change that the caller will deadlock (or panic) on the same if it's
+            // scheduled in the same runtime thread.
+            std::thread::spawn(move || tgt.determine_hops(UPDATE_TASK_TIMEOUT));
+            self.inc_spawned_tasks();
         }
     }
 
