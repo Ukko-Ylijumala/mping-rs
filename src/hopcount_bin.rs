@@ -31,20 +31,27 @@ struct Args {
         help = "Timeout duration in seconds"
     )]
     pub timeout: Duration,
+
+    #[arg(long, help = "Enable debug output")]
+    pub debug: bool,
+
 }
 
 fn main() {
     let args = Args::parse();
 
-    match determine_hops(args.target, args.timeout) {
+    match determine_hops(args.target, args.timeout, args.debug) {
         Ok((hops, ttl)) => {
             println!(
-                "Estimated hop count to {}: {} (received TTL: {})",
-                args.target, hops, ttl
+                "Estimated hop count to {} (received TTL {}): {}",
+                args.target, ttl, hops
             );
         }
         Err(e) => {
             eprintln!("Error determining hop count to {}: {}", args.target, e);
+            eprintln!("Hint: if permission is denied, try running with elevated privileges (sudo).");
+            eprintln!("Another workaround might be to set the CAP_NET_RAW capability on the binary:");
+            eprintln!("    sudo setcap cap_net_raw+ep <path/to/hopcount>");
         }
     }
 }
