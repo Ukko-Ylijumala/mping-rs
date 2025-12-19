@@ -7,7 +7,7 @@ use crate::{
     latencywin::LatencyWindow,
     strings::*,
     structs::QueryResponse,
-    utils::{HistogramBucket, make_histogram_buckets},
+    utils::{HistogramBucket, make_histogram_buckets, reverse_name},
 };
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -164,6 +164,7 @@ impl PingTargetInner {
 #[derive(Debug)]
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
+    pub rev: String,
     pub data: RwLock<PingTargetInner>,
     paused: AtomicBool,
     cancel: CancellationToken,
@@ -180,6 +181,7 @@ impl PingTarget {
     pub fn new(addr: IpAddr, histsize: usize, detailed: usize) -> Self {
         Self {
             addr,
+            rev: reverse_name(&addr),
             data: PingTargetInner {
                 rtts: LatencyWindow::new(histsize),
                 recent: PacketHistory::new(detailed),
