@@ -214,6 +214,13 @@ impl AppState {
         }
     }
 
+    /// Update information for the target at the specified index.
+    pub fn update_target_info(&self, index: usize) {
+        if let Some(tgt) = self.targets.read().get(index) {
+            tgt.determine_hops(Duration::from_secs(2));
+        }
+    }
+
     /// Reset statistics for the target at the specified index.
     pub fn reset_target_stats(&self, index: usize) {
         if let Some(tgt) = self.targets.read().get(index) {
