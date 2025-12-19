@@ -13,6 +13,7 @@ use miniutils::ProcessInfo;
 use parking_lot::RwLock;
 use ratatui::{prelude::Stylize, style::Style, text::Line, widgets::Paragraph};
 use std::{
+    fmt::Display,
     net::IpAddr,
     sync::{
         Arc,
@@ -305,6 +306,35 @@ impl PopupContents {
         match self {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
             PopupContents::Table(s) => Paragraph::new(s.join("\n")),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+/// An enum representing different types of remote query results.
+#[derive(Default, Debug, Clone)]
+pub(crate) enum QueryResponse {
+    IpAddr(IpAddr),
+    Count(u64),
+    Float(f64),
+    Text(String),
+    Error(String),
+    Empty,
+    #[default]
+    None,
+}
+
+impl Display for QueryResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QueryResponse::IpAddr(ip) => write!(f, "{ip}"),
+            QueryResponse::Count(c) => write!(f, "{c}"),
+            QueryResponse::Float(v) => write!(f, "{v}"),
+            QueryResponse::Text(s) => write!(f, "{s}"),
+            QueryResponse::Error(e) => write!(f, "Error: {e}"),
+            QueryResponse::Empty => write!(f, "<empty response>"),
+            QueryResponse::None => write!(f, "<unknown>"),
         }
     }
 }
