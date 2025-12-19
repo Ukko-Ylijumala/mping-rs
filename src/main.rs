@@ -339,6 +339,17 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         // release targets read lock here, not needed anymore
         drop(tgts);
 
+        // Carve out areas for graph and histogram and define the inner Block.
+        // We need to do this since the outer enclosing Block includes borders.
+        let a_graph = b_info_upper.inner(layout.i_upper_graph);
+        let a_histo = b_info_upper.inner(layout.i_upper_histo);
+        let b_inner = Block::new()
+            .borders(Borders::TOP)
+            .border_type(BorderType::QuadrantOutside)
+            .title_alignment(Alignment::Center);
+        let b_graph = b_inner.clone().title(" Round-Trip Time graph ");
+        let b_histo = b_inner.title(" RTT Histogram (ms) ");
+
         if !rtt_data.is_empty() {
             let samples: usize = rtt_data.len();
             let sample_t: f64 = samples as f64 * state.ping_interval.as_secs_f64();
@@ -352,15 +363,6 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 })
                 .fold(0.0, f64::max);
 
-            // Carve out areas for graph and histogram and define the inner Block.
-            // We need to do this since the outer enclosing Block includes borders.
-            let a_graph = b_info_upper.inner(layout.i_upper_graph);
-            let a_histo = b_info_upper.inner(layout.i_upper_histo);
-            let b_inner = Block::new()
-                .borders(Borders::TOP)
-                .border_type(BorderType::QuadrantOutside)
-                .title_alignment(Alignment::Center);
-
             // RTT line graph widget
             let dataset = Dataset::default()
                 .name("RTT (ms)")
@@ -369,7 +371,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .graph_type(GraphType::Line)
                 .data(&rtt_data);
             let w_rtt_chart = Chart::new(vec![dataset])
-                .block(b_inner.clone().title(" Round-Trip Time graph "))
+                .block(b_graph)
                 .x_axis(
                     Axis::default()
                         .bounds([0.0, samples as f64 - 1.0])
@@ -392,7 +394,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 })
                 .collect::<Vec<_>>();
             let w_histogram = BarChart::default()
-                .block(b_inner.title(" RTT Histogram (ms) "))
+                .block(b_histo)
                 .data(BarGroup::default().bars(&bars))
                 .bar_width(1)
                 .bar_gap(0)
@@ -400,6 +402,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
             frame.render_widget(w_rtt_chart, a_graph);
             frame.render_widget(w_histogram, a_histo);
+        } else {
+            let w_no_data = Paragraph::new(" No RTT data available.").block(b_graph);
+            frame.render_widget(&w_no_data, a_graph);
+            frame.render_widget(w_no_data.block(b_histo), a_histo);
         }
     }
 
