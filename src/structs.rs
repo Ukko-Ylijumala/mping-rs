@@ -9,6 +9,7 @@ use crate::{
     tui::{AppLayout, MutableLine, TableRow},
     utils::nice_permission_error,
 };
+use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
 use ratatui::{prelude::Stylize, style::Style, text::Line, widgets::Paragraph};
@@ -62,6 +63,7 @@ pub(crate) struct AppState {
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
     pub popup_contents: RwLock<Option<PopupContents>>,
+    pub resolver: Resolver<TokioConnectionProvider>,
     spawned_tasks: AtomicU64,
     perf: AtomicBool,
 }
@@ -301,6 +303,9 @@ impl Default for AppState {
             key_event: Notify::new(),
             status_line: MutableLine::new_from(""),
             popup_contents: None.into(),
+            resolver: Resolver::builder_tokio()
+                .expect("Resolver failed to initialize")
+                .build(),
             spawned_tasks: AtomicU64::new(0),
             perf: AtomicBool::new(false),
         }
