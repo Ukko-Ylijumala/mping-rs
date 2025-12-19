@@ -18,6 +18,7 @@ const BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
 const BIND_SOCKET_IPV6: &str = "[::]:0";
 const ID_VALUE: u16 = 0xb00b; // (very!) arbitrary identifier
 const ICMP_HEADER_SIZE: usize = 8; // ICMP header size
+const IP_HEADER_SIZE: usize = 20; // IPv4 header size without options
 
 /// Estimate hop count for a single target using one ICMP Echo Request/Reply.
 /// Returns (estimated_hops, received_ttl) on success.
@@ -96,15 +97,34 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
         .map_err(|e| format!("Send failed: {e}"))?;
 
     let mut recv_buffer: [MaybeUninit<u8>; 1500] = [const { MaybeUninit::uninit() }; 1500];
-    let (bytes_read, _from) = socket
-        .recv_from(&mut recv_buffer)
-        .map_err(|e| format!("Receive failed: {e}"))?;
+    let (bytes_read, _from) = socket.recv_from(&mut recv_buffer).map_err(|e| {
+        let err_str = e.to_string();
+        if err_str.to_lowercase().contains("unavailable") {
+            "Timeout".to_string()
+        } else {
+            format!("Receive failed: {err_str}")
+        }
+    })?;
 
     // We can safely assume that the bytes in `recv_buffer` are initialized up to `bytes_read`.
+    let recv_data: &[u8] =
+        unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(&recv_buffer[..bytes_read]) };
+
     if debug {
-        let recv_vec: Vec<u8> =
-            unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(&recv_buffer[..bytes_read]).to_vec() };
-        eprintln!("Received {} bytes back: {:x?}", bytes_read, &recv_vec);
+        eprintln!("Received {} bytes back: {:x?}", bytes_read, &recv_data);
+    }
+
+    // Parse the received ICMP packet (from after the IP header)
+    let resp = IcmpPacket::new(&recv_data[IP_HEADER_SIZE..]).ok_or("Malformed ICMP packet")?;
+
+    // Error out if it's not an Echo Reply
+    if resp.get_icmp_type() != IcmpTypes::EchoReply {
+        match resp.get_icmp_type() {
+            IcmpTypes::DestinationUnreachable => {
+                return Err("Destination Unreachable".to_string());
+            }
+            _ => return Err(format!("Wanted Echo Reply, got{:?}", resp.get_icmp_type())),
+        }
     }
 
     // Parse IP header to get TTL.
@@ -133,7 +153,6 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
     Ok((estimated_hops, received_ttl))
 }
 
-
 /*
 AI slop below, disregard this block! I'm leaving it here for posterity. Teaches
 me right for trusting AI to generate code for something I don't know well enough.
@@ -158,7 +177,6 @@ the kernel wraps this in yet another IP header, leading to confusion.
 use pnet_packet::{ip::IpNextHeaderProtocols, ipv4::{self, MutableIpv4Packet}};
 
 const IP_SOURCE_ADDR: &str = "0.0.0.0"; // OS will fill correct source address
-const IP_HEADER_SIZE: usize = 20; // IPv4 header size without options
 const IP_PACKET_SIZE: usize = IP_HEADER_SIZE + ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE;
 
     // For IPv4 we need to wrap in IP header (required for raw sockets on some platforms)
