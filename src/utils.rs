@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{ip_addresses::parse_ip_or_range, strings::*};
+use itertools::Itertools;
 use signal_hook::{
     consts::signal::{SIGINT, SIGQUIT, SIGTERM},
     iterator::Signals,
@@ -158,6 +159,24 @@ pub fn parse_ip_addresses(
     }
 
     all_addrs
+}
+
+/// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).
+pub fn reverse_name(addr: &IpAddr) -> String {
+    match addr {
+        IpAddr::V4(v4) => v4.octets().iter().rev().join(".") + ".in-addr.arpa",
+        IpAddr::V6(v6) => {
+            let s = itertools::Itertools::intersperse(
+                v6.octets()
+                    .iter()
+                    .rev()
+                    .flat_map(|b| format!("{:02x}", b).chars().rev().collect::<Vec<char>>()),
+                '.',
+            )
+            .collect::<String>();
+            s + ".ip6.arpa"
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
