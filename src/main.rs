@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod args;
+mod hopcount;
 mod ip_addresses;
 mod latencywin;
 mod macros;
@@ -321,10 +322,15 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let b_info_upper = block.clone().title_top(" Info ");
 
     ////////// Info areas //////////
-    let w_info_upper = Paragraph::new(format!(
-        " Selected: {}",
-        &selected.map_or("none".into(), |t| t.addr.to_string())
-    ))
+    let w_info_upper = Paragraph::new(if let Some(t) = selected {
+        format!(
+            " Target  : {}\n Distance: {}",
+            t.addr.to_string(),
+            t.hops().to_string()
+        )
+    } else {
+        " Select a target to see detailed info.".into()
+    })
     .block(b_info_upper.clone());
 
     ////////// Recent RTT graph and histogram for selected target. //////////
