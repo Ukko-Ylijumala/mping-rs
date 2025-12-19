@@ -27,6 +27,7 @@ itertools = "0.14"
 tokio-util = "0.7"
 socket2 = "0.6.1"
 pnet_packet = "0.35"
+hickory-resolver = "0.25.2"
 #tracing = "0.1"
 
 [dependencies.tokio]
