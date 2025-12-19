@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
+    hopcount::determine_hops,
     latencywin::LatencyWindow,
     strings::*,
+    structs::QueryResponse,
     utils::{HistogramBucket, make_histogram_buckets},
 };
 use itertools::Itertools;
@@ -16,7 +18,7 @@ use std::{
     ops::Index,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU8, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -165,7 +167,7 @@ pub(crate) struct PingTarget {
     pub data: RwLock<PingTargetInner>,
     paused: AtomicBool,
     cancel: CancellationToken,
-    hops: AtomicU8,
+    hops: RwLock<QueryResponse>,
 }
 
 impl PingTarget {
@@ -184,7 +186,7 @@ impl PingTarget {
                 ..Default::default()
             }
             .into(),
-            hops: AtomicU8::new(0),
+            hops: QueryResponse::default().into(),
             paused: AtomicBool::new(false),
             cancel: CancellationToken::new(),
         }
@@ -215,14 +217,20 @@ impl PingTarget {
         inner.recent.push(rec);
     }
 
-    /// Set the hop count for this target.
-    pub fn set_hops(&self, hops: u8) {
-        self.hops.store(hops, Ordering::Relaxed);
+    /// Try to determine the hop count (distance) to this target. Blocking.
+    pub fn determine_hops(&self, timeout: Duration) {
+        if self.is_stopped() {
+            return;
+        }
+        match determine_hops(self.addr, timeout, false) {
+            Ok((h, _)) => *self.hops.write() = QueryResponse::Count(h as u64),
+            Err(e) => *self.hops.write() = QueryResponse::Error(e),
+        };
     }
 
-    /// Get the last known hop count for this target, if any. Returns 0 if unknown.
-    pub fn hops(&self) -> u8 {
-        self.hops.load(Ordering::Relaxed)
+    /// Get the last known hop count query response for this target, if any.
+    pub fn hops(&self) -> QueryResponse {
+        self.hops.read().clone()
     }
 
     /// Reset all statistics for this target as if it was never pinged.
