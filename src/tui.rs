@@ -682,6 +682,13 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     }
                 }
 
+                // Update information for the selected target
+                (KeyCode::Enter, _) => {
+                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                        app.update_target_info(idx);
+                    }
+                }
+
                 // Fully remove a target or targets from the list
                 (KeyCode::Delete, m) => {
                     let mut lo = app.layout.write();
