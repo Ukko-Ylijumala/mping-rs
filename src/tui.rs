@@ -162,7 +162,7 @@ impl AppLayout {
         let spacing: u16 = self.tbl_colspacing * (self.tbl_hdr_widths.len() as u16 - 1);
         let (table, info) = {
             let middle = Layout::horizontal([
-                Constraint::Min(self.tbl_width + spacing + TBL_WASTED_COLS), // table + borders
+                Constraint::Max(self.tbl_width + spacing + TBL_WASTED_COLS), // table + borders
                 Constraint::Fill(1),                                         // info
             ])
             .split(middle);
@@ -182,7 +182,7 @@ impl AppLayout {
         // Split info_upper into [info_top, graph, hist] areas
         let (info_top, graph_area, hist_area) = {
             let info_split = Layout::vertical([
-                Constraint::Length(5),
+                Constraint::Length(7),
                 Constraint::Length(20),
                 Constraint::Length(11),
             ])
