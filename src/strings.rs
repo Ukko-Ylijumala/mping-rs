@@ -57,6 +57,7 @@ pub static HELP_REFRESH: &str = "TUI refresh interval in milliseconds [50 - 5000
 pub static HELP_PERF: &str = "Try to be more performant by reducing task spawn overhead";
 pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";
+
 pub static INFO_CAPS: &str = "This program requires CAP_NET_RAW to send ICMP packets.
 Either run it with sudo, or grant the capability to the binary:
     sudo setcap cap_net_raw+ep";
@@ -64,7 +65,7 @@ pub static INFO_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs sy
     sudo sysctl -w net.ipv4.ping_group_range=\"<start> <end>\"\n";
 
 // App keybindings help text
-pub static HELP_KEYS: [[&str; 2]; 15] = [
+pub static HELP_KEYS: [[&str; 2]; 16] = [
     ["q, CTRL-C",      "Quit the program"],
     ["h, F1",          "Show/hide this help screen"],
     ["Up, Down",       "Scroll target list up/down"],
@@ -73,6 +74,7 @@ pub static HELP_KEYS: [[&str; 2]; 15] = [
     ["Home, End",      "Jump to top/bottom of target list"],
     ["Backspace",      "Clear row and column selections"],
     ["<space>",        "Toggle pause/resume pinging for selected target"],
+    ["Enter",          "Update the selected target's details in the info panel"],
     ["p",              "Pause pinging for all targets"],
     ["P",              "Resume pinging for all targets"],
     ["R",              "Reset ping statistics for selected target"],
