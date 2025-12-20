@@ -63,7 +63,8 @@ pub(crate) struct AppState {
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
     pub popup_contents: RwLock<Option<PopupContents>>,
-    pub resolver: Resolver<TokioConnectionProvider>,
+    pub resolver: Arc<Resolver<TokioConnectionProvider>>,
+    runtime: tokio::runtime::Handle,
     spawned_tasks: AtomicU64,
     perf: AtomicBool,
 }
@@ -220,14 +221,22 @@ impl AppState {
     /// Update information for the target at the specified index. Nonblocking.
     pub fn update_target_info(&self, index: usize) {
         if let Some(tgt) = self.targets.read().get(index) {
-            let tgt = tgt.clone();
+            let tgt_ptr1 = tgt.clone();
+            let tgt_ptr2 = tgt.clone();
+            let resolver = self.resolver.clone();
             // `determine_hops` is blocking, so spawn a thread for it to not block the caller.
             //
             // NOTE: we specifically can't use `tokio::spawn` here because `determine_hops`
             // will eventually acquire a write lock to one/some of its fields, and there's a
             // very good change that the caller will deadlock (or panic) on the same if it's
             // scheduled in the same runtime thread.
-            std::thread::spawn(move || tgt.determine_hops(UPDATE_TASK_TIMEOUT));
+            std::thread::spawn(move || tgt_ptr1.determine_hops(UPDATE_TASK_TIMEOUT));
+            self.inc_spawned_tasks();
+            
+            // Because this function can be called from the keyboard event handler thread,
+            // which is not inside the tokio runtime context, we must use the stored
+            // runtime handle to spawn the task, or we will panic that thread.
+            self.runtime.spawn(async move { tgt_ptr2.resolve_ptr(&resolver).await });
             self.inc_spawned_tasks();
         }
     }
@@ -305,7 +314,9 @@ impl Default for AppState {
             popup_contents: None.into(),
             resolver: Resolver::builder_tokio()
                 .expect("Resolver failed to initialize")
-                .build(),
+                .build()
+                .into(),
+            runtime: tokio::runtime::Handle::current(),
             spawned_tasks: AtomicU64::new(0),
             perf: AtomicBool::new(false),
         }
@@ -353,7 +364,7 @@ impl Display for QueryResponse {
             QueryResponse::Count(c) => write!(f, "{c}"),
             QueryResponse::Float(v) => write!(f, "{v}"),
             QueryResponse::Text(s) => write!(f, "{s}"),
-            QueryResponse::Error(e) => write!(f, "Error: {e}"),
+            QueryResponse::Error(e) => write!(f, "E: {e}"),
             QueryResponse::Empty => write!(f, "<empty response>"),
             QueryResponse::None => write!(f, "<unknown>"),
         }
