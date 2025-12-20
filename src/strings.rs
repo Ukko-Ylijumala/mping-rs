@@ -44,7 +44,10 @@ pub static PTR_IPV4: &str = ".in-addr.arpa";
 pub static PTR_IPV6: &str = ".ip6.arpa";
 
 // args.rs
+pub static ERR_RESOLVE: &str = "ERROR: failed to resolve hostname";
 pub static WARN_NO_VALID_IPS: &str = "WARN: no valid IP addresses provided.";
+pub static INFO_RESOLVE_ONE: &str = "Number of addresses resolved from hostname";
+pub static INFO_RESOLVED: &str = "Number of new addresses resolved from hostnames";
 pub static INFO_UNIQUE: &str = "Total unique addresses to monitor";
 pub static INFO_ADJUST: &str = "Adjusting timeout to avoid excessive concurrent pings";
 
