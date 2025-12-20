@@ -110,7 +110,7 @@ pub fn parse_ip_addresses(
         match parse_ip_or_range(target) {
             Ok(mut ips) => {
                 if verbose && ips.len() > 1 {
-                    eprintln!("Expanded '{target}' to {} addresses", ips.len());
+                    eprintln!("{INFO_EXPANDED} '{target}': {}", ips.len());
                 }
                 all_addrs.append(&mut ips);
             }
@@ -131,7 +131,7 @@ pub fn parse_ip_addresses(
             match parse_ip_or_range(exc) {
                 Ok(mut ips) => {
                     if verbose && ips.len() > 1 {
-                        eprintln!("Expanded '{exc}' to {} addresses (exclusion)", ips.len());
+                        eprintln!("{INFO_EXPANDED} '{exc}': {} (exclusion)", ips.len());
                     }
                     exclusions.extend(ips.drain(..));
                 }
@@ -148,7 +148,7 @@ pub fn parse_ip_addresses(
             if remainder == seen {
                 eprintln!("{WARN_NO_MATCHES}");
             } else if remainder.is_empty() {
-                eprintln!("{ERR_ALL_EXCLUDED}");
+                eprintln!("{WARN_ALL_EXCLUDED}");
             } else {
                 if verbose {
                     eprintln!("{INFO_EXCLUDE}: {}", (seen.len() - remainder.len()));
@@ -164,7 +164,7 @@ pub fn parse_ip_addresses(
 /// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).
 pub fn reverse_name(addr: &IpAddr) -> String {
     match addr {
-        IpAddr::V4(v4) => v4.octets().iter().rev().join(".") + ".in-addr.arpa",
+        IpAddr::V4(v4) => v4.octets().iter().rev().join(".") + PTR_IPV4,
         IpAddr::V6(v6) => {
             let s = itertools::Itertools::intersperse(
                 v6.octets()
@@ -174,7 +174,7 @@ pub fn reverse_name(addr: &IpAddr) -> String {
                 '.',
             )
             .collect::<String>();
-            s + ".ip6.arpa"
+            s + PTR_IPV4
         }
     }
 }

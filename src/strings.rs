@@ -34,14 +34,17 @@ pub static ERR_SIGNALS: &str = "ERROR: setting up signal handlers failed";
 pub static GOT_SIGINT: &str = "Received SIGINT (Ctrl-C), shutting down...";
 pub static GOT_SIGTERM: &str = "Received SIGTERM (kill -15), shutting down...";
 pub static GOT_SIGQUIT: &str = "Received SIGQUIT (Ctrl-\\), shutting down...";
-
-// args.rs
 pub static ERR_TIMEVAL: &str = "ERROR: invalid time value";
 pub static ERR_PARSE_IP: &str = "ERROR: parsing failed for address";
-pub static ERR_NO_VALID_IPS: &str = "ERROR: no valid IP addresses provided.";
-pub static ERR_ALL_EXCLUDED: &str = "ERROR: all target addresses were excluded.";
 pub static WARN_NO_MATCHES: &str = "WARN: exclusions did not match any addresses.";
+pub static WARN_ALL_EXCLUDED: &str = "WARN: all target addresses were excluded.";
+pub static INFO_EXPANDED: &str = "Number of addresses expanded from";
 pub static INFO_EXCLUDE: &str = "Excluding addresses from target list";
+pub static PTR_IPV4: &str = ".in-addr.arpa";
+pub static PTR_IPV6: &str = ".ip6.arpa";
+
+// args.rs
+pub static WARN_NO_VALID_IPS: &str = "WARN: no valid IP addresses provided.";
 pub static INFO_UNIQUE: &str = "Total unique addresses to monitor";
 pub static INFO_ADJUST: &str = "Adjusting timeout to avoid excessive concurrent pings";
 
@@ -54,6 +57,8 @@ pub static HELP_RANDOMIZE: &str = "Randomize ICMP payload data [default: no]";
 pub static HELP_HISTSIZE: &str = "Full history size (number of ping results to keep per target) [60 - 65536]";
 pub static HELP_DETAILED: &str = "Detailed recent history size (for laggy/flappy detection etc) [10 - 1000]";
 pub static HELP_REFRESH: &str = "TUI refresh interval in milliseconds [50 - 5000]";
+pub static HELP_DNS_SERVERS: &str = "Comma separated list of DNS servers to use instead of system defaults";
+pub static HELP_DNS_TIMEOUT: &str = "DNS resolution timeout in seconds [1 - 10] [default: 5]";
 pub static HELP_PERF: &str = "Try to be more performant by reducing task spawn overhead";
 pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";
