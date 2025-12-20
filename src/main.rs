@@ -483,11 +483,12 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conf: MpConfig = MpConfig::parse();
-    let app: Arc<AppState> = AppState::default().build(
-        &conf,
-        make_targets(&conf.addrs, conf.histsize, conf.detailed),
-    )?;
+    let conf: MpConfig = MpConfig::parse()?;
+    let app: Arc<AppState> = AppState::from_conf(&conf).build(make_targets(
+        &conf.addrs,
+        conf.histsize,
+        conf.detailed,
+    ))?;
 
     // Spawn ping tasks
     {
