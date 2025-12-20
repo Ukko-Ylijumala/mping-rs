@@ -186,7 +186,7 @@ pub fn reverse_name(addr: &IpAddr) -> String {
                 '.',
             )
             .collect::<String>();
-            s + PTR_IPV4
+            s + PTR_IPV6
         }
     }
 }
