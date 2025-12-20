@@ -60,16 +60,13 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
     }
 
     // Create raw ICMP socket (requires CAP_NET_RAW or root)
-    let socket = Socket::new(
-        if target.is_ipv4() {
-            Domain::IPV4
-        } else {
-            Domain::IPV6
-        },
-        Type::RAW,
-        Some(Protocol::ICMPV4), // kernel often uses ICMPV4 proto constant on Linux for IPv6
-    )
-    .map_err(|e| format!("Failed to create raw socket: {e}"))?;
+    let (domain, proto) = if target.is_ipv4() {
+        (Domain::IPV4, Protocol::ICMPV4)
+    } else {
+        (Domain::IPV6, Protocol::ICMPV6)
+    };
+    let socket = Socket::new(domain, Type::RAW, Some(proto))
+        .map_err(|e| format!("Failed to create raw socket: {e}"))?;
 
     if debug {
         eprintln!(
