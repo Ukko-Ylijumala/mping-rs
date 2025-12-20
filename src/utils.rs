@@ -22,6 +22,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
+    vec,
 };
 
 /**
@@ -96,14 +97,19 @@ Parse and expand a list of space separated IPv4/v6 addresses
 (single, range, CIDR), taking exclusions into account if applicable.
 
 Removes duplicates and preserves order of first occurrence.
+
+### Returns a tuple of:
+ - Vec of parsed IP addresses
+ - Set of strings that failed to parse
 */
 pub fn parse_ip_addresses(
     targets: &[String],
     exclude: Option<&[String]>,
     verbose: bool,
-) -> Vec<IpAddr> {
+) -> (Vec<IpAddr>, HashSet<String>) {
     let mut all_addrs: Vec<IpAddr> = Vec::new();
     let mut seen: HashSet<IpAddr> = HashSet::new();
+    let mut failed: HashSet<String> = HashSet::new();
 
     // Parse all targets and expand them into individual IPs
     for target in targets {
@@ -115,7 +121,10 @@ pub fn parse_ip_addresses(
                 all_addrs.append(&mut ips);
             }
             Err(e) => {
-                eprintln!("{ERR_PARSE_IP} '{target}': {e}");
+                if verbose {
+                    eprintln!("{ERR_PARSE_IP} '{target}': {e}");
+                }
+                failed.insert(target.clone());
             }
         }
     }
@@ -136,7 +145,9 @@ pub fn parse_ip_addresses(
                     exclusions.extend(ips.drain(..));
                 }
                 Err(e) => {
-                    eprintln!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}");
+                    if verbose {
+                        eprintln!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}");
+                    }
                 }
             }
         }
@@ -158,7 +169,7 @@ pub fn parse_ip_addresses(
         };
     }
 
-    all_addrs
+    (all_addrs, failed)
 }
 
 /// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).

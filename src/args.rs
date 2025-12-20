@@ -198,7 +198,9 @@ impl MpConfig {
                 .into(),
         );
 
-        config.addrs = parse_ip_addresses(&config.targets, Some(&config.exclude), config.verbose);
+        let (addrs, _failed) =
+            parse_ip_addresses(&config.targets, Some(&config.exclude), config.verbose);
+        config.addrs = addrs;
         if config.addrs.is_empty() {
             eprintln!("{WARN_NO_VALID_IPS}");
         } else if config.verbose {
