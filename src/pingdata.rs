@@ -9,6 +9,7 @@ use crate::{
     structs::QueryResponse,
     utils::{HistogramBucket, make_histogram_buckets, reverse_name},
 };
+use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{
@@ -169,6 +170,8 @@ pub(crate) struct PingTarget {
     paused: AtomicBool,
     cancel: CancellationToken,
     hops: RwLock<QueryResponse>,
+    ptr: RwLock<QueryResponse>,
+    rev_ptr: RwLock<QueryResponse>,
 }
 
 impl PingTarget {
@@ -189,6 +192,8 @@ impl PingTarget {
             }
             .into(),
             hops: QueryResponse::default().into(),
+            ptr: QueryResponse::default().into(),
+            rev_ptr: QueryResponse::default().into(),
             paused: AtomicBool::new(false),
             cancel: CancellationToken::new(),
         }
@@ -233,6 +238,68 @@ impl PingTarget {
     /// Get the last known hop count query response for this target, if any.
     pub fn hops(&self) -> QueryResponse {
         self.hops.read().clone()
+    }
+
+    /// Try to resolve the PTR record and the reverse of it for this target.
+    pub async fn resolve_ptr(&self, res: &Resolver<TokioConnectionProvider>) {
+        // First, resolve PTR
+        match res.reverse_lookup(self.addr).await {
+            Ok(resp) => {
+                let names: Vec<String> = resp
+                    .iter()
+                    .map(|r| r.to_string().trim_end_matches('.').to_string())
+                    .collect();
+                match names.len() {
+                    0 => {
+                        *self.ptr.write() = QueryResponse::Empty;
+                        *self.rev_ptr.write() = QueryResponse::Error("PTR record empty".into());
+                    }
+
+                    1 => {
+                        let name = &names[0];
+                        *self.ptr.write() = QueryResponse::Text(name.to_string());
+
+                        // Now resolve A/AAAA for the PTR name
+                        match res.lookup_ip(name).await {
+                            Ok(ip_resp) => {
+                                let ips: Vec<IpAddr> = ip_resp.iter().collect();
+                                *self.rev_ptr.write() = if ips.is_empty() {
+                                    QueryResponse::Empty
+                                } else if ips.len() == 1 {
+                                    QueryResponse::IpAddr(ips[0])
+                                } else {
+                                    QueryResponse::IpAddr(ips[0]) // TODO: handle multiple IPs
+                                };
+                            }
+
+                            Err(e) => {
+                                *self.rev_ptr.write() = QueryResponse::Error(e.to_string());
+                            }
+                        }
+                    }
+
+                    _ => {
+                        *self.ptr.write() = QueryResponse::Text(names.join(", "));
+                        *self.rev_ptr.write() = QueryResponse::Text("Multiple PTRs".into()); // TODO: handle multiple PTRs
+                    }
+                }
+            }
+
+            Err(e) => {
+                *self.ptr.write() = QueryResponse::Error(e.to_string());
+                *self.rev_ptr.write() = QueryResponse::Error("PTR lookup failed".into());
+            }
+        }
+    }
+
+    /// Get the last known PTR query response for this target, if any.
+    pub fn ptr(&self) -> QueryResponse {
+        self.ptr.read().clone()
+    }
+
+    /// Get the last known reverse-of-PTR query response for this target, if any.
+    pub fn rev_ptr(&self) -> QueryResponse {
+        self.rev_ptr.read().clone()
     }
 
     /// Reset all statistics for this target as if it was never pinged.
