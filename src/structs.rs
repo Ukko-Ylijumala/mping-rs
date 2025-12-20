@@ -9,7 +9,7 @@ use crate::{
     tui::{AppLayout, MutableLine, TableRow},
     utils::nice_permission_error,
 };
-use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
+use hickory_resolver::TokioResolver;
 use miniutils::ProcessInfo;
 use parking_lot::RwLock;
 use ratatui::{prelude::Stylize, style::Style, text::Line, widgets::Paragraph};
@@ -63,7 +63,7 @@ pub(crate) struct AppState {
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
     pub popup_contents: RwLock<Option<PopupContents>>,
-    pub resolver: Arc<Resolver<TokioConnectionProvider>>,
+    pub resolver: Arc<TokioResolver>,
     runtime: tokio::runtime::Handle,
     spawned_tasks: AtomicU64,
     perf: AtomicBool,
@@ -71,67 +71,87 @@ pub(crate) struct AppState {
 
 impl AppState {
     /**
-    Build the application state based on the provided configuration.
-    - set up UI refresh interval
-    - set up [surge_ping::Client] instances for IPv4 and IPv6 as needed
-    - add provided ping targets
+    Initialize base application state from the commandline options. Sets up:
+    - title, headers and styling
+    - initial [AppLayout]
+    - [ProcessInfo] tracking
+    - intervals: UI refresh, pinging, internal tick
+    - flags: verbose, debug, randomize, perf
+    - events: key event notifier, quit flag
+    - default payload
+    - other default fields
+    */
+    pub fn from_conf(conf: &MpConfig) -> Self {
+        // setup app title row with version and styling
+        let mut title = Line::from(APP_TITLE).centered().bold().red().on_green();
+        title.push_span(format!(" v{}", conf.ver));
 
-    NOTE: sharing a client across multiple targets is (async) safe
-    and allows socket reuse.
+        // setup header styling and add debug column if needed
+        let mut headers = TableRow::from_iter(HEADERS);
+        headers.set_style_all(Style::new().bold().yellow());
+        if conf.debug {
+            headers.add_item("Seq");
+        }
+
+        // update layout info with header widths and column spacing
+        let mut layout: AppLayout = AppLayout::default();
+        layout.tbl_hdr_widths = headers.widths();
+        layout.tbl_colspacing = 2;
+
+        Self {
+            pi: ProcessInfo::new().with_min_interval(PROCINFO_INTERVAL),
+            c_v4: None,
+            c_v6: None,
+            targets: vec![].into(),
+            tasks: vec![].into(),
+            layout: layout.into(),
+            title,
+            headers,
+            ui_interval: Duration::from_millis(conf.refresh),
+            ui_next_refresh: tokio::time::Instant::now().into(),
+            verbose: conf.verbose,
+            debug: conf.debug,
+            quit: AtomicBool::new(false).into(),
+            ping_interval: conf.interval,
+            ping_timeout: conf.timeout,
+            randomize: conf.randomize,
+            payload: vec![0u8; conf.size as usize].into(), // 48 bytes -> 56-byte packet
+            // adjust internal tick (delay) lower if it's higher than ping
+            // interval, othwerwise we'd send out fewer pings than intended
+            internal_tick: Duration::from_millis(100).min(conf.interval),
+            key_event: Notify::new(),
+            status_line: MutableLine::new_from(""),
+            popup_contents: None.into(),
+            resolver: conf.resolver.as_ref().unwrap().clone(),
+            runtime: tokio::runtime::Handle::current(),
+            spawned_tasks: AtomicU64::new(0),
+            perf: conf.perf.into(),
+        }
+    }
+
+    /**
+    Build the final application state from initial targets.
+    - set up [surge_ping::Client] instances for IPv4 and IPv6
+    - add provided ping targets (if any)
+
+    NOTE: sharing a client is (async) safe and allows socket reuse.
     */
     pub fn build(
         mut self,
-        conf: &MpConfig,
         targets: Vec<PingTarget>,
     ) -> Result<Arc<Self>, Box<dyn std::error::Error>> {
-        self.debug = conf.debug;
-        self.verbose = conf.verbose;
-        self.randomize = conf.randomize;
-        self.perf = conf.perf.into();
-
-        // setup app title row with version and styling
-        self.title.push_span(format!(" v{}", conf.ver));
-        self.title = self.title.centered().bold().red().on_green();
-
-        // setup header styling and add debug column if needed
-        // also update layout info with header widths and column spacing
-        self.headers.set_style_all(Style::new().bold().yellow());
-        if self.debug {
-            self.headers.add_item("Seq");
-        }
-        {
-            let mut layout = self.layout.write();
-            layout.tbl_hdr_widths = self.headers.widths();
-            layout.tbl_colspacing = 2;
-        }
-
-        self.ui_interval = Duration::from_millis(conf.refresh);
-        self.ping_interval = conf.interval;
-        self.ping_timeout = conf.timeout;
-        if conf.size as usize != DEFAULT_PAYLOAD_SIZE {
-            self.payload = vec![0u8; conf.size as usize].into();
-        }
-
-        // adjust internal tick (delay) lower if it's higher than ping
-        // interval, othwerwise we'd send out fewer pings than intended
-        self.internal_tick = self.internal_tick.min(conf.interval);
-
         // IPv4 & IPv6 clients
-        self.c_v4 = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv4()) {
+        self.c_v4 = {
             match Client::new(&Config::default()) {
                 Ok(c) => Arc::new(c).into(),
                 Err(e) => return Err(nice_permission_error(&e, "v4")),
             }
-        } else {
-            None
         };
-        self.c_v6 = if conf.addrs.iter().any(|a: &IpAddr| a.is_ipv6()) {
+        self.c_v6 = {
             match Client::new(&Config::builder().kind(ICMP::V6).build()) {
                 Ok(c) => Arc::new(c).into(),
                 Err(e) => return Err(nice_permission_error(&e, "v6")),
             }
-        } else {
-            None
         };
 
         self.add_targets(targets);
@@ -232,11 +252,12 @@ impl AppState {
             // scheduled in the same runtime thread.
             std::thread::spawn(move || tgt_ptr1.determine_hops(UPDATE_TASK_TIMEOUT));
             self.inc_spawned_tasks();
-            
+
             // Because this function can be called from the keyboard event handler thread,
             // which is not inside the tokio runtime context, we must use the stored
             // runtime handle to spawn the task, or we will panic that thread.
-            self.runtime.spawn(async move { tgt_ptr2.resolve_ptr(&resolver).await });
+            self.runtime
+                .spawn(async move { tgt_ptr2.resolve_ptr(&resolver).await });
             self.inc_spawned_tasks();
         }
     }
@@ -285,41 +306,6 @@ impl AppState {
             false => true,
         });
         orig_len.saturating_sub(targets.len())
-    }
-}
-
-impl Default for AppState {
-    fn default() -> Self {
-        Self {
-            pi: ProcessInfo::new().with_min_interval(PROCINFO_INTERVAL),
-            c_v4: None,
-            c_v6: None,
-            targets: vec![].into(),
-            tasks: vec![].into(),
-            layout: AppLayout::default().into(),
-            title: Line::from(APP_TITLE),
-            headers: TableRow::from_iter(HEADERS),
-            ui_interval: Duration::from_millis(250),
-            ui_next_refresh: tokio::time::Instant::now().into(),
-            verbose: false,
-            debug: false,
-            quit: AtomicBool::new(false).into(),
-            ping_interval: Duration::from_secs(1),
-            ping_timeout: Duration::from_secs(2),
-            randomize: false,
-            payload: vec![0u8; DEFAULT_PAYLOAD_SIZE].into(), // 48 bytes -> 56-byte packet
-            internal_tick: Duration::from_millis(100),       // 10 Hz default, might be overridden
-            key_event: Notify::new(),
-            status_line: MutableLine::new_from(""),
-            popup_contents: None.into(),
-            resolver: Resolver::builder_tokio()
-                .expect("Resolver failed to initialize")
-                .build()
-                .into(),
-            runtime: tokio::runtime::Handle::current(),
-            spawned_tasks: AtomicU64::new(0),
-            perf: AtomicBool::new(false),
-        }
     }
 }
 
