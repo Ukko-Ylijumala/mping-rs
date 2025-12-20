@@ -15,6 +15,7 @@ use hickory_resolver::{
     system_conf::read_system_conf,
 };
 use std::{
+    collections::HashSet,
     fmt::Debug,
     net::IpAddr,
     sync::{Arc, LazyLock},
@@ -143,6 +144,9 @@ pub(crate) struct MpConfig {
     pub addrs: Vec<IpAddr>,
 
     #[arg(skip)]
+    pub seen: HashSet<IpAddr>,
+
+    #[arg(skip)]
     pub ver: String,
 
     #[arg(skip)]
@@ -151,7 +155,7 @@ pub(crate) struct MpConfig {
 
 impl MpConfig {
     /// Parses command line arguments and returns a [MpConfig] struct.
-    pub fn parse() -> Result<MpConfig, ResolveError> {
+    pub async fn parse() -> Result<MpConfig, ResolveError> {
         let mut config: MpConfig = <MpConfig as Parser>::parse();
         config.ver = crate_version!().to_string();
 
@@ -198,9 +202,54 @@ impl MpConfig {
                 .into(),
         );
 
-        let (addrs, _failed) =
+        // Parse the addresses which are straight up IPs/ranges first.
+        let (mut addrs, mut seen, failed) =
             parse_ip_addresses(&config.targets, Some(&config.exclude), config.verbose);
+
+        // Now try to resolve any entries that failed to parse as IPs.
+        let mut resolved: Vec<IpAddr> = Vec::with_capacity(failed.len()); // assume all would resolve 1:1
+        if let Some(resolver) = &config.resolver {
+            for name in &failed {
+                match resolver.lookup_ip(name).await {
+                    Ok(lookup) => {
+                        let mut ips: Vec<IpAddr> = lookup.iter().collect();
+                        if config.verbose && !ips.is_empty() {
+                            eprintln!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len());
+                        }
+                        resolved.append(&mut ips);
+                    }
+                    Err(e) => {
+                        if config.verbose {
+                            eprintln!("{ERR_RESOLVE} '{name}': {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Did we resolve any new addresses?
+        if !resolved.is_empty() {
+            // Remove duplicates by comparing against already parsed addresses.
+            resolved.retain(|ip: &IpAddr| seen.insert(*ip));
+            if config.verbose {
+                eprintln!("{INFO_RESOLVED}: {}", resolved.len());
+            }
+            addrs.append(&mut resolved);
+        }
+
+        // Yes, I, the mighty programmer, am aware that I could sometimes be INCORRECT!
+        #[cfg(debug_assertions)]
+        {
+            assert_eq!(
+                HashSet::from_iter(addrs.iter().cloned()),
+                seen,
+                "\"seen\" set does not match parsed addresses! Fix da code, ya dumbass!"
+            );
+        }
+
+        // Present the Vec and HashSet of addresses to the main code for consumption.
         config.addrs = addrs;
+        config.seen = seen;
         if config.addrs.is_empty() {
             eprintln!("{WARN_NO_VALID_IPS}");
         } else if config.verbose {
