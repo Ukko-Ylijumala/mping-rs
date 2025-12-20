@@ -99,14 +99,15 @@ Parse and expand a list of space separated IPv4/v6 addresses
 Removes duplicates and preserves order of first occurrence.
 
 ### Returns a tuple of:
- - Vec of parsed IP addresses
- - Set of strings that failed to parse
+- Vec of parsed IP addresses
+- Set of seen IP addresses (so that the caller doesn't need to re-derive it)
+- Set of strings that failed to parse
 */
 pub fn parse_ip_addresses(
     targets: &[String],
     exclude: Option<&[String]>,
     verbose: bool,
-) -> (Vec<IpAddr>, HashSet<String>) {
+) -> (Vec<IpAddr>, HashSet<IpAddr>, HashSet<String>) {
     let mut all_addrs: Vec<IpAddr> = Vec::new();
     let mut seen: HashSet<IpAddr> = HashSet::new();
     let mut failed: HashSet<String> = HashSet::new();
@@ -169,7 +170,7 @@ pub fn parse_ip_addresses(
         };
     }
 
-    (all_addrs, failed)
+    (all_addrs, seen, failed)
 }
 
 /// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).
