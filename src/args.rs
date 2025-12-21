@@ -139,7 +139,7 @@ pub(crate) struct MpConfig {
         value_name = "FLOAT",
         required = false,
         value_parser = value_parser!(f64),
-        default_value = "1.5",
+        default_value = "1.0",
         help = HELP_STRETCH_FACTOR
     )]
     pub stretch_factor: f64,
