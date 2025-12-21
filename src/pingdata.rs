@@ -31,6 +31,10 @@ const DEFAULT_WIN: usize = 10; // Window size (N packets) for recent history ana
 const FLAP_THRESH: usize = 4; // Number of up/down transitions to consider "flappy"
 const LOSSY_THRESH: f64 = 0.5; // Packet loss % to consider "lossy"
 const LAGGY_FACTOR: f64 = 2.0; // Multiplier over historical mean to consider "laggy"
+const SPEED_KM_S: f64 = 204e3; // Approx speed of light in fiber (204 000 km/s)
+const STRETCH_FACTOR: f64 = 1.3; // Inflation factor to account for non-direct paths etc
+const LATENCY_FLOOR: f64 = 2e-4; // 0.2 ms baseline latency floor (non-propagation)
+const BAND_SIZE_KM: f64 = 100.0; // Quantize to nearest 100km
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) enum PingStatus {
@@ -407,6 +411,7 @@ impl PingTarget {
     Whether this target is (currently) considered unreachable.
 
     NOTE: a stopped target is never "unreachable" in this context.
+
     NOTE: may lock the inner `data` for reading.
     */
     #[inline]
@@ -494,6 +499,84 @@ impl PingTarget {
     pub fn get_rtt_histogram(&self, bins: usize, n: usize) -> Vec<HistogramBucket> {
         let rtts: Vec<f64> = self.get_recent_rtts(n).iter().map(|&(_, s)| s).collect();
         make_histogram_buckets(rtts, bins)
+    }
+
+    /**
+    Return the (estimated!) distance to this target in kilometers, based on minimum RTT.
+    Returns an error if minimum RTT is not available.
+
+    ### Formula:
+    - `L_geodesic ​≈ (RTT_min ​− t0​) ⋅ v​ / (2 ⋅ s ⋅ factor)`
+
+    where:
+    - `L_geodesic` is the estimated one-way distance to the target (km)
+    - `RTT_min` is the minimum observed round-trip time (s)
+    - `t0` is a latency floor to account for non-propagation delays (s)
+    - `v` is the speed of light in fiber (km/s)
+    - `s` is a (default) stretch factor to account for non-direct paths, routing, etc.
+    - `factor` is an additional user-defined stretch/compression factor
+      (clamped to >0.1 to avoid div by zero)
+
+    Further, we assume we can't go below the latency floor (`t0`) and the
+    distance is at least 1 meter (0.001 km).
+
+    NOTE: this is a very rough estimate and should not be relied upon.
+
+    NOTE: locks the inner `data` for reading.
+    */
+    #[inline]
+    pub fn est_distance_km(&self, factor: f64) -> Result<f64, String> {
+        self.data.read().rtts.min().map(|micros| {
+            let rtt_min: f64 = (micros as f64 / 1e6).max(LATENCY_FLOOR); // assume at least t0
+            let factor: f64 = factor.max(0.1); // avoid div by zero
+            let l_geodesic: f64 =
+                ((rtt_min - LATENCY_FLOOR) * SPEED_KM_S) / (2.0 * STRETCH_FACTOR * factor);
+            l_geodesic.max(1e-3) // at least 1 meter
+        })
+    }
+
+    /**
+    String form of the (estimated!) distance to this target, derived from minimum RTT.
+
+    ### Args:
+    - `factor`: Stretch/compression factor (>0.0) to adjust distance estimates.
+
+    NOTE: this is a very rough estimate and should be taken with a grain of salt.
+    Many things can affect RTT that have nothing to do with physical distance,
+    such as routing, congestion, peering, etc. Even though over the long term minimum
+    RTT converges to smoot out most of the noise, it's not a reliable measure by any means.
+
+    NOTE: locks the inner `data` for reading.
+    */
+    #[inline]
+    pub fn est_distance_str(&self, factor: f64) -> String {
+        match self.est_distance_km(factor) {
+            Ok(dist) if dist > 0.0 => {
+                match dist {
+                    d if d < 2.0 => return "local (a few km max)".to_string(),
+                    d if (d < 30.0 && d >= 2.0) => return format!("same city (< 30 km)"),
+                    d if (d < BAND_SIZE_KM && d >= 30.0) => {
+                        return format!("< {:.0} km", BAND_SIZE_KM);
+                    }
+                    d if (d < BAND_SIZE_KM * 2.0 && d >= BAND_SIZE_KM) => {
+                        return format!("< {:.0} km", BAND_SIZE_KM * 2.0);
+                    }
+                    d if (d < BAND_SIZE_KM * 5.0 && d >= BAND_SIZE_KM * 2.0) => {
+                        return format!("< {:.0} km", BAND_SIZE_KM * 5.0);
+                    }
+                    d if (d < BAND_SIZE_KM * 10.0 && d >= BAND_SIZE_KM * 5.0) => {
+                        return format!("< {:.0} km", BAND_SIZE_KM * 10.0);
+                    }
+                    d if d > SPEED_KM_S / 5.0 => return "outside of atmosphere".to_string(),
+                    _ => {
+                        // Quantize to nearest lower band
+                        let banded = (dist / BAND_SIZE_KM).floor() * BAND_SIZE_KM;
+                        format!("​​≈ {:.0}+ km", banded)
+                    }
+                }
+            }
+            _ => MISSING.to_string(),
+        }
     }
 }
 
