@@ -222,6 +222,12 @@ impl LatencyWindow {
         Ok(self.stdev)
     }
 
+    /// Minimum RTT value. Useful f.ex. for baseline latency and distance estimates.
+    pub fn min(&self) -> Result<u32, String> {
+        self.no_samples_check()?;
+        Ok(self.minq.front().map(|(v, _)| *v).unwrap_or_default())
+    }
+
     /// Mean value (aka. average).
     pub fn mean(&self) -> Result<f64, String> {
         self.no_samples_check()?;
