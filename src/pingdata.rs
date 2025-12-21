@@ -162,6 +162,19 @@ impl PingTargetInner {
     }
 }
 
+/**
+This struct represents a single ping target with its associated data and state.
+### Field descriptions:
+- `addr`: IP address of the target.
+- `rev`: Reverse DNS name of the target.
+- `data`: Inner data containing statistics and history (protected by a [RwLock]).
+- `paused`: Atomic boolean indicating whether pinging is paused for this target.
+- `cancel`: Cancellation token to signal a permanent stop. Setting this will
+abort the (spawned) ping task, which currently is irreversible.
+- `hops`: Last known hop count query response (protected by a [RwLock]).
+- `ptr`: Last known PTR record query response (protected by a [RwLock]).
+- `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
+*/
 #[derive(Debug)]
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
@@ -178,9 +191,11 @@ impl PingTarget {
     /**
     Create a new [PingTarget] for the specified IP address.
 
+    ### Args:
     - `histsize` specifies the size of the full RTT latency window.
-    - `detailed` specifies the number of more detailed recent packet stats to keep.
-    - `paused` specifies whether the target should be created in paused state.
+    - `detailed` specifies the number of recent more detailed packet stats to keep.
+    - `paused` specifies whether the target should be created in paused state (meaning,
+    the spawned ping task will sleep until `paused` is set to `false`).
     */
     pub fn new(addr: IpAddr, histsize: usize, detailed: usize, paused: bool) -> Self {
         let mut data = PingTargetInner {
@@ -204,6 +219,8 @@ impl PingTarget {
     }
 
     /// Update statistics based on the result of a ping attempt and the associated packet record.
+    ///
+    /// NOTE: locks the inner `data` for writing.
     pub async fn update_stats(
         &self,
         res: Result<(IcmpPacket, Duration), SurgeError>,
@@ -245,6 +262,8 @@ impl PingTarget {
     }
 
     /// Try to resolve the PTR record and the reverse of it for this target.
+    ///
+    /// NOTE: locks the fields `ptr` and `rev_ptr` for writing.
     pub async fn resolve_ptr(&self, res: &Resolver<TokioConnectionProvider>) {
         // First, resolve PTR
         match res.reverse_lookup(self.addr).await {
@@ -297,16 +316,22 @@ impl PingTarget {
     }
 
     /// Get the last known PTR query response for this target, if any.
+    ///
+    /// NOTE: locks the field `ptr` for reading.
     pub fn ptr(&self) -> QueryResponse {
         self.ptr.read().clone()
     }
 
     /// Get the last known reverse-of-PTR query response for this target, if any.
+    ///
+    /// NOTE: locks the field `rev_ptr` for reading.
     pub fn rev_ptr(&self) -> QueryResponse {
         self.rev_ptr.read().clone()
     }
 
     /// Reset all statistics for this target as if it was never pinged.
+    ///
+    /// NOTE: locks the inner `data` for writing.
     pub fn reset_stats(&self) {
         let mut data = self.data.write();
         data.sent = 0;
@@ -325,6 +350,8 @@ impl PingTarget {
     }
 
     /// Pause pinging for this target.
+    ///
+    /// NOTE: locks the inner `data` for writing.
     pub fn pause(&self) {
         if !self.is_stopped() && !self.is_paused() {
             self.paused.store(true, Ordering::Relaxed);
@@ -333,6 +360,8 @@ impl PingTarget {
     }
 
     /// Resume pinging for this target.
+    ///
+    /// NOTE: locks the inner `data` for writing.
     pub fn resume(&self) {
         if !self.is_stopped() && self.is_paused() {
             self.paused.store(false, Ordering::Relaxed);
@@ -341,6 +370,8 @@ impl PingTarget {
     }
 
     /// Toggle paused state for this target.
+    ///
+    /// NOTE: locks the inner `data` for writing.
     pub fn toggle_pause(&self) {
         if !self.is_stopped() {
             let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
@@ -365,13 +396,19 @@ impl PingTarget {
     }
 
     /// Permanently stop pinging this target. Ping task will abort.
+    ///
+    /// NOTE: locks the inner `data` for writing.
     pub fn stop(&self) {
         self.cancel.cancel();
         self.data.write().raw_status = PingStatus::Stopped;
     }
 
-    /// Whether this target is (currently) considered unreachable.
-    /// A stopped target is never "unreachable" in this context.
+    /**
+    Whether this target is (currently) considered unreachable.
+
+    NOTE: a stopped target is never "unreachable" in this context.
+    NOTE: may lock the inner `data` for reading.
+    */
     #[inline]
     pub fn is_unreachable(&self) -> bool {
         if self.is_stopped() {
@@ -381,16 +418,22 @@ impl PingTarget {
     }
 
     /// Whether recent packet loss is above the default threshold.
+    ///
+    /// NOTE: locks the inner `data` for reading.
     pub fn is_lossy(&self) -> bool {
         self.data.read().is_lossy(DEFAULT_WIN, LOSSY_THRESH)
     }
 
     /// Whether recent packet history shows flappiness (frequent up/down transitions)
+    ///
+    /// NOTE: locks the inner `data` for reading.
     pub fn is_flappy(&self) -> bool {
         self.data.read().is_flappy(DEFAULT_WIN, FLAP_THRESH)
     }
 
     /// Whether recent RTTs are significantly above historical mean.
+    ///
+    /// NOTE: locks the inner `data` for reading.
     pub fn is_laggy(&self) -> bool {
         match self.data.read().is_laggy(DEFAULT_WIN, LAGGY_FACTOR) {
             Ok(v) => v,
@@ -398,8 +441,12 @@ impl PingTarget {
         }
     }
 
-    /// Determine the effective status of this target, considering pauses,
-    /// stops, and recent history analysis. Can return all states.
+    /**
+    Determine the effective status of this target, considering pauses,
+    stops, and recent history analysis. Can return all states.
+
+    NOTE: may lock the inner `data` for reading.
+    */
     pub fn effective_status(&self) -> PingStatus {
         if self.is_stopped() {
             return PingStatus::Stopped;
@@ -416,6 +463,8 @@ impl PingTarget {
 
     `n` specifies the maximum number of samples to return, but
     less than `n` may be returned if fewer samples are available.
+
+    NOTE: locks the inner `data` for reading.
     */
     pub fn get_recent_rtts(&self, n: usize) -> Vec<(f64, f64)> {
         let rtts: Vec<u32> = self
@@ -439,6 +488,8 @@ impl PingTarget {
     This will call [PingTarget::get_recent_rtts] internally, so if you
     already have the RTT data, consider using [make_histogram_buckets]
     directly to avoid double work.
+
+    NOTE: locks the inner `data` for reading.
     */
     pub fn get_rtt_histogram(&self, bins: usize, n: usize) -> Vec<HistogramBucket> {
         let rtts: Vec<f64> = self.get_recent_rtts(n).iter().map(|&(_, s)| s).collect();
