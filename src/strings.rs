@@ -63,6 +63,7 @@ pub static HELP_PAUSED: &str = "Start with pinging paused for all targets [defau
 pub static HELP_REFRESH: &str = "TUI refresh interval in milliseconds [50 - 5000]";
 pub static HELP_DNS_SERVERS: &str = "Comma separated list of DNS servers to use instead of system defaults";
 pub static HELP_DNS_TIMEOUT: &str = "DNS resolution timeout in seconds [1 - 10] [default: 5]";
+pub static HELP_STRETCH_FACTOR: &str = "Stretch factor for distance estimation (over 1.0 => compress distances)";
 pub static HELP_PERF: &str = "Try to be more performant by reducing task spawn overhead";
 pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";

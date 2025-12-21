@@ -134,6 +134,16 @@ pub(crate) struct MpConfig {
     )]
     pub dns_timeout: Duration,
 
+    #[arg(
+        long,
+        value_name = "FLOAT",
+        required = false,
+        value_parser = value_parser!(f64),
+        default_value = "1.5",
+        help = HELP_STRETCH_FACTOR
+    )]
+    pub stretch_factor: f64,
+
     #[arg(long, help = HELP_PERF)]
     pub perf: bool,
 
