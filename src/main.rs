@@ -324,11 +324,12 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     ////////// Info areas //////////
     let w_info_upper = Paragraph::new(if let Some(t) = selected {
         format!(
-            " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}",
+            " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}",
             t.addr.to_string(),
             &t.rev,
             t.ptr(),
             t.rev_ptr(),
+            t.est_distance_str(state.distance_stretch_factor),
             t.hops(),
         )
     } else {
