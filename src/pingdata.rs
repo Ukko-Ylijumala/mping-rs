@@ -180,21 +180,25 @@ impl PingTarget {
 
     - `histsize` specifies the size of the full RTT latency window.
     - `detailed` specifies the number of more detailed recent packet stats to keep.
+    - `paused` specifies whether the target should be created in paused state.
     */
-    pub fn new(addr: IpAddr, histsize: usize, detailed: usize) -> Self {
+    pub fn new(addr: IpAddr, histsize: usize, detailed: usize, paused: bool) -> Self {
+        let mut data = PingTargetInner {
+            rtts: LatencyWindow::new(histsize),
+            recent: PacketHistory::new(detailed),
+            ..Default::default()
+        };
+        if paused {
+            data.raw_status = PingStatus::Paused;
+        }
         Self {
             addr,
             rev: reverse_name(&addr),
-            data: PingTargetInner {
-                rtts: LatencyWindow::new(histsize),
-                recent: PacketHistory::new(detailed),
-                ..Default::default()
-            }
-            .into(),
+            data: data.into(),
             hops: QueryResponse::default().into(),
             ptr: QueryResponse::default().into(),
             rev_ptr: QueryResponse::default().into(),
-            paused: AtomicBool::new(false),
+            paused: AtomicBool::new(paused),
             cancel: CancellationToken::new(),
         }
     }

@@ -59,6 +59,7 @@ pub static HELP_SIZE: &str = "Size of ICMP payload (minus the 8-byte ICMP header
 pub static HELP_RANDOMIZE: &str = "Randomize ICMP payload data [default: no]";
 pub static HELP_HISTSIZE: &str = "Full history size (number of ping results to keep per target) [60 - 65536]";
 pub static HELP_DETAILED: &str = "Detailed recent history size (for laggy/flappy detection etc) [10 - 1000]";
+pub static HELP_PAUSED: &str = "Start with pinging paused for all targets [default: no]";
 pub static HELP_REFRESH: &str = "TUI refresh interval in milliseconds [50 - 5000]";
 pub static HELP_DNS_SERVERS: &str = "Comma separated list of DNS servers to use instead of system defaults";
 pub static HELP_DNS_TIMEOUT: &str = "DNS resolution timeout in seconds [1 - 10] [default: 5]";

@@ -101,6 +101,9 @@ pub(crate) struct MpConfig {
     )]
     pub detailed: u16,
 
+    #[arg(long, help = HELP_PAUSED)]
+    pub paused: bool,
+
     #[arg(
         long,
         value_name = "ms",

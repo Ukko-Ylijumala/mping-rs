@@ -43,10 +43,10 @@ const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Create [PingTarget] instances for each IP address.
-fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16) -> Vec<PingTarget> {
+fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16, paused: bool) -> Vec<PingTarget> {
     addrs
         .iter()
-        .map(|addr| PingTarget::new(*addr, histsize as usize, detailed as usize))
+        .map(|addr| PingTarget::new(*addr, histsize as usize, detailed as usize, paused))
         .collect()
 }
 
@@ -488,6 +488,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &conf.addrs,
         conf.histsize,
         conf.detailed,
+        conf.paused,
     ))?;
 
     // Spawn ping tasks
