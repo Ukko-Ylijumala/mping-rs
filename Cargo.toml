@@ -42,6 +42,10 @@ features = ["cargo", "derive"]
 git = "https://github.com/Ukko-Ylijumala/miniutils-rs"
 version = "0.2.3"
 
+[dependencies.timesince]
+git = "https://github.com/Ukko-Ylijumala/timesince-rs"
+version = "0.3.1"
+
 [profile.release]
 opt-level = 3
 lto = true
