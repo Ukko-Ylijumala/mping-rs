@@ -14,8 +14,10 @@ use miniutils::ProcessInfo;
 use parking_lot::RwLock;
 use ratatui::{prelude::Stylize, style::Style, text::Line, widgets::Paragraph};
 use std::{
-    fmt::Display,
+    collections::VecDeque,
+    fmt,
     net::IpAddr,
+    ops::Deref,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -23,6 +25,7 @@ use std::{
     time::Duration,
 };
 use surge_ping::{Client, Config, ICMP};
+use timesince::TimeSinceEpoch;
 use tokio::sync::Notify;
 
 pub const DEFAULT_PAYLOAD_SIZE: usize = 48;
@@ -319,15 +322,30 @@ pub(crate) enum PopupContents {
     Table(Vec<String>),
     Paragraph(String),
     Line(String),
+    Buffer(Arc<MessageBuffer>),
 }
 
 impl PopupContents {
-    pub fn to_para(&self) -> Paragraph<'static> {
+    pub fn to_para(&self) -> Paragraph<'_> {
         match self {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
             PopupContents::Table(s) => Paragraph::new(s.join("\n")),
+            PopupContents::Buffer(buf) => buf.to_paragraph(),
         }
     }
+}
+
+/**
+This enum encodes whether a popup is visible and what type it is, if so.
+Other code can use this to determine what to do when, e.g., the user presses
+the help key while a different popup is already visible.
+*/
+#[derive(Default, Debug, Clone)]
+pub(crate) enum PopupState {
+    #[default]
+    Hidden,
+    HelpVisible,
+    MsgBufferVisible,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -345,8 +363,8 @@ pub(crate) enum QueryResponse {
     None,
 }
 
-impl Display for QueryResponse {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for QueryResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             QueryResponse::IpAddr(ip) => write!(f, "{ip}"),
             QueryResponse::Count(c) => write!(f, "{c}"),
@@ -356,5 +374,107 @@ impl Display for QueryResponse {
             QueryResponse::Empty => write!(f, "<empty response>"),
             QueryResponse::None => write!(f, "<unknown>"),
         }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Message {
+    pub when: TimeSinceEpoch,
+    msg: String,
+}
+
+impl Message {
+    pub fn new<S: Into<String>>(msg: S) -> Self {
+        Self {
+            when: TimeSinceEpoch::new(),
+            msg: msg.into(),
+        }
+    }
+}
+
+impl Deref for Message {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.msg
+    }
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} | {}", self.when, self.msg)
+    }
+}
+
+/* ---------------------------------------- */
+
+/// A fixed-size buffer for storing recent in-app (log) messages with timestamps.
+/// These can be displayed in a popup window in the UI if desired f.ex.
+#[derive(Debug)]
+pub(crate) struct MessageBuffer {
+    buf: RwLock<VecDeque<Message>>,
+    cap: usize,
+}
+
+impl MessageBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buf: VecDeque::with_capacity(capacity).into(),
+            cap: capacity,
+        }
+    }
+
+    /// Add a new message to the buffer and return a copy of it.
+    pub fn push(&self, msg: impl Into<String>) -> Message {
+        let msg = Message::new(msg);
+        let mut buf = self.buf.write();
+        if buf.len() >= self.cap {
+            buf.pop_front();
+        }
+        buf.push_back(msg.clone());
+        msg
+    }
+
+    /// Read access to the inner VecDeque via a closure.
+    #[inline]
+    pub fn with<R>(&self, f: impl FnOnce(&VecDeque<Message>) -> R) -> R {
+        f(&*self.buf.read())
+    }
+
+    pub fn len(&self) -> usize {
+        self.with(|msgs| msgs.len())
+    }
+
+    pub fn cloned(&self) -> Vec<Message> {
+        self.with(|msgs| msgs.iter().cloned().collect())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Message> {
+        self.cloned().into_iter()
+    }
+
+    pub fn to_strings(&self) -> Vec<String> {
+        self.with(|msgs| msgs.iter().map(|m| m.msg.to_string()).collect())
+    }
+
+    pub fn to_paragraph(&self) -> Paragraph<'_> {
+        Paragraph::new(self.to_strings().join("\n"))
+    }
+}
+
+impl Clone for MessageBuffer {
+    fn clone(&self) -> Self {
+        Self {
+            buf: self.buf.read().clone().into(),
+            cap: self.cap,
+        }
+    }
+}
+
+impl Default for MessageBuffer {
+    fn default() -> Self {
+        Self::new(1024)
     }
 }
