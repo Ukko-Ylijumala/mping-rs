@@ -7,6 +7,7 @@
 mod args;
 mod hopcount;
 mod ip_addresses;
+mod keyboard;
 mod latencywin;
 mod macros;
 mod pingdata;
@@ -18,11 +19,12 @@ mod utils;
 
 use crate::{
     args::MpConfig,
+    keyboard::key_event_handler,
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
     structs::AppState,
     tabulator::simple_tabulate,
-    tui::{TableRow, TerminalGuard, key_event_handler},
+    tui::{TableRow, TerminalGuard},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
 
