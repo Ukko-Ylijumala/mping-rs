@@ -4,7 +4,7 @@
 
 use crate::{
     strings::*,
-    structs::DEFAULT_PAYLOAD_SIZE,
+    structs::{DEFAULT_PAYLOAD_SIZE, MessageBuffer},
     utils::{parse_float_into_duration, parse_ip_addresses},
 };
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
@@ -164,6 +164,9 @@ pub(crate) struct MpConfig {
 
     #[arg(skip)]
     pub resolver: Option<Arc<TokioResolver>>,
+
+    #[arg(skip)]
+    pub buf: Arc<MessageBuffer>,
 }
 
 impl MpConfig {
@@ -171,6 +174,9 @@ impl MpConfig {
     pub async fn parse() -> Result<MpConfig, ResolveError> {
         let mut config: MpConfig = <MpConfig as Parser>::parse();
         config.ver = crate_version!().to_string();
+        config
+            .buf
+            .push(format!("mping v{} - starting initialization", config.ver));
 
         // clamp DNS timeout between 1 and 10 seconds
         config.dns_timeout = match config.dns_timeout {
@@ -185,10 +191,15 @@ impl MpConfig {
         let wants_default_opts: bool = config.dns_timeout == DEFAULT_DNS_TIMEOUT;
         let (resolver_config, resolver_opts) = {
             if wants_default_conf && wants_default_opts {
+                config.buf.push("Using system DNS configuration");
                 read_system_conf()? // use system defaults
             } else {
                 let mut res_opts = ResolverOpts::default();
                 if !wants_default_opts {
+                    config.buf.push(&format!(
+                        "Setting custom DNS timeout: {:.2}s",
+                        config.dns_timeout.as_secs_f64()
+                    ));
                     res_opts.timeout = config.dns_timeout;
                 }
                 let res_conf = match wants_default_conf {
@@ -196,11 +207,22 @@ impl MpConfig {
                         let (sys_conf, _) = read_system_conf()?;
                         sys_conf
                     }
-                    false => ResolverConfig::from_parts(
-                        None,
-                        vec![],
-                        NameServerConfigGroup::from_ips_clear(&config.dns_servers, 53, true),
-                    ),
+                    false => {
+                        config.buf.push(&format!(
+                            "Using custom DNS server(s): {}",
+                            config
+                                .dns_servers
+                                .iter()
+                                .map(|ip| ip.to_string())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        ));
+                        ResolverConfig::from_parts(
+                            None,
+                            vec![],
+                            NameServerConfigGroup::from_ips_clear(&config.dns_servers, 53, true),
+                        )
+                    }
                 };
                 (res_conf, res_opts)
             }
@@ -226,14 +248,20 @@ impl MpConfig {
                 match resolver.lookup_ip(name).await {
                     Ok(lookup) => {
                         let mut ips: Vec<IpAddr> = lookup.iter().collect();
-                        if config.verbose && !ips.is_empty() {
-                            eprintln!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len());
+                        if !ips.is_empty() {
+                            let msg = config
+                                .buf
+                                .push(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
+                            if config.verbose {
+                                eprintln!("{msg}");
+                            }
                         }
                         resolved.append(&mut ips);
                     }
                     Err(e) => {
+                        let msg = config.buf.push(format!("{ERR_RESOLVE} '{name}': {e}"));
                         if config.verbose {
-                            eprintln!("{ERR_RESOLVE} '{name}': {e}");
+                            eprintln!("{msg}");
                         }
                     }
                 }
@@ -244,8 +272,11 @@ impl MpConfig {
         if !resolved.is_empty() {
             // Remove duplicates by comparing against already parsed addresses.
             resolved.retain(|ip: &IpAddr| seen.insert(*ip));
+            let msg = config
+                .buf
+                .push(format!("{INFO_RESOLVED}: {}", resolved.len()));
             if config.verbose {
-                eprintln!("{INFO_RESOLVED}: {}", resolved.len());
+                eprintln!("{msg}");
             }
             addrs.append(&mut resolved);
         }
@@ -264,9 +295,15 @@ impl MpConfig {
         config.addrs = addrs;
         config.seen = seen;
         if config.addrs.is_empty() {
-            eprintln!("{WARN_NO_VALID_IPS}");
-        } else if config.verbose {
-            eprintln!("{INFO_UNIQUE}: {}", config.addrs.len());
+            let msg = config.buf.push(format!("{WARN_NO_VALID_IPS}"));
+            eprintln!("{msg}");
+        } else {
+            let msg = config
+                .buf
+                .push(format!("{INFO_UNIQUE}: {}", config.addrs.len()));
+            if config.verbose {
+                eprintln!("{msg}");
+            }
         }
 
         // clamp interval between 10ms and 10s...
@@ -290,13 +327,14 @@ impl MpConfig {
         */
         let limit: Duration = config.interval * 4; // max. 4 pending pings per target
         if config.timeout > limit {
+            let msg = config.buf.push(format!(
+                "{INFO_ADJUST} ({:.2}s -> {:.2}s, interval: {:.2}s)",
+                config.timeout.as_secs_f64(),
+                limit.as_secs_f64(),
+                config.interval.as_secs_f64(),
+            ));
             if config.verbose {
-                eprintln!(
-                    "{INFO_ADJUST} ({:.2}s -> {:.2}s, interval: {:.2}s)",
-                    config.timeout.as_secs_f64(),
-                    limit.as_secs_f64(),
-                    config.interval.as_secs_f64(),
-                );
+                eprintln!("{msg}");
             }
             config.timeout = limit;
         }
