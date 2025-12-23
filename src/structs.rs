@@ -394,6 +394,12 @@ impl Message {
             msg: msg.into(),
         }
     }
+
+    /// Return the message as a timestamped string.
+    #[inline]
+    pub fn as_timestamped(&self) -> String {
+        format!("{} {}", self.when, self.msg)
+    }
 }
 
 impl Deref for Message {
@@ -406,7 +412,7 @@ impl Deref for Message {
 
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} | {}", self.when, self.msg)
+        write!(f, "{} {}", self.when, self.msg)
     }
 }
 
@@ -428,14 +434,20 @@ impl MessageBuffer {
         }
     }
 
-    /// Add a new message to the buffer and return a copy of it.
-    pub fn push(&self, msg: impl Into<String>) -> Message {
-        let msg = Message::new(msg);
+    /// Internal - add a new message to the buffer.
+    #[inline]
+    fn add(&self, msg: &Message) {
         let mut buf = self.buf.write();
         if buf.len() >= self.cap {
             buf.pop_front();
         }
         buf.push_back(msg.clone());
+    }
+
+    /// Add a new message to the buffer and return a copy of it.
+    pub fn push(&self, msg: impl Into<String>) -> Message {
+        let msg = Message::new(msg);
+        self.add(&msg);
         msg
     }
 
@@ -457,12 +469,19 @@ impl MessageBuffer {
         self.cloned().into_iter()
     }
 
+    /// Convert all messages to strings without timestamps.
     pub fn to_strings(&self) -> Vec<String> {
-        self.with(|msgs| msgs.iter().map(|m| m.msg.to_string()).collect())
+        self.with(|msgs| msgs.iter().map(|m| m.to_string()).collect())
     }
 
+    /// Convert all messages to timestamped strings.
+    pub fn to_timestamped(&self) -> Vec<String> {
+        self.with(|msgs| msgs.iter().map(|m| m.as_timestamped()).collect())
+    }
+
+    /// Convert all messages (with timestamps) to a [Paragraph] for displaying with Ratatui.
     pub fn to_paragraph(&self) -> Paragraph<'_> {
-        Paragraph::new(self.to_strings().join("\n"))
+        Paragraph::new(self.to_timestamped().join("\n"))
     }
 }
 
@@ -478,5 +497,41 @@ impl Clone for MessageBuffer {
 impl Default for MessageBuffer {
     fn default() -> Self {
         Self::new(1024)
+    }
+}
+
+/* ---------------------------------------- */
+
+/// A simple logger trait for logging messages and retrieving them.
+pub trait Logger {
+    /// Log a simple string message with the logger. Also return
+    /// the full representation back to the caller for reuse.
+    fn log<S: AsRef<str>>(&self, msg: S) -> String;
+
+    /// Retrieve all logged messages as plain strings.
+    fn messages(&self) -> Vec<String>;
+
+    /// Retrieve all logged messages as timestamped strings.
+    fn timestamped(&self) -> Vec<String>;
+
+    /// The number of logged messages.
+    fn len(&self) -> usize;
+}
+
+impl Logger for MessageBuffer {
+    fn log<S: AsRef<str>>(&self, msg: S) -> String {
+        self.push(msg.as_ref()).as_timestamped()
+    }
+
+    fn messages(&self) -> Vec<String> {
+        self.to_strings()
+    }
+
+    fn timestamped(&self) -> Vec<String> {
+        self.to_timestamped()
+    }
+
+    fn len(&self) -> usize {
+        self.len()
     }
 }
