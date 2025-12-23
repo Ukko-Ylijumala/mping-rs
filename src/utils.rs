@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{ip_addresses::parse_ip_or_range, strings::*};
+use crate::{ip_addresses::parse_ip_or_range, strings::*, structs::Logger};
 use itertools::Itertools;
 use signal_hook::{
     consts::signal::{SIGINT, SIGQUIT, SIGTERM},
@@ -103,11 +103,15 @@ Removes duplicates and preserves order of first occurrence.
 - Set of seen IP addresses (so that the caller doesn't need to re-derive it)
 - Set of strings that failed to parse
 */
-pub fn parse_ip_addresses(
+pub fn parse_ip_addresses<T>(
     targets: &[String],
     exclude: Option<&[String]>,
     verbose: bool,
-) -> (Vec<IpAddr>, HashSet<IpAddr>, HashSet<String>) {
+    logger: &T,
+) -> (Vec<IpAddr>, HashSet<IpAddr>, HashSet<String>)
+where
+    T: Logger,
+{
     let mut all_addrs: Vec<IpAddr> = Vec::new();
     let mut seen: HashSet<IpAddr> = HashSet::new();
     let mut failed: HashSet<String> = HashSet::new();
@@ -116,14 +120,18 @@ pub fn parse_ip_addresses(
     for target in targets {
         match parse_ip_or_range(target) {
             Ok(mut ips) => {
-                if verbose && ips.len() > 1 {
-                    eprintln!("{INFO_EXPANDED} '{target}': {}", ips.len());
+                if ips.len() > 1 {
+                    let msg = logger.log(format!("{INFO_EXPANDED} '{target}': {}", ips.len()));
+                    if verbose {
+                        eprintln!("{msg}");
+                    }
                 }
                 all_addrs.append(&mut ips);
             }
             Err(e) => {
+                let msg = logger.log(format!("{ERR_PARSE_IP} '{target}': {e}"));
                 if verbose {
-                    eprintln!("{ERR_PARSE_IP} '{target}': {e}");
+                    eprintln!("{msg}");
                 }
                 failed.insert(target.clone());
             }
@@ -140,14 +148,21 @@ pub fn parse_ip_addresses(
         for exc in exclude {
             match parse_ip_or_range(exc) {
                 Ok(mut ips) => {
-                    if verbose && ips.len() > 1 {
-                        eprintln!("{INFO_EXPANDED} '{exc}': {} (exclusion)", ips.len());
+                    if ips.len() > 1 {
+                        let msg = logger.log(format!(
+                            "{INFO_EXPANDED} '{exc}': {} (exclusion)",
+                            ips.len()
+                        ));
+                        if verbose {
+                            eprintln!("{msg}");
+                        }
                     }
                     exclusions.extend(ips.drain(..));
                 }
                 Err(e) => {
+                    let msg = logger.log(format!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}"));
                     if verbose {
-                        eprintln!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}");
+                        eprintln!("{msg}");
                     }
                 }
             }
@@ -158,12 +173,16 @@ pub fn parse_ip_addresses(
             // let's see if we actually exclude anything
             let remainder: HashSet<IpAddr> = &seen - &exclusions;
             if remainder == seen {
-                eprintln!("{WARN_NO_MATCHES}");
+                logger.log(WARN_NO_MATCHES);
             } else if remainder.is_empty() {
-                eprintln!("{WARN_ALL_EXCLUDED}");
+                logger.log(WARN_ALL_EXCLUDED);
             } else {
+                let msg = logger.log(format!(
+                    "{INFO_EXCLUDE}: {}",
+                    (seen.len() - remainder.len())
+                ));
                 if verbose {
-                    eprintln!("{INFO_EXCLUDE}: {}", (seen.len() - remainder.len()));
+                    eprintln!("{msg}");
                 }
                 all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
             }

@@ -238,8 +238,12 @@ impl MpConfig {
         );
 
         // Parse the addresses which are straight up IPs/ranges first.
-        let (mut addrs, mut seen, failed) =
-            parse_ip_addresses(&config.targets, Some(&config.exclude), config.verbose);
+        let (mut addrs, mut seen, failed) = parse_ip_addresses(
+            &config.targets,
+            Some(&config.exclude),
+            config.verbose,
+            &*config.buf,
+        );
 
         // Now try to resolve any entries that failed to parse as IPs.
         let mut resolved: Vec<IpAddr> = Vec::with_capacity(failed.len()); // assume all would resolve 1:1
