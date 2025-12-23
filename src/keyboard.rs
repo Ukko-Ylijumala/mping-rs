@@ -7,14 +7,8 @@ use crate::{
     structs::{AppState, PopupContents},
     tabulator::simple_tabulate,
 };
-use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
-};
-use std::{
-    io::Result,
-    sync::Arc,
-    time::Duration,
-};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use std::{io::Result, sync::Arc, time::Duration};
 
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
 
@@ -151,6 +145,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     app.toggle_perf();
                 }
 
+                // Show/hide the help popup
                 (KeyCode::Char('h') | KeyCode::F(1), _) => {
                     let mut lo = app.layout.write();
                     match lo.popup_visible {
@@ -159,6 +154,24 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                             *app.popup_contents.write() = Some(PopupContents::Table(
                                 simple_tabulate(HELP_KEYS, Some(&["Key(s)", "Action"])),
                             ));
+                            lo.popup_visible = true;
+                        }
+                        true => {
+                            // hide popup
+                            *app.popup_contents.write() = None;
+                            lo.popup_visible = false;
+                        }
+                    }
+                }
+
+                // Show/hide the log message buffer
+                (KeyCode::F(12), _) => {
+                    let mut lo = app.layout.write();
+                    match lo.popup_visible {
+                        false => {
+                            // show help popup
+                            *app.popup_contents.write() =
+                                Some(PopupContents::Buffer(app.logger.clone()));
                             lo.popup_visible = true;
                         }
                         true => {
