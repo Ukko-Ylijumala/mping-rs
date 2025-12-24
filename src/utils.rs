@@ -101,6 +101,7 @@ Removes duplicates and preserves order of first occurrence.
 ### Returns a tuple of:
 - Vec of parsed IP addresses
 - Set of seen IP addresses (so that the caller doesn't need to re-derive it)
+- Set of excluded IP addresses (parsed)
 - Set of strings that failed to parse
 */
 pub fn parse_ip_addresses<T>(
@@ -108,7 +109,12 @@ pub fn parse_ip_addresses<T>(
     exclude: Option<&[String]>,
     verbose: bool,
     logger: &T,
-) -> (Vec<IpAddr>, HashSet<IpAddr>, HashSet<String>)
+) -> (
+    Vec<IpAddr>,
+    HashSet<IpAddr>,
+    HashSet<IpAddr>,
+    HashSet<String>,
+)
 where
     T: Logger,
 {
@@ -142,9 +148,8 @@ where
     all_addrs.retain(|ip: &IpAddr| seen.insert(*ip));
 
     // Parse exclusions and expand them into individual IPs
+    let mut exclusions: HashSet<IpAddr> = HashSet::new();
     if let Some(exclude) = exclude {
-        let mut exclusions: HashSet<IpAddr> = HashSet::new();
-
         for exc in exclude {
             match parse_ip_or_range(exc) {
                 Ok(mut ips) => {
@@ -189,7 +194,7 @@ where
         };
     }
 
-    (all_addrs, seen, failed)
+    (all_addrs, seen, exclusions, failed)
 }
 
 /// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).
