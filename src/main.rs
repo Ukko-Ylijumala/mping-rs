@@ -470,15 +470,25 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     frame.render_widget(w_info_lower, layout.info_lower);
     frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
 
-    // Render popup if visible and has contents
+    ////////// Render popup if visible and has contents //////////
     if layout.popup_visible {
-        if let Some(popup) = &*state.popup_contents.read() {
+        let contents = &*state.popup_contents.read();
+        if !contents.is_empty() {
             frame.render_widget(Clear, layout.popup);
             frame.render_widget(
-                popup.to_para().block(block.padding(Padding::horizontal(1))),
+                contents.to_para().block(block.clone().padding(Padding::horizontal(1))),
                 layout.popup,
             );
         }
+    }
+
+    ////////// Render help popup if visible //////////
+    if layout.help_visible {
+        frame.render_widget(Clear, layout.help);
+        frame.render_widget(
+            state.help_contents.to_para().block(block.padding(Padding::horizontal(1))),
+            layout.help,
+        );
     }
 }
 

@@ -102,6 +102,8 @@ pub(crate) struct AppLayout {
     pub status_l: Rect,
     /// Status bar area - bottom line - right side (process info)
     pub status_r: Rect,
+    /// Popup area for help text
+    pub help: Rect,
     /// Popup area for multiline text etc
     pub popup: Rect,
     /// Input area for text input etc
@@ -114,6 +116,7 @@ pub(crate) struct AppLayout {
     pub tbl_constraints: Vec<Constraint>,
     /// Stateful table state for managing selection, scrolling, etc.
     pub tablestate: TableState,
+    pub help_visible: bool,
     pub popup_visible: bool,
     pub input_visible: bool,
     tbl_width: u16,
@@ -193,12 +196,19 @@ impl AppLayout {
             .split(status);
             (status[0], status[1])
         };
-        // centered popup area (50% width/height)
-        let popup: Rect = Rect {
+        // centered help popup area (50% width/height)
+        let help: Rect = Rect {
             x: frame.x + frame.width / 4,
             y: frame.y + frame.height / 4,
             width: frame.width / 2,
             height: frame.height / 2,
+        };
+        // centered popup area (75% width/height)
+        let popup: Rect = Rect {
+            x: frame.x + frame.width / 8,
+            y: frame.y + frame.height / 8,
+            width: frame.width * 3 / 4,
+            height: frame.height * 3 / 4,
         };
         // centered input area (30% width, 5 lines height)
         let input: Rect = Rect {
@@ -219,6 +229,7 @@ impl AppLayout {
         self.info_lower = info_lower;
         self.status_l = status_l;
         self.status_r = status_r;
+        self.help = help;
         self.popup = popup;
         self.input = input;
     }

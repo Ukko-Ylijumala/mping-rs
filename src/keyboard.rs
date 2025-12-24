@@ -2,11 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{
-    strings::*,
-    structs::{AppState, PopupContents},
-    tabulator::simple_tabulate,
-};
+use crate::structs::{AppState, PopupContents};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::{io::Result, sync::Arc, time::Duration};
 
@@ -148,18 +144,14 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 // Show/hide the help popup
                 (KeyCode::Char('h') | KeyCode::F(1), _) => {
                     let mut lo = app.layout.write();
-                    match lo.popup_visible {
+                    match lo.help_visible {
                         false => {
                             // show help popup
-                            *app.popup_contents.write() = Some(PopupContents::Table(
-                                simple_tabulate(HELP_KEYS, Some(&["Key(s)", "Action"])),
-                            ));
-                            lo.popup_visible = true;
+                            lo.help_visible = true;
                         }
                         true => {
                             // hide popup
-                            *app.popup_contents.write() = None;
-                            lo.popup_visible = false;
+                            lo.help_visible = false;
                         }
                     }
                 }
@@ -170,13 +162,12 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     match lo.popup_visible {
                         false => {
                             // show help popup
-                            *app.popup_contents.write() =
-                                Some(PopupContents::Buffer(app.logger.clone()));
+                            *app.popup_contents.write() = PopupContents::Buffer(app.logger.clone());
                             lo.popup_visible = true;
                         }
                         true => {
                             // hide popup
-                            *app.popup_contents.write() = None;
+                            *app.popup_contents.write() = PopupContents::None;
                             lo.popup_visible = false;
                         }
                     }

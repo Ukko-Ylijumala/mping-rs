@@ -5,7 +5,8 @@
 use crate::{
     args::MpConfig,
     pingdata::PingTarget,
-    strings::{APP_TITLE, HEADERS},
+    strings::{APP_TITLE, HEADERS, HELP_KEYS},
+    tabulator::simple_tabulate,
     tui::{AppLayout, MutableLine, TableRow},
     utils::nice_permission_error,
 };
@@ -65,7 +66,8 @@ pub(crate) struct AppState {
     pub key_event: Notify,
     /// Status line is the last line at the bottom left-side of the UI.
     pub status_line: MutableLine<'static>,
-    pub popup_contents: RwLock<Option<PopupContents>>,
+    pub help_contents: PopupContents,
+    pub popup_contents: RwLock<PopupContents>,
     pub resolver: Arc<TokioResolver>,
     pub logger: Arc<MessageBuffer>,
     pub distance_stretch_factor: f64,
@@ -126,13 +128,17 @@ impl AppState {
             internal_tick: Duration::from_millis(100).min(conf.interval),
             key_event: Notify::new(),
             status_line: MutableLine::new_from(""),
-            popup_contents: None.into(),
             resolver: conf.resolver.as_ref().unwrap().clone(),
             logger: conf.buf.clone(),
             distance_stretch_factor: conf.stretch_factor,
             runtime: tokio::runtime::Handle::current(),
             spawned_tasks: AtomicU64::new(0),
             perf: conf.perf.into(),
+            popup_contents: PopupContents::None.into(),
+            help_contents: PopupContents::Table(simple_tabulate(
+                HELP_KEYS,
+                Some(&["Key(s)", "Action"]),
+            )),
         }
     }
 
@@ -319,12 +325,14 @@ impl AppState {
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Contents for popup dialog in the UI.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) enum PopupContents {
     Table(Vec<String>),
     Paragraph(String),
     Line(String),
     Buffer(Arc<MessageBuffer>),
+    #[default]
+    None,
 }
 
 impl PopupContents {
@@ -333,20 +341,23 @@ impl PopupContents {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
             PopupContents::Table(s) => Paragraph::new(s.join("\n")),
             PopupContents::Buffer(buf) => buf.to_paragraph(),
+            PopupContents::None => Paragraph::new(""),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, PopupContents::None)
     }
 }
 
 /**
 This enum encodes whether a popup is visible and what type it is, if so.
-Other code can use this to determine what to do when, e.g., the user presses
-the help key while a different popup is already visible.
+Other code can use this to determine what to do when a different popup is already visible.
 */
 #[derive(Default, Debug, Clone)]
 pub(crate) enum PopupState {
     #[default]
     Hidden,
-    HelpVisible,
     MsgBufferVisible,
 }
 
