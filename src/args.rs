@@ -238,7 +238,7 @@ impl MpConfig {
         );
 
         // Parse the addresses which are straight up IPs/ranges first.
-        let (mut addrs, mut seen, failed) = parse_ip_addresses(
+        let (mut addrs, mut seen, excl, failed) = parse_ip_addresses(
             &config.targets,
             Some(&config.exclude),
             config.verbose,
@@ -290,7 +290,7 @@ impl MpConfig {
         {
             assert_eq!(
                 HashSet::from_iter(addrs.iter().cloned()),
-                seen,
+                &seen - &excl,
                 "\"seen\" set does not match parsed addresses! Fix da code, ya dumbass!"
             );
         }
