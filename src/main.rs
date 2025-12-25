@@ -314,10 +314,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         .tablestate
         .selected()
         // TableState::selected can return an out-of-bounds index, so clamp it here.
-        .and_then(|i: usize| tgts.get(i.min(num_tgts - 1)));
+        .and_then(|i: usize| tgts.get(i.min(num_tgts.saturating_sub(1))));
 
     ////////// Border blocks with titles //////////
     let block = Block::bordered();
+    let b_pad = block.clone().padding(Padding::horizontal(1));
     let b_tbl = block
         .clone()
         .title_bottom(Line::from(format!(" Targets: {} ", num_tgts)));
@@ -426,17 +427,6 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     ))
     .block(Block::new().padding(Padding::left(1)));
 
-    ////////// Data table //////////
-    let w_table = Table::new(
-        data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
-        &layout.tbl_constraints,
-    )
-    .header((&state.headers).into())
-    .column_spacing(layout.tbl_colspacing)
-    .block(b_tbl)
-    .row_highlight_style(Style::new().reversed())
-    .column_highlight_style(Style::new().bg(Color::Indexed(240)));
-
     ////////// CPU & process info - bottom line, right side //////////
     let w_procinfo = Line::from(format!(
         "CPU: {:>7} | mem: {} | pid: {} ",
@@ -460,10 +450,25 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         false => format!(" {APP_RUNNING}"),
     });
 
+    ////////// Data table //////////
+    if num_tgts == 0 {
+        frame.render_widget(Paragraph::new(" No targets.").block(b_tbl), layout.table);
+    } else {
+        let w_table = Table::new(
+            data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
+            &layout.tbl_constraints,
+        )
+        .header((&state.headers).into())
+        .column_spacing(layout.tbl_colspacing)
+        .block(b_tbl)
+        .row_highlight_style(Style::new().reversed())
+        .column_highlight_style(Style::new().bg(Color::Indexed(240)));
+        frame.render_stateful_widget(w_table, layout.table, &mut layout.tablestate);
+    }
+
     // Render all components. Order matters for layering; later ones overwrite earlier ones,
     // faking z-index behavior even though we're not working with "real" windows.
     frame.render_widget(&state.title, layout.title);
-    frame.render_stateful_widget(w_table, layout.table, &mut layout.tablestate);
     frame.render_widget(w_procinfo, layout.status_r);
     // NOTE: we're writing to `info_upper` instead of `i_upper_text` to get the border around it all.
     frame.render_widget(w_info_upper, layout.info_upper);
@@ -474,21 +479,17 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     if layout.popup_visible {
         let contents = &*state.popup_contents.read();
         if !contents.is_empty() {
+            let w_popup = contents.to_para().block(b_pad.clone());
             frame.render_widget(Clear, layout.popup);
-            frame.render_widget(
-                contents.to_para().block(block.clone().padding(Padding::horizontal(1))),
-                layout.popup,
-            );
+            frame.render_widget(w_popup, layout.popup);
         }
     }
 
     ////////// Render help popup if visible //////////
     if layout.help_visible {
+        let w_help = state.help_contents.to_para().block(b_pad);
         frame.render_widget(Clear, layout.help);
-        frame.render_widget(
-            state.help_contents.to_para().block(block.padding(Padding::horizontal(1))),
-            layout.help,
-        );
+        frame.render_widget(w_help, layout.help);
     }
 }
 

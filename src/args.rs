@@ -32,7 +32,7 @@ static DEFAULT_PAYLOAD_STR: LazyLock<&'static str> =
 #[derive(Parser, Default, Debug, Clone)]
 #[command(name = crate_name!(), version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 pub(crate) struct MpConfig {
-    #[arg(required = true, value_name = "IP1 [IP2...]", help = HELP_TARGETS)]
+    #[arg(value_name = "IP1 [IP2...]", help = HELP_TARGETS)]
     pub targets: Vec<String>,
 
     #[arg(
