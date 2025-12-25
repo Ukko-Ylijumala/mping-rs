@@ -74,7 +74,22 @@ Either run it with sudo, or grant the capability to the binary:
 pub static INFO_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs system-wide (less secure):
     sudo sysctl -w net.ipv4.ping_group_range=\"<start> <end>\"\n";
 
+// structs.rs
+pub static INFO_PERF: &str = "performance mode {}";
+pub static INFO_NEW: &str = "{} new target(s) added ({} -> {})";
+pub static INFO_PING: &str = "pinging for '{}' {}";
+pub static INFO_P_ALL: &str = "pausing all targets";
+pub static INFO_R_ALL: &str = "resuming all targets";
+pub static INFO_UPD: &str = "*** updating info for '{}' ***";
+pub static INFO_HOPS: &str = "updated hops for '{}' in {}ms";
+pub static INFO_PTR: &str = "resolved PTR for '{}' in {}ms";
+pub static INFO_RESET: &str = "resetting statistics for '{}'";
+pub static INFO_STOP: &str = "stopping '{}'";
+pub static INFO_REMOVE: &str = "removing '{}'";
+pub static INFO_UNR_REM: &str = "removed {} unreachable target(s) in {}ms ({} -> {})";
+
 // App keybindings help text
+pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
 pub static HELP_KEYS: [[&str; 2]; 17] = [
     ["q, CTRL-C",      "Quit the program"],
     ["h, F1",          "Show/hide this help screen"],
