@@ -14,7 +14,7 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use std::{
     collections::VecDeque,
-    fmt::Display,
+    fmt,
     net::IpAddr,
     ops::Index,
     sync::{
@@ -52,8 +52,8 @@ pub(crate) enum PingStatus {
     None,
 }
 
-impl Display for PingStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for PingStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PingStatus::Ok => write!(f, "OK"),
             PingStatus::Timeout => write!(f, "timeout"),
@@ -577,6 +577,12 @@ impl PingTarget {
             }
             _ => MISSING.to_string(),
         }
+    }
+}
+
+impl fmt::Display for PingTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.addr)
     }
 }
 
