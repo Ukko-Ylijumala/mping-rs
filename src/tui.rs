@@ -108,8 +108,6 @@ pub(crate) struct AppLayout {
     pub popup: Rect,
     /// Input area for text input etc
     pub input: Rect,
-    /// Precomputed visible widths of table headers
-    pub tbl_hdr_widths: Vec<usize>,
     /// Spacing between table columns
     pub tbl_colspacing: u16,
     /// Current column width [Constraint]s
@@ -119,10 +117,45 @@ pub(crate) struct AppLayout {
     pub help_visible: bool,
     pub popup_visible: bool,
     pub input_visible: bool,
+    /// Middle area - not directly accessible, split into table and info
+    middle: Rect,
+    /// Info area - not directly accessible, split into upper and lower
+    info: Rect,
+    /// Status line area - not directly accessible, split into left and right
+    status: Rect,
+    /// Precomputed visible widths of table headers
+    tbl_hdr_widths: Vec<usize>,
+    /// Current total table width (without spacing)
     tbl_width: u16,
+    help_rows: u16,
+    help_cols: u16,
 }
 
 impl AppLayout {
+    /// Set table column spacing.
+    #[must_use = "builder pattern"]
+    pub fn spacing(self, spacing: u16) -> Self {
+        Self {
+            tbl_colspacing: spacing,
+            ..self
+        }
+    }
+
+    /// Set table header widths.
+    #[must_use = "builder pattern"]
+    pub fn widths(self, widths: Vec<usize>) -> Self {
+        Self {
+            tbl_hdr_widths: widths,
+            ..self
+        }
+    }
+
+    /// Setup the initial help area with given rows and columns.
+    pub fn setup_help_area(&mut self, rows: u16, cols: u16) {
+        self.help_rows = rows + 2; // box
+        self.help_cols = cols + 4; // box + margins
+    }
+
     /**
     Update the layout based on the full frame area (if it has changed),
     and the table size (if needed).
@@ -130,22 +163,26 @@ impl AppLayout {
     Updated column [Constraint]s are available afterwards in `tbl_constraints`.
     */
     pub fn maybe_update(&mut self, frame: Rect, data: &[TableRow]) {
-        // No need to recalculate if frame size and table size are unchanged
         let tbl_width: u16 = self.update_col_widths(data);
-        if frame == self.frame && tbl_width == self.tbl_width {
-            return;
-        };
-        self.update(frame, tbl_width);
+
+        if frame != self.frame {
+            // must recalculate all if frame size has changed
+            self.update(frame);
+        } else if tbl_width != self.tbl_width {
+            // Ensure the table area does not shrink from its previous size.
+            // Constant resizes are annoying and distracting.
+            self.tbl_width = self.tbl_width.max(tbl_width);
+
+            // update table and info areas since table width changed
+            self.update_middle();
+            self.update_info_areas();
+        }
     }
 
-    /// Recalculate the layout areas regardless of if it's needed or not.
-    pub fn update(&mut self, frame: Rect, table_width: u16) {
-        // Ensure the table area does not shrink from its previous size.
-        // Constant resizes are annoying and distracting.
-        self.tbl_width = self.tbl_width.max(table_width);
-
+    /// Update top-level areas (title line, middle area, status line).
+    fn update_main_areas(&mut self, frame: Rect) {
         // Create vertical layout
-        let (title, middle, status) = {
+        (self.title, self.middle, self.status) = {
             let full = Layout::vertical([
                 Constraint::Length(1), // title - 1 line
                 Constraint::Min(1),    // table
@@ -155,83 +192,92 @@ impl AppLayout {
             (full[0], full[1], full[2])
         };
 
+        // Store the current frame for future comparisons
+        self.frame = frame;
+    }
+
+    /// Split status line between left and right parts.
+    fn update_status_line(&mut self) {
+        // split status into left and right sides
+        (self.status_l, self.status_r) = {
+            let status = Layout::horizontal([
+                Constraint::Fill(1), // left side
+                Constraint::Min(43), // right side (process info)
+            ])
+            .split(self.status);
+            (status[0], status[1])
+        };
+    }
+
+    /// Update middle area (contains table + info areas).
+    #[inline]
+    fn update_middle(&mut self) {
         // split middle into table and info areas with table size being fixed
         let spacing: u16 = self.tbl_colspacing * (self.tbl_hdr_widths.len() as u16 - 1);
-        let (table, info) = {
+        (self.table, self.info) = {
             let middle = Layout::horizontal([
                 Constraint::Max(self.tbl_width + spacing + TBL_WASTED_COLS), // table + borders
                 Constraint::Fill(1),                                         // info
             ])
-            .split(middle);
+            .split(self.middle);
             (middle[0], middle[1])
         };
+    }
 
+    /// Update info areas (nested in `self.info`).
+    #[inline]
+    fn update_info_areas(&mut self) {
         // split info into upper and lower parts
-        let (info_upper, info_lower) = {
+        (self.info_upper, self.info_lower) = {
             let info = Layout::vertical([
                 Constraint::Fill(1),   // upper info
                 Constraint::Length(5), // lower info
             ])
-            .split(info);
+            .split(self.info);
             (info[0], info[1])
         };
 
-        // Split info_upper into [info_top, graph, hist] areas
-        let (info_top, graph_area, hist_area) = {
+        // Split info_upper into [text, graph, hist] areas
+        (self.i_upper_text, self.i_upper_graph, self.i_upper_histo) = {
             let info_split = Layout::vertical([
                 Constraint::Length(7),
                 Constraint::Length(20),
                 Constraint::Length(11),
             ])
-            .split(info_upper);
+            .split(self.info_upper);
             (info_split[0], info_split[1], info_split[2])
         };
+    }
 
-        // split status into left and right sides
-        let (status_l, status_r) = {
-            let status = Layout::horizontal([
-                Constraint::Fill(1), // left side
-                Constraint::Min(43), // right side (process info)
-            ])
-            .split(status);
-            (status[0], status[1])
-        };
-        // centered help popup area (50% width/height)
-        let help: Rect = Rect {
-            x: frame.x + frame.width / 4,
-            y: frame.y + frame.height / 4,
-            width: frame.width / 2,
-            height: frame.height / 2,
-        };
+    /// Update popup and input areas (based on current full frame size).
+    fn update_popup_areas(&mut self) {
+        // centered help popup area
+        self.help.x = self.frame.width.saturating_sub(self.help_cols) / 2;
+        self.help.y = self.frame.height.saturating_sub(self.help_rows) / 2;
+        self.help.width = self.help_cols.min(self.frame.width); // if this is larger than frame, Ratatui will panic
+        self.help.height = self.help_rows.min(self.frame.height); // ditto
+
         // centered popup area (75% width/height)
-        let popup: Rect = Rect {
-            x: frame.x + frame.width / 8,
-            y: frame.y + frame.height / 8,
-            width: frame.width * 3 / 4,
-            height: frame.height * 3 / 4,
-        };
-        // centered input area (30% width, 5 lines height)
-        let input: Rect = Rect {
-            x: frame.x + frame.width * 35 / 100,
-            y: frame.y + frame.height / 2 - 1,
-            width: frame.width * 30 / 100,
-            height: 5,
-        };
+        self.popup.x = self.frame.width / 8;
+        self.popup.y = self.frame.height / 8;
+        self.popup.width = self.frame.width * 3 / 4;
+        self.popup.height = self.frame.height * 3 / 4;
 
-        // Update layout rectangles
-        self.frame = frame;
-        self.title = title;
-        self.table = table;
-        self.info_upper = info_upper;
-        self.i_upper_text = info_top;
-        self.i_upper_graph = graph_area;
-        self.i_upper_histo = hist_area;
-        self.info_lower = info_lower;
-        self.status_l = status_l;
-        self.status_r = status_r;
-        self.help = help;
-        self.popup = popup;
-        self.input = input;
+        // centered input area (30% width, 5 lines height)
+        self.input.x = self.frame.width * 35 / 100;
+        self.input.y = self.frame.height / 2 - 1;
+        self.input.width = self.frame.width * 30 / 100;
+        self.input.height = 5;
+    }
+
+    /// Recalculate the layout areas regardless of if it's needed or not.
+    pub fn update(&mut self, frame: Rect) {
+        // update main areas first
+        self.update_main_areas(frame);
+        self.update_status_line();
+        self.update_middle();
+        self.update_info_areas();
+        self.update_popup_areas();
     }
 
     /// Get the number of usable rows in the table area (excluding borders and header).

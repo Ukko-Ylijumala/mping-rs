@@ -101,9 +101,12 @@ impl AppState {
         }
 
         // update layout info with header widths and column spacing
-        let mut layout: AppLayout = AppLayout::default();
-        layout.tbl_hdr_widths = headers.widths();
-        layout.tbl_colspacing = 2;
+        let mut layout: AppLayout = AppLayout::default().widths(headers.widths()).spacing(2);
+
+        // prepare help contents and update layout accordingly
+        let help: Vec<String> = simple_tabulate(HELP_KEYS, Some(&HELP_HDRS));
+        let max_width: usize = help.iter().map(|s| s.len()).max().unwrap();
+        layout.setup_help_area(help.len() as u16, max_width as u16);
 
         Self {
             pi: ProcessInfo::new().with_min_interval(PROCINFO_INTERVAL),
@@ -135,7 +138,7 @@ impl AppState {
             spawned_tasks: AtomicU64::new(0),
             perf: conf.perf.into(),
             popup_contents: PopupContents::None.into(),
-            help_contents: PopupContents::Table(simple_tabulate(HELP_KEYS, Some(&HELP_HDRS))),
+            help_contents: PopupContents::Table(help),
         }
     }
 
