@@ -116,6 +116,8 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                             if app.remove_all_unreachables() > 0 {
                                 // clear row selection after removal
                                 lo.tablestate.select(None);
+                                // reset table width since it could be compressed
+                                lo.reset_table_widths();
                             }
                         }
                         // Stop and remove the selected target
@@ -130,6 +132,8 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                                 } else if idx == len - 1 {
                                     lo.tablestate.select(Some(idx.saturating_sub(1)));
                                 }
+
+                                lo.reset_table_widths();
                             }
                         }
                         _ => {}

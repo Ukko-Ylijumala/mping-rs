@@ -156,6 +156,20 @@ impl AppLayout {
         self.help_cols = cols + 4; // box + margins
     }
 
+    /// Reset the table widths to initial state (based on header widths).
+    pub fn reset_table_widths(&mut self) {
+        let mut sum_widths: usize = 0;
+        self.tbl_constraints = self
+            .tbl_hdr_widths
+            .iter()
+            .map(|w| {
+                sum_widths += w;
+                Constraint::Length(*w as u16)
+            })
+            .collect();
+        self.tbl_width = sum_widths as u16;
+    }
+
     /**
     Update the layout based on the full frame area (if it has changed),
     and the table size (if needed).
@@ -307,7 +321,7 @@ impl AppLayout {
         self.tbl_constraints = widths
             .iter()
             .map(|w| {
-                sum_widths += *w;
+                sum_widths += w;
                 Constraint::Length(*w as u16)
             })
             .collect();
