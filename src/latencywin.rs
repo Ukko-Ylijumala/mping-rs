@@ -24,12 +24,13 @@ The window capacity is clamped to a minimum of 3 samples to ensure
 statistical operations are meaningful.
 
 ## Numerical Considerations
-Variance is computed using the computational formula which is efficient
+Variance is computed using a computational formula which is efficient
 but may lose precision for extremely large values or very small variance.
 Suitable for typical (network) latency monitoring (µs to ms range).
 
 ## Example
 ```
+mod latencywin;
 use latencywin::LatencyWindow;
 
 let mut win = LatencyWindow::new(100);
@@ -108,8 +109,8 @@ impl LatencyWindow {
             let len_f: f64 = self.len as f64;
             /*
             Due to floating-point rounding errors in the computational formula,
-            variance could become slightly negative (e.g. -1e-15),
-            even though mathematically it should not. Guard against that here.
+            variance could become slightly negative (e.g. -1e-15), even though
+            mathematically it should not. Guard against that here.
             */
             let mut variance: f64 = (self.sum_sq - (self.sum * self.sum / len_f)) / len_f;
             if variance < 0.0 {
@@ -234,10 +235,12 @@ impl LatencyWindow {
         Ok(self.sum / self.len as f64)
     }
 
-    /// Returns up to `n` most recent samples from the buffer as a Vec.
-    /// 
-    /// Number of samples returned may be less than `n` if fewer samples
-    /// in total are available.
+    /**
+    Returns up to `n` most recent samples from the buffer as a Vec.
+
+    Number of samples returned may be less than `n` if fewer samples
+    in total are available.
+    */
     pub fn recent_samples(&self, n: usize) -> Result<Vec<u32>, String> {
         self.no_samples_check()?;
         let count: usize = self.len.min(n);
@@ -321,6 +324,8 @@ pub fn sum_of_squares(data: &[u32], is_sample: bool) -> f64 {
         (x as f64 - mean).powf(2.0)
     }).sum::<f64>() / divisor
 }
+
+/* -------------------------------------------------------------------------- */
 
 #[cfg(test)]
 mod tests {

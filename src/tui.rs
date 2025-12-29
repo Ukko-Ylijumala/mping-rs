@@ -330,7 +330,7 @@ impl AppLayout {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// Mutable convenience line wrapper for Ratatui [Line]s. It allows
 /// in-place modification of the line content and styling.
@@ -429,7 +429,7 @@ impl fmt::Display for MutableLine<'_> {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// Single table item (think: [Cell]) with styling and constraints for Ratatui tables.
 #[derive(Debug, Default, Clone)]
@@ -598,7 +598,7 @@ impl Index<usize> for TableRow {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /**
 RAII guard object for TUI console using [ratatui] and [crossterm].

@@ -74,7 +74,8 @@ impl fmt::Display for PingStatus {
 pub(crate) struct PingTargetInner {
     pub sent: u64,
     pub recv: u64,
-    pub rtts: LatencyWindow, // RTTs in microseconds (rolling window)
+    /// RTTs in microseconds (rolling window)
+    pub rtts: LatencyWindow,
     /// Detailed history of recent sent/received packets
     pub recent: PacketHistory,
     /**
@@ -222,9 +223,11 @@ impl PingTarget {
         }
     }
 
-    /// Update statistics based on the result of a ping attempt and the associated packet record.
-    ///
-    /// NOTE: locks the inner `data` for writing.
+    /**
+    Update statistics based on the result of a ping attempt and the associated packet record.
+
+    NOTE: locks the inner `data` for writing.
+    */
     pub async fn update_stats(
         &self,
         res: Result<(IcmpPacket, Duration), SurgeError>,
@@ -265,9 +268,11 @@ impl PingTarget {
         self.hops.read().clone()
     }
 
-    /// Try to resolve the PTR record and the reverse of it for this target.
-    ///
-    /// NOTE: locks the fields `ptr` and `rev_ptr` for writing.
+    /**
+    Try to resolve the PTR record and the reverse of it for this target.
+
+    NOTE: locks the fields `ptr` and `rev_ptr` for writing.
+    */
     pub async fn resolve_ptr(&self, res: &Resolver<TokioConnectionProvider>) {
         // First, resolve PTR
         match res.reverse_lookup(self.addr).await {
@@ -319,23 +324,29 @@ impl PingTarget {
         }
     }
 
-    /// Get the last known PTR query response for this target, if any.
-    ///
-    /// NOTE: locks the field `ptr` for reading.
+    /**
+    Get the last known PTR query response for this target, if any.
+
+    NOTE: locks the field `ptr` for reading.
+    */
     pub fn ptr(&self) -> QueryResponse {
         self.ptr.read().clone()
     }
 
-    /// Get the last known reverse-of-PTR query response for this target, if any.
-    ///
-    /// NOTE: locks the field `rev_ptr` for reading.
+    /**
+    Get the last known reverse-of-PTR query response for this target, if any.
+
+    NOTE: locks the field `rev_ptr` for reading.
+    */
     pub fn rev_ptr(&self) -> QueryResponse {
         self.rev_ptr.read().clone()
     }
 
-    /// Reset all statistics for this target as if it was never pinged.
-    ///
-    /// NOTE: locks the inner `data` for writing.
+    /**
+    Reset all statistics for this target as if it was never pinged.
+
+    NOTE: locks the inner `data` for writing.
+    */
     pub fn reset_stats(&self) {
         let mut data = self.data.write();
         data.sent = 0;
@@ -353,9 +364,11 @@ impl PingTarget {
         self.paused.load(Ordering::Relaxed)
     }
 
-    /// Pause pinging for this target.
-    ///
-    /// NOTE: locks the inner `data` for writing.
+    /**
+    Pause pinging for this target.
+
+    NOTE: locks the inner `data` for writing.
+    */
     pub fn pause(&self) {
         if !self.is_stopped() && !self.is_paused() {
             self.paused.store(true, Ordering::Relaxed);
@@ -363,9 +376,11 @@ impl PingTarget {
         }
     }
 
-    /// Resume pinging for this target.
-    ///
-    /// NOTE: locks the inner `data` for writing.
+    /**
+    Resume pinging for this target.
+
+    NOTE: locks the inner `data` for writing.
+    */
     pub fn resume(&self) {
         if !self.is_stopped() && self.is_paused() {
             self.paused.store(false, Ordering::Relaxed);
@@ -373,9 +388,11 @@ impl PingTarget {
         }
     }
 
-    /// Toggle paused state for this target.
-    ///
-    /// NOTE: locks the inner `data` for writing.
+    /**
+    Toggle paused state for this target.
+
+    NOTE: locks the inner `data` for writing.
+    */
     pub fn toggle_pause(&self) {
         if !self.is_stopped() {
             let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
@@ -399,9 +416,11 @@ impl PingTarget {
         self.cancel.is_cancelled()
     }
 
-    /// Permanently stop pinging this target. Ping task will abort.
-    ///
-    /// NOTE: locks the inner `data` for writing.
+    /**
+    Permanently stop pinging this target. Ping task will abort.
+
+    NOTE: locks the inner `data` for writing.
+    */
     pub fn stop(&self) {
         self.cancel.cancel();
         self.data.write().raw_status = PingStatus::Stopped;
@@ -422,23 +441,29 @@ impl PingTarget {
         self.data.read().is_unreachable()
     }
 
-    /// Whether recent packet loss is above the default threshold.
-    ///
-    /// NOTE: locks the inner `data` for reading.
+    /**
+    Whether recent packet loss is above the default threshold.
+
+    NOTE: locks the inner `data` for reading.
+    */
     pub fn is_lossy(&self) -> bool {
         self.data.read().is_lossy(DEFAULT_WIN, LOSSY_THRESH)
     }
 
-    /// Whether recent packet history shows flappiness (frequent up/down transitions)
-    ///
-    /// NOTE: locks the inner `data` for reading.
+    /**
+    Whether recent packet history shows flappiness (frequent up/down transitions)
+
+    NOTE: locks the inner `data` for reading.
+    */
     pub fn is_flappy(&self) -> bool {
         self.data.read().is_flappy(DEFAULT_WIN, FLAP_THRESH)
     }
 
-    /// Whether recent RTTs are significantly above historical mean.
-    ///
-    /// NOTE: locks the inner `data` for reading.
+    /**
+    Whether recent RTTs are significantly above historical mean.
+
+    NOTE: locks the inner `data` for reading.
+    */
     pub fn is_laggy(&self) -> bool {
         match self.data.read().is_laggy(DEFAULT_WIN, LAGGY_FACTOR) {
             Ok(v) => v,
@@ -586,7 +611,7 @@ impl fmt::Display for PingTarget {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// Record for a single sent/received packet.
 #[derive(Debug, Clone)]
@@ -648,7 +673,7 @@ impl Default for PacketRecord {
     }
 }
 
-/* ---------------------------------------- */
+/* ---------------------------------- */
 
 /// Recent history of sent/received packets for a ping target.
 #[derive(Debug, Default, Clone)]
@@ -814,7 +839,7 @@ impl PacketHistory {
     }
 }
 
-/* ---------------------------------------- */
+/* ---------------------------------- */
 
 // Implement conversions, iterators and indexing for PacketHistory
 impl From<PacketHistory> for Vec<PacketRecord> {
@@ -855,7 +880,7 @@ impl Index<usize> for PacketHistory {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// Snapshot of recent detailed packet history statistics.
 #[derive(Debug)]
@@ -936,7 +961,7 @@ impl HistorySnapshot {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /**
 Snapshot of ping statistics at a point in time.

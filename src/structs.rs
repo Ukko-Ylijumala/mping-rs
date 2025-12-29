@@ -279,12 +279,14 @@ impl AppState {
             let tgt_ptr1 = tgt.clone();
             let tgt_ptr2 = tgt.clone();
             let resolver = self.resolver.clone();
-            // `determine_hops` is blocking, so spawn a thread for it to not block the caller.
-            //
-            // NOTE: we specifically can't use `tokio::spawn` here because `determine_hops`
-            // will eventually acquire a write lock to one/some of its fields, and there's a
-            // very good change that the caller will deadlock (or panic) on the same if it's
-            // scheduled in the same runtime thread.
+            /*
+            `determine_hops` is blocking, so spawn a thread for it to not block the caller.
+
+            NOTE: we specifically can't use `tokio::spawn` here because `determine_hops`
+            will eventually acquire a write lock to one/some of its fields, and there's a
+            very good change that the caller will deadlock (or panic) on the same if it's
+            scheduled in the same runtime thread.
+            */
             let logger = self.logger.clone();
             std::thread::spawn(move || {
                 let now: Instant = Instant::now();
@@ -297,9 +299,11 @@ impl AppState {
             });
             self.inc_spawned_tasks();
 
-            // Because this function can be called from the keyboard event handler thread
-            // (which is not inside the tokio runtime context), we must use the stored
-            // runtime handle to spawn the task, or we will panic that thread.
+            /*
+            Because this function can be called from the keyboard event handler thread
+            (which is not inside the tokio runtime context), we must use the stored
+            runtime handle to spawn the task, or we will panic that thread.
+            */
             let logger = self.logger.clone();
             self.runtime.spawn(async move {
                 let now: Instant = Instant::now();
@@ -377,7 +381,7 @@ impl AppState {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// Contents for popup dialog in the UI.
 #[derive(Debug, Default)]
@@ -416,7 +420,7 @@ pub(crate) enum PopupState {
     MsgBufferVisible,
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// An enum representing different types of remote query results.
 #[derive(Default, Debug, Clone)]
@@ -445,7 +449,7 @@ impl Display for QueryResponse {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Message {
@@ -482,7 +486,7 @@ impl Display for Message {
     }
 }
 
-/* ---------------------------------------- */
+/* ---------------------------------- */
 
 /// A fixed-size buffer for storing recent in-app (log) messages with timestamps.
 /// These can be displayed in a popup window in the UI if desired f.ex.
@@ -566,7 +570,7 @@ impl Default for MessageBuffer {
     }
 }
 
-/* ---------------------------------------- */
+/* ---------------------------------- */
 
 /// A simple logger trait for logging messages and retrieving them.
 pub trait Logger {

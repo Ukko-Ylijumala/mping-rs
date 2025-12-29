@@ -147,6 +147,8 @@ pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, Stri
     }
 }
 
+/* -------------------------------------------------------------------------- */
+
 #[cfg(test)]
 mod tests {
     use super::*;

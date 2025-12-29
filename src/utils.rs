@@ -92,6 +92,8 @@ pub fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
     }
 }
 
+/* -------------------------------------------------------------------------- */
+
 /**
 Parse and expand a list of space separated IPv4/v6 addresses
 (single, range, CIDR), taking exclusions into account if applicable.
@@ -215,7 +217,7 @@ pub fn reverse_name(addr: &IpAddr) -> String {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// A single histogram bucket for data distribution.
 #[derive(Debug, Clone)]

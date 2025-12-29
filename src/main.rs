@@ -42,7 +42,7 @@ use tokio::time::{self, Instant, Interval};
 const PAYLOAD_RND_BYTES: usize = 32;
 const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 /// Create [PingTarget] instances for each IP address.
 fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16, paused: bool) -> Vec<PingTarget> {
@@ -316,7 +316,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         // TableState::selected can return an out-of-bounds index, so clamp it here.
         .and_then(|i: usize| tgts.get(i.min(num_tgts.saturating_sub(1))));
 
-    ////////// Border blocks with titles //////////
+    /* -------- Border blocks with titles -------- */
     let block = Block::bordered();
     let b_pad = block.clone().padding(Padding::horizontal(1));
     let b_tbl = block
@@ -324,7 +324,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         .title_bottom(Line::from(templater!(INFO_TGTS, num_tgts)));
     let b_info_upper = block.clone().title_top(INFO_INFO);
 
-    ////////// Info areas //////////
+    /* -------- Info areas -------- */
     let w_info_upper = Paragraph::new(if let Some(t) = selected {
         templater!(
             INFO_TARGET,
@@ -340,7 +340,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     })
     .block(b_info_upper.clone());
 
-    ////////// Recent RTT graph and histogram for selected target. //////////
+    /* -------- Recent RTT graph and histogram for selected target. -------- */
     if let Some(target) = selected {
         let rtt_data: Vec<(f64, f64)> = target.get_recent_rtts(GRAPH_SAMPLES);
         // release targets read lock here, not needed anymore
@@ -418,7 +418,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         drop(tgts);
     }
 
-    ////////// Lower info area - bottom right corner //////////
+    /* -------- Lower info area - bottom right corner -------- */
     let w_info_lower = Paragraph::new(templater!(
         INFO_STATE,
         state.ping_interval.as_millis(),
@@ -429,7 +429,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     ))
     .block(Block::new().padding(Padding::left(1)));
 
-    ////////// CPU & process info - bottom line, right side //////////
+    /* -------- CPU & process info - bottom line, right side -------- */
     let w_procinfo = Line::from(templater!(
         INFO_CPU,
         format!("{:>7}", state.pi.cpu_str()),
@@ -438,7 +438,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     ))
     .alignment(Alignment::Right);
 
-    ////////// Status line - bottom line, left side //////////
+    /* -------- Status line - bottom line, left side -------- */
     state.status_line.replace(match state.debug {
         true => templater!(
             INFO_DEBUG,
@@ -452,7 +452,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         false => APP_RUNNING.into(),
     });
 
-    ////////// Data table //////////
+    /* -------- Data table -------- */
     if num_tgts == 0 {
         frame.render_widget(Paragraph::new(INFO_NO_TGTS).block(b_tbl), layout.table);
     } else {
@@ -467,13 +467,15 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         .column_highlight_style(Style::new().bg(Color::Indexed(240)));
         frame.render_stateful_widget(w_table, layout.table, &mut layout.tablestate);
 
-        // Render scrollbar if we have enough targets. Drawn over the right-side table border
-        // since we use `layout.table` and not `b_tbl.inner()` as the area (saves 1 column! :D).
-        // The scrollbar state is throwaway since there's no benefit to storing it in the layout:
-        // - the setters consume `self`, so we can't reuse the same instance anyway
-        // - doesn't support scrolling by N rows, which we need
-        // - would introduce more complexity in the keyboard handler
-        // - we already have the relevant info in the table state
+        /*
+        Render scrollbar if we have enough targets. Drawn over the right-side table border
+        since we use `layout.table` and not `b_tbl.inner()` as the area (saves 1 column! :D).
+        The scrollbar state is throwaway since there's no benefit to storing it in the layout:
+        - the setters consume `self`, so we can't reuse the same instance anyway
+        - doesn't support scrolling by N rows, which we need
+        - would introduce more complexity in the keyboard handler
+        - we already have the relevant info in the table state
+        */
         if num_tgts > layout.tbl_usable_rows() {
             let bar_pos = layout
                 .tablestate
@@ -496,7 +498,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     frame.render_widget(w_info_lower, layout.info_lower);
     frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
 
-    ////////// Render popup if visible and has contents //////////
+    /* -------- Render popup if visible and has contents -------- */
     if layout.popup_visible {
         let contents = &*state.popup_contents.read();
         if !contents.is_empty() {
@@ -506,7 +508,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         }
     }
 
-    ////////// Render help popup if visible //////////
+    /* -------- Render help popup if visible -------- */
     if layout.help_visible {
         let w_help = state.help_contents.to_para().block(b_pad);
         frame.render_widget(Clear, layout.help);
@@ -514,7 +516,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/* -------------------------------------------------------------------------- */
 
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
