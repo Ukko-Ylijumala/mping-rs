@@ -321,7 +321,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let b_pad = block.clone().padding(Padding::horizontal(1));
     let b_tbl = block
         .clone()
-        .title_bottom(Line::from(format!(" Targets: {} ", num_tgts)));
+        .title_bottom(Line::from(format!(" Targets: {num_tgts} ")));
     let b_info_upper = block.clone().title_top(" Info ");
 
     ////////// Info areas //////////
@@ -396,7 +396,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .map(|b| {
                     Bar::default()
                         .value(b.count)
-                        .label(format!("{:.1}-{:.1}", b.low, b.high).into())
+                        .label(format!("{:.1} - {:.1}", b.low, b.high).into())
                         .style(Style::default().fg(Color::Green))
                 })
                 .collect::<Vec<_>>();
@@ -414,6 +414,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             frame.render_widget(&w_no_data, a_graph);
             frame.render_widget(w_no_data.block(b_histo), a_histo);
         }
+    } else {
+        drop(tgts);
     }
 
     ////////// Lower info area - bottom right corner //////////
