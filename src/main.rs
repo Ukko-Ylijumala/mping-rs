@@ -466,6 +466,25 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         .row_highlight_style(Style::new().reversed())
         .column_highlight_style(Style::new().bg(Color::Indexed(240)));
         frame.render_stateful_widget(w_table, layout.table, &mut layout.tablestate);
+
+        // Render scrollbar if we have enough targets. Drawn over the right-side table border
+        // since we use `layout.table` and not `b_tbl.inner()` as the area (saves 1 column! :D).
+        // The scrollbar state is throwaway since there's no benefit to storing it in the layout:
+        // - the setters consume `self`, so we can't reuse the same instance anyway
+        // - doesn't support scrolling by N rows, which we need
+        // - would introduce more complexity in the keyboard handler
+        // - we already have the relevant info in the table state
+        if num_tgts > layout.tbl_usable_rows() {
+            let bar_pos = layout
+                .tablestate
+                .selected()
+                .unwrap_or_else(|| layout.tablestate.offset());
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight).style(Color::Cyan),
+                layout.table,
+                &mut ScrollbarState::new(num_tgts).position(bar_pos),
+            );
+        }
     }
 
     // Render all components. Order matters for layering; later ones overwrite earlier ones,
