@@ -11,9 +11,23 @@ pub static MISSING: &str = "-";
 // main.rs
 pub static ERR_V4_MISSING: &str = "IPv4 client missing";
 pub static ERR_V6_MISSING: &str = "IPv6 client missing";
-pub static APP_RUNNING: &str = "mping initialized. Press 'q' to quit, 'h' for help.";
 pub static ERR_KEV_JOIN: &str = "Error joining key event handler thread";
+pub static APP_RUNNING: &str = " mping initialized. Press 'q' to quit, 'h' for help.";
 pub static INFO_QUITTING: &str = "Main thread quitting. Waiting for tasks to terminate...";
+pub static INFO_INFO: &str = " Info ";
+pub static INFO_TGTS: &str = " Targets: {} ";
+pub static INFO_NO_TGTS: &str = " No targets";
+pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}";
+pub static INFO_SELECT: &str = " Select a target to see detailed info.";
+pub static INFO_RTT_G: &str = " Round-Trip Time graph ";
+pub static INFO_RTT_H: &str = " RTT Histogram (ms) ";
+pub static INFO_RTT: &str = "RTT (ms)";
+pub static INFO_NOW: &str = "Now";
+pub static INFO_NO_RTT: &str = " No RTT data available.";
+pub static INFO_STATE: &str = "Interval: {} ms\nTimeout : {} ms\nPayload : {} bytes{}\nTasks   : {}";
+pub static INFO_RAND: &str = " (randomized)";
+pub static INFO_CPU: &str = "CPU: {} | mem: {} | pid: {} ";
+pub static INFO_DEBUG: &str = " Data: {}, offset: {}, idx: {}";
 
 // tui.rs
 pub static TUI_INIT: &str = "Initializing terminal UI. Display refresh rate";

@@ -32,10 +32,10 @@ use futures::{
     future::join_all,
     stream::{FuturesUnordered, StreamExt},
 };
-use miniutils::ToDisplay;
+use miniutils::{ToDisplay, inject, templater};
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
-use std::{future::Future, net::IpAddr, sync::Arc, thread, time::Duration};
+use std::{fmt::Display, future::Future, net::IpAddr, sync::Arc, thread, time::Duration};
 use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
 use tokio::time::{self, Instant, Interval};
 
@@ -321,22 +321,22 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let b_pad = block.clone().padding(Padding::horizontal(1));
     let b_tbl = block
         .clone()
-        .title_bottom(Line::from(format!(" Targets: {num_tgts} ")));
-    let b_info_upper = block.clone().title_top(" Info ");
+        .title_bottom(Line::from(templater!(INFO_TGTS, num_tgts)));
+    let b_info_upper = block.clone().title_top(INFO_INFO);
 
     ////////// Info areas //////////
     let w_info_upper = Paragraph::new(if let Some(t) = selected {
-        format!(
-            " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}",
+        templater!(
+            INFO_TARGET,
             t.addr.to_string(),
             &t.rev,
-            t.ptr(),
-            t.rev_ptr(),
+            t.ptr().to_string(),
+            t.rev_ptr().to_string(),
             t.est_distance_str(state.distance_stretch_factor),
-            t.hops(),
+            t.hops().to_string(),
         )
     } else {
-        " Select a target to see detailed info.".into()
+        INFO_SELECT.into()
     })
     .block(b_info_upper.clone());
 
@@ -354,8 +354,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             .borders(Borders::TOP)
             .border_type(BorderType::QuadrantOutside)
             .title_alignment(Alignment::Center);
-        let b_graph = b_inner.clone().title(" Round-Trip Time graph ");
-        let b_histo = b_inner.title(" RTT Histogram (ms) ");
+        let b_graph = b_inner.clone().title(INFO_RTT_G);
+        let b_histo = b_inner.title(INFO_RTT_H);
 
         if !rtt_data.is_empty() {
             let samples: usize = rtt_data.len();
@@ -372,7 +372,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
             // RTT line graph widget
             let dataset = Dataset::default()
-                .name("RTT (ms)")
+                .name(INFO_RTT)
                 .marker(symbols::Marker::Braille)
                 .style(Style::default().fg(Color::Cyan))
                 .graph_type(GraphType::Line)
@@ -382,7 +382,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .x_axis(
                     Axis::default()
                         .bounds([0.0, samples as f64 - 1.0])
-                        .labels([format!("-{:.0}s", sample_t).bold(), "Now".bold()]),
+                        .labels([format!("-{:.0}s", sample_t).bold(), INFO_NOW.bold()]),
                 )
                 .y_axis(
                     Axis::default()
@@ -410,7 +410,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             frame.render_widget(w_rtt_chart, a_graph);
             frame.render_widget(w_histogram, a_histo);
         } else {
-            let w_no_data = Paragraph::new(" No RTT data available.").block(b_graph);
+            let w_no_data = Paragraph::new(INFO_NO_RTT).block(b_graph);
             frame.render_widget(&w_no_data, a_graph);
             frame.render_widget(w_no_data.block(b_histo), a_histo);
         }
@@ -419,20 +419,20 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     }
 
     ////////// Lower info area - bottom right corner //////////
-    let w_info_lower = Paragraph::new(format!(
-        "Interval: {} ms\nTimeout : {} ms\nPayload : {} bytes{}\nTasks   : {}",
+    let w_info_lower = Paragraph::new(templater!(
+        INFO_STATE,
         state.ping_interval.as_millis(),
         state.ping_timeout.as_millis(),
         state.payload.len(),
-        if state.randomize { " (randomized)" } else { "" },
+        if state.randomize { INFO_RAND } else { "" },
         state.spawned_tasks()
     ))
     .block(Block::new().padding(Padding::left(1)));
 
     ////////// CPU & process info - bottom line, right side //////////
-    let w_procinfo = Line::from(format!(
-        "CPU: {:>7} | mem: {} | pid: {} ",
-        state.pi.cpu_str(),
+    let w_procinfo = Line::from(templater!(
+        INFO_CPU,
+        format!("{:>7}", state.pi.cpu_str()),
         state.pi.mem_str(),
         state.pi.pid,
     ))
@@ -440,8 +440,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
     ////////// Status line - bottom line, left side //////////
     state.status_line.replace(match state.debug {
-        true => format!(
-            " Data: {}, offset: {}, idx: {}",
+        true => templater!(
+            INFO_DEBUG,
             data.len(),
             &layout.tablestate.offset(),
             &layout
@@ -449,12 +449,12 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .selected()
                 .map_or("none".into(), |i| i.to_string())
         ),
-        false => format!(" {APP_RUNNING}"),
+        false => APP_RUNNING.into(),
     });
 
     ////////// Data table //////////
     if num_tgts == 0 {
-        frame.render_widget(Paragraph::new(" No targets.").block(b_tbl), layout.table);
+        frame.render_widget(Paragraph::new(INFO_NO_TGTS).block(b_tbl), layout.table);
     } else {
         let w_table = Table::new(
             data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
