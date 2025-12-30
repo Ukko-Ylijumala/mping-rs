@@ -13,7 +13,12 @@ use crate::{
 use hickory_resolver::TokioResolver;
 use miniutils::{ProcessInfo, inject, templater};
 use parking_lot::RwLock;
-use ratatui::{prelude::Stylize, style::Style, text::Line, widgets::Paragraph};
+use ratatui::{
+    prelude::Stylize,
+    style::Style,
+    text::Line,
+    widgets::{List, Paragraph},
+};
 use std::{
     collections::VecDeque,
     fmt::{self, Display},
@@ -97,7 +102,7 @@ impl AppState {
         let mut headers = TableRow::from_iter(HEADERS);
         headers.set_style_all(Style::new().bold().yellow());
         if conf.debug {
-            headers.add_item("Seq");
+            headers.add_item(HDR_SEQ);
         }
 
         // update layout info with header widths and column spacing
@@ -139,7 +144,7 @@ impl AppState {
             spawned_tasks: AtomicU64::new(0),
             perf: conf.perf.into(),
             popup_contents: PopupContents::None.into(),
-            help_contents: PopupContents::Table(help),
+            help_contents: PopupContents::Multiline(help),
         }
     }
 
@@ -158,13 +163,13 @@ impl AppState {
         self.c_v4 = {
             match Client::new(&Config::default()) {
                 Ok(c) => Arc::new(c).into(),
-                Err(e) => return Err(nice_permission_error(&e, "v4")),
+                Err(e) => return Err(nice_permission_error(&e, 4)),
             }
         };
         self.c_v6 = {
             match Client::new(&Config::builder().kind(ICMP::V6).build()) {
                 Ok(c) => Arc::new(c).into(),
-                Err(e) => return Err(nice_permission_error(&e, "v6")),
+                Err(e) => return Err(nice_permission_error(&e, 6)),
             }
         };
 
@@ -199,7 +204,7 @@ impl AppState {
         self.perf.fetch_xor(true, Ordering::SeqCst);
         self.logger.log(templater!(
             INFO_PERF,
-            if self.perf() { "enabled" } else { "disabled" }
+            if self.perf() { ENABLED } else { DISABLED }
         ));
     }
 
@@ -252,7 +257,7 @@ impl AppState {
             self.logger.log(templater!(
                 INFO_PING,
                 tgt,
-                if tgt.is_paused() { "paused" } else { "resumed" }
+                if tgt.is_paused() { PAUSED } else { RESUMED }
             ));
         }
     }
@@ -387,7 +392,7 @@ impl AppState {
 /// Contents for popup dialog in the UI.
 #[derive(Debug, Default)]
 pub(crate) enum PopupContents {
-    Table(Vec<String>),
+    Multiline(Vec<String>),
     Paragraph(String),
     Line(String),
     Buffer(Arc<MessageBuffer>),
@@ -399,9 +404,19 @@ impl PopupContents {
     pub fn to_para(&self) -> Paragraph<'_> {
         match self {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
-            PopupContents::Table(s) => Paragraph::new(s.join("\n")),
+            PopupContents::Multiline(s) => Paragraph::new(s.join("\n")),
             PopupContents::Buffer(buf) => buf.to_paragraph(),
             PopupContents::None => Paragraph::new(""),
+        }
+    }
+
+    pub fn to_list(&self) -> List<'_> {
+        match self {
+            PopupContents::Paragraph(s) => List::new(s.split("\n")),
+            PopupContents::Line(s) => List::new(vec![s.clone()]),
+            PopupContents::Multiline(s) => List::new(s.clone()),
+            PopupContents::Buffer(buf) => buf.to_list(),
+            PopupContents::None => List::new([""]),
         }
     }
 
@@ -434,6 +449,21 @@ pub(crate) enum QueryResponse {
     Empty,
     #[default]
     None,
+    TextStr(&'static str),
+    ErrorStr(&'static str),
+    MultiIp(Vec<IpAddr>),
+}
+
+impl QueryResponse {
+    /// Whether the response is empty or none.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, QueryResponse::Empty | QueryResponse::None)
+    }
+
+    /// Whether the response is an error.
+    pub fn is_err(&self) -> bool {
+        matches!(self, QueryResponse::Error(_) | QueryResponse::ErrorStr(_))
+    }
 }
 
 impl Display for QueryResponse {
@@ -444,8 +474,18 @@ impl Display for QueryResponse {
             QueryResponse::Float(v) => write!(f, "{v}"),
             QueryResponse::Text(s) => write!(f, "{s}"),
             QueryResponse::Error(e) => write!(f, "E: {e}"),
-            QueryResponse::Empty => write!(f, "<empty response>"),
-            QueryResponse::None => write!(f, "<unknown>"),
+            QueryResponse::Empty => write!(f, "<{EMPTY_RESP}>"),
+            QueryResponse::None => write!(f, "<{UNKNOWN}>"),
+            QueryResponse::TextStr(s) => write!(f, "{s}"),
+            QueryResponse::ErrorStr(e) => write!(f, "E: {e}"),
+            QueryResponse::MultiIp(ips) => write!(
+                f,
+                "{}",
+                ips.iter()
+                    .map(|ip| ip.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
         }
     }
 }
@@ -553,6 +593,11 @@ impl MessageBuffer {
     /// Convert all messages (with timestamps) to a [Paragraph] for displaying with Ratatui.
     pub fn to_paragraph(&self) -> Paragraph<'_> {
         Paragraph::new(self.to_timestamped().join("\n"))
+    }
+
+    /// Convert all messages (with timestamps) to a [List] for displaying with Ratatui.
+    pub fn to_list(&self) -> List<'_> {
+        List::new(self.to_timestamped())
     }
 }
 
