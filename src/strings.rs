@@ -8,6 +8,10 @@ pub static HEADERS: [&str; 10] = ["Address", "Sent", "Recv", "Loss", "Last", "Me
 // missing value placeholder for textual output
 pub static MISSING: &str = "-";
 
+// generic
+pub static TIMEOUT: &str = "timeout";
+pub static UNAVAIL: &str = "unavailable";
+
 // main.rs
 pub static ERR_V4_MISSING: &str = "IPv4 client missing";
 pub static ERR_V6_MISSING: &str = "IPv6 client missing";
@@ -62,6 +66,24 @@ pub static INFO_EXPANDED: &str = "Number of addresses expanded from";
 pub static INFO_EXCLUDE: &str = "Excluding addresses from target list";
 pub static PTR_IPV4: &str = ".in-addr.arpa";
 pub static PTR_IPV6: &str = ".ip6.arpa";
+
+// hopcount.rs
+pub static BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
+pub static BIND_SOCKET_IPV6: &str = "[::]:0";
+pub static ERR_PACKET: &str = "Failed to create echo packet";
+pub static ERR_CKSUM: &str = "Failed to create IcmpPacket for checksumming";
+pub static ERR_SOCK_RAW: &str = "Failed to create raw socket";
+pub static ERR_SOCK_TIMEOUT: &str = "Failed to set socket timeout";
+pub static ERR_SOCK_BIND: &str = "Bind to socket failed";
+pub static ERR_SEND: &str = "Send failed";
+pub static ERR_RECV: &str = "Receive failed";
+pub static ERR_MALFORMED: &str = "Malformed ICMP packet";
+pub static ERR_UNREACH: &str = "Destination Unreachable";
+pub static ERR_ICMPTYPE: &str = "Wanted Echo Reply (0), got";
+pub static ERR_HDR_IPV4: &str = "Truncated IPv4 header";
+pub static ERR_HDR_IPV6: &str = "Truncated IPv6 header";
+pub static INFO_SOCKET: &str = "Raw socket created for ICMPv";
+pub static INFO_SEND: &str = "Sending ICMP Echo Request to";
 
 // args.rs
 pub static ERR_RESOLVE: &str = "ERROR: failed to resolve hostname";

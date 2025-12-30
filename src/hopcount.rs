@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::structs::DEFAULT_PAYLOAD_SIZE;
+use crate::{strings::*, structs::DEFAULT_PAYLOAD_SIZE};
 use pnet_packet::{
     Packet,
     icmp::{self, IcmpPacket, IcmpTypes, echo_request::MutableEchoRequestPacket},
@@ -14,8 +14,6 @@ use std::{
     time::Duration,
 };
 
-const BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
-const BIND_SOCKET_IPV6: &str = "[::]:0";
 const ID_VALUE: u16 = 0xb00b; // (very!) arbitrary identifier
 const ICMP_HEADER_SIZE: usize = 8; // ICMP header size
 const IP_HEADER_SIZE: usize = 20; // IPv4 header size without options
@@ -26,16 +24,14 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
     // Create a mutable buffer and build an ICMP Echo Request packet in it
     let mut icmp_buffer = [0u8; ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE];
     // Create a mutable wrapper around the buffer
-    let mut echo_packet =
-        MutableEchoRequestPacket::new(&mut icmp_buffer).ok_or("Failed to create echo packet")?;
+    let mut echo_packet = MutableEchoRequestPacket::new(&mut icmp_buffer).ok_or(ERR_PACKET)?;
 
     echo_packet.set_icmp_type(IcmpTypes::EchoRequest);
     echo_packet.set_identifier(ID_VALUE);
     echo_packet.set_sequence_number(1);
 
     // pnet's checksum expects an IcmpPacket wrapper, so build one from the echo packet bytes
-    let icmp_packet = IcmpPacket::new(echo_packet.packet())
-        .ok_or("Failed to create IcmpPacket for checksumming")?;
+    let icmp_packet = IcmpPacket::new(echo_packet.packet()).ok_or(ERR_CKSUM)?;
     let checksum = icmp::checksum(&icmp_packet);
     echo_packet.set_checksum(checksum);
     drop(echo_packet); // drop the wrapper
@@ -53,10 +49,7 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
     let target_sockaddr: socket2::SockAddr = SocketAddr::new(target, 0).into();
 
     if debug {
-        eprintln!(
-            "Local address: {}, remote address: {:?}",
-            local_addr, target_sockaddr
-        );
+        eprintln!("Local address: {local_addr}, remote address: {target_sockaddr:?}");
     }
 
     // Create raw ICMP socket (requires CAP_NET_RAW or root)
@@ -65,41 +58,40 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
     } else {
         (Domain::IPV6, Protocol::ICMPV6)
     };
-    let socket = Socket::new(domain, Type::RAW, Some(proto))
-        .map_err(|e| format!("Failed to create raw socket: {e}"))?;
+    let socket =
+        Socket::new(domain, Type::RAW, Some(proto)).map_err(|e| format!("{ERR_SOCK_RAW}: {e}"))?;
 
     if debug {
         eprintln!(
-            "Raw socket created for ICMP{}: {:?}",
-            if target.is_ipv4() { "v4" } else { "v6" },
-            socket
+            "{INFO_SOCKET}{}: {socket:?}",
+            if target.is_ipv4() { "4" } else { "6" }
         );
     }
 
     // Set receive timeout and bind to the local socket
     socket
         .set_read_timeout(Some(timeout))
-        .map_err(|e| format!("Failed to set timeout: {e}"))?;
+        .map_err(|e| format!("{ERR_SOCK_TIMEOUT}: {e}"))?;
     socket
         .bind(&local_addr.into())
-        .map_err(|e| format!("Bind failed: {e}"))?;
+        .map_err(|e| format!("{ERR_SOCK_BIND}: {e}"))?;
 
     if debug {
-        eprintln!("Sending ICMP Echo Request to {}", target);
+        eprintln!("{INFO_SEND} {target}");
     }
 
     // Send the packet
     socket
         .send_to(&icmp_buffer, &target_sockaddr)
-        .map_err(|e| format!("Send failed: {e}"))?;
+        .map_err(|e| format!("{ERR_SEND}: {e}"))?;
 
     let mut recv_buffer: [MaybeUninit<u8>; 1500] = [const { MaybeUninit::uninit() }; 1500];
     let (bytes_read, _from) = socket.recv_from(&mut recv_buffer).map_err(|e| {
         let err_str = e.to_string();
-        if err_str.to_lowercase().contains("unavailable") {
-            "Timeout".to_string()
+        if err_str.to_lowercase().contains(UNAVAIL) {
+            TIMEOUT.to_string()
         } else {
-            format!("Receive failed: {err_str}")
+            format!("{ERR_RECV}: {err_str}")
         }
     })?;
 
@@ -108,19 +100,19 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
         unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(&recv_buffer[..bytes_read]) };
 
     if debug {
-        eprintln!("Received {} bytes back: {:x?}", bytes_read, &recv_data);
+        eprintln!("Received {bytes_read} bytes back: {:x?}", &recv_data);
     }
 
     // Parse the received ICMP packet (from after the IP header)
-    let resp = IcmpPacket::new(&recv_data[IP_HEADER_SIZE..]).ok_or("Malformed ICMP packet")?;
+    let resp = IcmpPacket::new(&recv_data[IP_HEADER_SIZE..]).ok_or(ERR_MALFORMED)?;
 
     // Error out if it's not an Echo Reply
     if resp.get_icmp_type() != IcmpTypes::EchoReply {
         match resp.get_icmp_type() {
             IcmpTypes::DestinationUnreachable => {
-                return Err("Destination Unreachable".to_string());
+                return Err(ERR_UNREACH.to_string());
             }
-            _ => return Err(format!("Wanted Echo Reply, got{:?}", resp.get_icmp_type())),
+            _ => return Err(format!("{ERR_ICMPTYPE} {:?}", resp.get_icmp_type())),
         }
     }
 
@@ -128,12 +120,12 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
     let received_ttl = if target.is_ipv4() {
         // IPv4: IP header is first 20 bytes (assuming no options)
         if bytes_read < 20 {
-            return Err("Truncated IPv4 header".to_string());
+            return Err(ERR_HDR_IPV4.to_string());
         }
         unsafe { recv_buffer[8].assume_init() } // TTL is at offset 8 in IPv4 header
     } else {
         if bytes_read < 40 {
-            return Err("Truncated IPv6 header".to_string());
+            return Err(ERR_HDR_IPV6.to_string());
         }
         unsafe { recv_buffer[7].assume_init() } // Hop Limit is at offset 7 in IPv6 header
     };
