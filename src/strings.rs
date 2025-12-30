@@ -35,11 +35,17 @@ pub static TUI_TERMINATE: &str = "Terminal UI was terminated.";
 pub static APP_PANIC: &str = "Application panic";
 
 // pingdata.rs
+pub static ERR_PTR_EMPTY: &str = "PTR record empty";
+pub static ERR_PTR_MANY: &str = "Multiple PTRs";
+pub static ERR_PTR_FAILED: &str = "PTR lookup failed";
 pub static ERR_NO_RESP: &str = "No Response";
 pub static ERR_NORECORDS: &str = "No records";
 pub static ERR_NOTENOUGH: &str = "Not enough records";
 pub static ERR_NO_RTT: &str = "Could not find RTT";
 pub static ERR_LARGE_WIN: &str = "Window size exceeds data length";
+pub static INFO_LOCAL: &str = "local (a few km max)";
+pub static INFO_NEARBY: &str = "same city (< 30 km)";
+pub static INFO_INTERPLANETARY: &str = "outside of atmosphere";
 
 // utils.rs
 pub static ERR_SOCKETS: &str = "ERROR: no permissions to create raw sockets for ICMP";

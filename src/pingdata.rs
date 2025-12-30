@@ -284,7 +284,7 @@ impl PingTarget {
                 match names.len() {
                     0 => {
                         *self.ptr.write() = QueryResponse::Empty;
-                        *self.rev_ptr.write() = QueryResponse::Error("PTR record empty".into());
+                        *self.rev_ptr.write() = QueryResponse::Error(ERR_PTR_EMPTY.into());
                     }
 
                     1 => {
@@ -312,14 +312,14 @@ impl PingTarget {
 
                     _ => {
                         *self.ptr.write() = QueryResponse::Text(names.join(", "));
-                        *self.rev_ptr.write() = QueryResponse::Text("Multiple PTRs".into()); // TODO: handle multiple PTRs
+                        *self.rev_ptr.write() = QueryResponse::Text(ERR_PTR_MANY.into()); // TODO: handle multiple PTRs
                     }
                 }
             }
 
             Err(e) => {
                 *self.ptr.write() = QueryResponse::Error(e.to_string());
-                *self.rev_ptr.write() = QueryResponse::Error("PTR lookup failed".into());
+                *self.rev_ptr.write() = QueryResponse::Error(ERR_PTR_FAILED.into());
             }
         }
     }
@@ -578,8 +578,8 @@ impl PingTarget {
         match self.est_distance_km(factor) {
             Ok(dist) if dist > 0.0 => {
                 match dist {
-                    d if d < 2.0 => return "local (a few km max)".to_string(),
-                    d if (d < 30.0 && d >= 2.0) => return format!("same city (< 30 km)"),
+                    d if d < 2.0 => return INFO_LOCAL.to_string(),
+                    d if (d < 30.0 && d >= 2.0) => return INFO_NEARBY.to_string(),
                     d if (d < BAND_SIZE_KM && d >= 30.0) => {
                         return format!("< {:.0} km", BAND_SIZE_KM);
                     }
@@ -592,7 +592,7 @@ impl PingTarget {
                     d if (d < BAND_SIZE_KM * 10.0 && d >= BAND_SIZE_KM * 5.0) => {
                         return format!("< {:.0} km", BAND_SIZE_KM * 10.0);
                     }
-                    d if d > SPEED_KM_S / 5.0 => return "outside of atmosphere".to_string(),
+                    d if d > SPEED_KM_S / 5.0 => return INFO_INTERPLANETARY.to_string(),
                     _ => {
                         // Quantize to nearest lower band
                         let banded = (dist / BAND_SIZE_KM).floor() * BAND_SIZE_KM;
