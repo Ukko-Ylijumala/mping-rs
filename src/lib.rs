@@ -7,7 +7,7 @@
 mod args;
 mod hopcount;
 mod ip_addresses;
-mod latencywin;
+pub mod latencywin;
 mod macros;
 mod pingdata;
 mod strings;

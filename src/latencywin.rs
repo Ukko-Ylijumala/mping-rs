@@ -30,8 +30,7 @@ Suitable for typical (network) latency monitoring (µs to ms range).
 
 ## Example
 ```
-mod latencywin;
-use latencywin::LatencyWindow;
+use mping::latencywin::LatencyWindow;
 
 let mut win = LatencyWindow::new(100);
 win.push(1500);  // 1.5ms in µs
