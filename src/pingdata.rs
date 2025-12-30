@@ -56,15 +56,15 @@ impl fmt::Display for PingStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PingStatus::Ok => write!(f, "OK"),
-            PingStatus::Timeout => write!(f, "timeout"),
-            PingStatus::NotReachable => write!(f, "unreach"),
+            PingStatus::Timeout => write!(f, "{TIMEOUT}"),
+            PingStatus::NotReachable => write!(f, "{UNREACH}"),
             PingStatus::Error(_) => write!(f, "error"),
             PingStatus::Laggy => write!(f, "laggy"),
             PingStatus::Lossy => write!(f, "lossy"),
             PingStatus::Flappy => write!(f, "flapping"),
-            PingStatus::Paused => write!(f, "paused"),
-            PingStatus::Resuming => write!(f, "resuming"),
-            PingStatus::Stopped => write!(f, "stopped"),
+            PingStatus::Paused => write!(f, "{PAUSED}"),
+            PingStatus::Resuming => write!(f, "{RESUMED}"),
+            PingStatus::Stopped => write!(f, "{STOPPED}"),
             PingStatus::None => write!(f, "{MISSING}"),
         }
     }
@@ -284,7 +284,7 @@ impl PingTarget {
                 match names.len() {
                     0 => {
                         *self.ptr.write() = QueryResponse::Empty;
-                        *self.rev_ptr.write() = QueryResponse::Error(ERR_PTR_EMPTY.into());
+                        *self.rev_ptr.write() = QueryResponse::ErrorStr(ERR_PTR_EMPTY);
                     }
 
                     1 => {
@@ -300,7 +300,7 @@ impl PingTarget {
                                 } else if ips.len() == 1 {
                                     QueryResponse::IpAddr(ips[0])
                                 } else {
-                                    QueryResponse::IpAddr(ips[0]) // TODO: handle multiple IPs
+                                    QueryResponse::MultiIp(ips)
                                 };
                             }
 
@@ -312,14 +312,14 @@ impl PingTarget {
 
                     _ => {
                         *self.ptr.write() = QueryResponse::Text(names.join(", "));
-                        *self.rev_ptr.write() = QueryResponse::Text(ERR_PTR_MANY.into()); // TODO: handle multiple PTRs
+                        *self.rev_ptr.write() = QueryResponse::TextStr(WARN_PTR_MANY); // TODO: handle multiple PTRs
                     }
                 }
             }
 
             Err(e) => {
                 *self.ptr.write() = QueryResponse::Error(e.to_string());
-                *self.rev_ptr.write() = QueryResponse::Error(ERR_PTR_FAILED.into());
+                *self.rev_ptr.write() = QueryResponse::ErrorStr(ERR_PTR_FAILED);
             }
         }
     }
