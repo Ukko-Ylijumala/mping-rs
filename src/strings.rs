@@ -2,8 +2,10 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+pub static APP_NAME: &str = "mping";
 pub static APP_TITLE: &str = "mping - Multi-pinger";
 pub static HEADERS: [&str; 10] = ["Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status"];
+pub static HDR_SEQ: &str = "Seq";
 
 // missing value placeholder for textual output
 pub static MISSING: &str = "-";
@@ -11,6 +13,13 @@ pub static MISSING: &str = "-";
 // generic
 pub static TIMEOUT: &str = "timeout";
 pub static UNAVAIL: &str = "unavailable";
+pub static UNKNOWN: &str = "unknown";
+pub static UNREACH: &str = "unreach";
+pub static PAUSED: &str = "paused";
+pub static RESUMED: &str = "resumed";
+pub static STOPPED: &str = "stopped";
+pub static ENABLED: &str = "enabled";
+pub static DISABLED: &str = "disabled";
 
 // main.rs
 pub static ERR_V4_MISSING: &str = "IPv4 client missing";
@@ -40,7 +49,7 @@ pub static APP_PANIC: &str = "Application panic";
 
 // pingdata.rs
 pub static ERR_PTR_EMPTY: &str = "PTR record empty";
-pub static ERR_PTR_MANY: &str = "Multiple PTRs";
+pub static WARN_PTR_MANY: &str = "Multiple PTRs";
 pub static ERR_PTR_FAILED: &str = "PTR lookup failed";
 pub static ERR_NO_RESP: &str = "No Response";
 pub static ERR_NORECORDS: &str = "No records";
@@ -52,14 +61,14 @@ pub static INFO_NEARBY: &str = "same city (< 30 km)";
 pub static INFO_INTERPLANETARY: &str = "outside of atmosphere";
 
 // utils.rs
-pub static ERR_SOCKETS: &str = "ERROR: no permissions to create raw sockets for ICMP";
-pub static ERR_CLIENT: &str = "ERROR: failed to create client for ICMP";
-pub static ERR_SIGNALS: &str = "ERROR: setting up signal handlers failed";
+pub static ERR_SOCKETS: &str = "cannot create raw sockets for ICMPv";
+pub static ERR_CLIENT: &str = "failed to create client for ICMPv";
+pub static ERR_SIGNALS: &str = "setting up signal handlers failed";
 pub static GOT_SIGINT: &str = "Received SIGINT (Ctrl-C), shutting down...";
 pub static GOT_SIGTERM: &str = "Received SIGTERM (kill -15), shutting down...";
 pub static GOT_SIGQUIT: &str = "Received SIGQUIT (Ctrl-\\), shutting down...";
-pub static ERR_TIMEVAL: &str = "ERROR: invalid time value";
-pub static ERR_PARSE_IP: &str = "ERROR: parsing failed for address";
+pub static ERR_TIMEVAL: &str = "invalid time value";
+pub static ERR_PARSE_IP: &str = "parsing failed for address";
 pub static WARN_NO_MATCHES: &str = "WARN: exclusions did not match any addresses.";
 pub static WARN_ALL_EXCLUDED: &str = "WARN: all target addresses were excluded.";
 pub static INFO_EXPANDED: &str = "Number of addresses expanded from";
@@ -129,6 +138,7 @@ pub static INFO_RESET: &str = "resetting statistics for '{}'";
 pub static INFO_STOP: &str = "stopping '{}'";
 pub static INFO_REMOVE: &str = "removing '{}'";
 pub static INFO_UNR_REM: &str = "removed {} unreachable target(s) in {}ms ({} -> {})";
+pub static EMPTY_RESP: &str = "empty response";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
