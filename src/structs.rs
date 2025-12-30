@@ -102,6 +102,7 @@ impl AppState {
 
         // update layout info with header widths and column spacing
         let mut layout: AppLayout = AppLayout::default().widths(headers.widths()).spacing(2);
+        layout.reset_table_widths();
 
         // prepare help contents and update layout accordingly
         let help: Vec<String> = simple_tabulate(HELP_KEYS, Some(&HELP_HDRS));
