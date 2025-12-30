@@ -25,6 +25,8 @@ use std::{
     vec,
 };
 
+static PERMS_STR: [&str; 2] = ["permission", "permitted"];
+
 /**
 Set up handlers for various termination signals.
 
@@ -57,18 +59,18 @@ pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
 }
 
 /// Nicely handle permission errors when creating raw sockets.
-pub(crate) fn nice_permission_error(err: &Error, ip_ver: &str) -> Box<dyn std::error::Error> {
+pub(crate) fn nice_permission_error(err: &Error, ip_ver: usize) -> Box<dyn std::error::Error> {
     let msg: String = err.to_string().to_lowercase();
 
-    if msg.contains("permission") || msg.contains("permitted") {
+    if msg.contains(PERMS_STR[0]) || msg.contains(PERMS_STR[1]) {
         let name: String = env::args()
             .next()
             .and_then(|p| p.split(MAIN_SEPARATOR).last().map(|s| s.to_string()))
-            .unwrap_or_else(|| "mping".to_string());
+            .unwrap_or_else(|| APP_NAME.to_string());
         let bin_path: PathBuf = env::current_exe().unwrap_or_else(|_| PathBuf::from(&name));
 
         eprintln!("{INFO_CAPS} {}", bin_path.display());
-        if ip_ver == "v4" {
+        if ip_ver == 4 {
             eprintln!("{INFO_CAPS_V4}");
         }
         Box::new(Error::new(
