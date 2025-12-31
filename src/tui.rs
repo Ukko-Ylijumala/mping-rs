@@ -498,9 +498,17 @@ impl TableRow {
         Self { items: Vec::new() }
     }
 
+    pub fn new_with_capacity(cap: usize) -> Self {
+        Self {
+            items: Vec::with_capacity(cap),
+        }
+    }
+
     /// Create a row with given number of empty cells.
     pub fn empty(cells: usize) -> Self {
-        Self::from_iter(vec![""; cells])
+        Self {
+            items: vec![TableItem::default(); cells],
+        }
     }
 
     /// Create a [TableRow] from an iterator of items that can be converted to strings.
@@ -517,6 +525,11 @@ impl TableRow {
     #[inline]
     pub fn len(&self) -> usize {
         self.items.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 
     pub fn add_item<I: AsRef<str>>(&mut self, item: I) -> usize {
@@ -560,7 +573,7 @@ impl TableRow {
         self.items.iter()
     }
 
-    /// Yield the cells for all items in this row.
+    /// Yield the [Cell]s for all items in this row.
     pub fn cells(&'_ self) -> impl Iterator<Item = Cell<'_>> {
         self.iter().map(|i| i.as_cell())
     }
@@ -586,6 +599,10 @@ impl<'a> IntoIterator for &'a TableRow {
 
 impl<'a> From<&'a TableRow> for Row<'a> {
     fn from(tr: &'a TableRow) -> Self {
+        if tr.is_empty() {
+            // don't use Row::default() as Ratatui apparently skips these entirely
+            return Row::new(Vec::<Cell>::new());
+        }
         Row::new(tr.cells())
     }
 }
