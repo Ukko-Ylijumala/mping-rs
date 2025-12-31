@@ -259,12 +259,11 @@ it makes sense to only gather data for the currently visible targets
 in the TUI table. This function supports both modes via the `all` param.
 */
 async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
+    let vp = state.viewport();
     let tgts = state.targets.read();
-    let items: usize = tgts.len();
-    let rows: usize = state.layout.read().tbl_usable_rows();
 
     // Full list requested, or we have fewer targets than rows
-    if all || items <= rows {
+    if all || !vp.needs_paging() {
         return join_all(
             tgts.iter()
                 .map(|t| format_row(t, state.debug, state.ping_timeout)),
@@ -278,11 +277,9 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
     the space. Depending on the offset, we need to do this at the start, end
     or both. Chaining the Vec iterators makes this fairly straightforward.
     */
-    let offset: usize = state.layout.read().tablestate.offset();
-    let end_pos: usize = offset + rows;
-    let pre: Vec<TableRow> = vec![TableRow::new(); offset];
-    let post: Vec<TableRow> = vec![TableRow::new(); items.saturating_sub(end_pos)];
-    let visible: &[Arc<PingTarget>] = &tgts[offset..items.min(end_pos)];
+    let pre: Vec<TableRow> = vec![TableRow::new(); vp.offset];
+    let post: Vec<TableRow> = vec![TableRow::new(); vp.targets - vp.end_pos];
+    let visible: &[Arc<PingTarget>] = &tgts[vp.offset..vp.end_pos];
 
     // Combine the Vec iterators
     pre.into_iter()
@@ -502,17 +499,15 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     if layout.popup_visible {
         let contents = &*state.popup_contents.read();
         if !contents.is_empty() {
-            let w_popup = contents.to_para().block(b_pad.clone());
             frame.render_widget(Clear, layout.popup);
-            frame.render_widget(w_popup, layout.popup);
+            frame.render_widget(contents.to_para().block(b_pad.clone()), layout.popup);
         }
     }
 
     /* -------- Render help popup if visible -------- */
     if layout.help_visible {
-        let w_help = state.help_contents.to_para().block(b_pad);
         frame.render_widget(Clear, layout.help);
-        frame.render_widget(w_help, layout.help);
+        frame.render_widget(state.help_contents.to_para().block(b_pad), layout.help);
     }
 }
 
@@ -580,10 +575,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Print final stats
     let data: Vec<TableRow> = gather_target_data(&app, true).await;
     // Display the same rows as were visible in the TUI
-    let offset: usize = app.layout.read().tablestate.offset();
-    let end: usize = (app.layout.read().tbl_usable_rows() + offset).min(data.len());
-    for line in simple_tabulate(&data[offset..end], Some(&app.headers.strings())) {
-        println!("{line}");
-    }
+    let vp = app.viewport();
+    simple_tabulate(&data[vp.offset..vp.end_pos], Some(&app.headers.strings()))
+        .iter()
+        .for_each(|line| println!("{line}"));
     Ok(())
 }

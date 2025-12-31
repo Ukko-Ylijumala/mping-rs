@@ -233,6 +233,15 @@ impl AppState {
         tokio::time::Instant::now() >= *self.ui_next_refresh.read()
     }
 
+    /**
+    Get the current viewport (visibility info) of the target table as a [ViewPort].
+
+    NOTE: locks both `layout` and `targets` for reading.
+    */
+    pub fn viewport(&self) -> ViewPort {
+        ViewPort::new(self)
+    }
+
     /// Add new ping targets to the application state.
     pub fn add_targets<I: IntoIterator<Item = PingTarget>>(&self, targets: I) {
         let orig_len: usize = self.len();
@@ -384,6 +393,40 @@ impl AppState {
             ));
         }
         num
+    }
+}
+
+/// Viewport information for the target table in the UI.
+pub(crate) struct ViewPort {
+    /// Total number of targets.
+    pub targets: usize,
+    /// Number of visible (usable) rows in the target table.
+    pub rows: usize,
+    /// Current offset (start index) of the visible rows.
+    pub offset: usize,
+    /// Current end position (exclusive) of the visible rows.
+    pub end_pos: usize,
+}
+
+impl ViewPort {
+    #[inline]
+    pub fn new(app: &AppState) -> Self {
+        let targets: usize = app.len();
+        let layout = app.layout.read();
+        let rows = layout.tbl_usable_rows();
+        let offset: usize = layout.tablestate.offset();
+        Self {
+            targets,
+            rows,
+            offset,
+            end_pos: (rows + offset).min(targets),
+        }
+    }
+
+    /// Whether there are more targets than visible rows, i.e., paging is needed.
+    #[inline]
+    pub fn needs_paging(&self) -> bool {
+        self.targets > self.rows
     }
 }
 
