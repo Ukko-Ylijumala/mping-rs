@@ -22,7 +22,7 @@ use crate::{
     keyboard::key_event_handler,
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
-    structs::AppState,
+    structs::{AppState, PopupContents},
     tabulator::simple_tabulate,
     tui::{TableRow, TerminalGuard},
     utils::{make_histogram_buckets, setup_signal_handler},
@@ -500,14 +500,37 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         let contents = &*state.popup_contents.read();
         if !contents.is_empty() {
             frame.render_widget(Clear, layout.popup);
-            frame.render_widget(contents.to_para().block(b_pad.clone()), layout.popup);
+            let b_popup = b_pad.clone();
+            match contents {
+                PopupContents::Buffer(_) => frame.render_widget(
+                    contents.to_list().block(
+                        b_popup
+                            .title(templater!(INFO_LOG, state.logger.len()))
+                            .border_type(BorderType::Double)
+                            .border_style(Color::Indexed(190)),
+                    ),
+                    layout.popup,
+                ),
+                PopupContents::Multiline(_) => {
+                    frame.render_widget(contents.to_list().block(b_popup), layout.popup)
+                }
+                _ => frame.render_widget(contents.to_para().block(b_popup), layout.popup),
+            }
         }
     }
 
     /* -------- Render help popup if visible -------- */
     if layout.help_visible {
         frame.render_widget(Clear, layout.help);
-        frame.render_widget(state.help_contents.to_para().block(b_pad), layout.help);
+        frame.render_widget(
+            state.help_contents.to_para().block(
+                b_pad
+                    .title(INFO_HELP)
+                    .border_type(BorderType::QuadrantOutside)
+                    .border_style(Color::Indexed(216)),
+            ),
+            layout.help,
+        );
     }
 }
 

@@ -41,6 +41,8 @@ pub static INFO_STATE: &str = "Interval: {} ms\nTimeout : {} ms\nPayload : {} by
 pub static INFO_RAND: &str = " (randomized)";
 pub static INFO_CPU: &str = "CPU: {} | mem: {} | pid: {} ";
 pub static INFO_DEBUG: &str = " Data: {}, offset: {}, idx: {}";
+pub static INFO_LOG: &str = " Log messages: {} ";
+pub static INFO_HELP: &str = " Help ";
 
 // tui.rs
 pub static TUI_INIT: &str = "Initializing terminal UI. Display refresh rate";
@@ -142,22 +144,25 @@ pub static EMPTY_RESP: &str = "empty response";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 17] = [
-    ["q, CTRL-C",      "Quit the program"],
-    ["h, F1",          "Show/hide this help screen"],
+pub static HELP_KEYS: [[&str; 2]; 20] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["PageUp, PageDn", "Page target list up/down (with shift: 10 lines)"],
     ["Home, End",      "Jump to top/bottom of target list"],
     ["Backspace",      "Clear row and column selections"],
+    ["",                ""],
     ["<space>",        "Toggle pause/resume pinging for selected target"],
     ["Enter",          "Update the selected target's details in the info panel"],
+    ["R",              "Reset ping statistics for selected target"],
     ["p",              "Pause pinging for all targets"],
     ["P",              "Resume pinging for all targets"],
-    ["R",              "Reset ping statistics for selected target"],
+    ["",                ""],
     ["S",              "Stop pinging the selected target permanently"],
     ["Delete",         "Stop pinging the selected target and remove it"],
     ["CTRL+Delete",    "Stop and remove all unreachable targets"],
+    ["",                ""],
+    ["q, CTRL-C",      "Quit the program"],
+    ["F1, h",          "Show/hide this help screen"],
     ["F10",            "Toggle \"perf\" mode (reduce task spawn overhead)"],
     ["F12",            "Display application log message buffer in a popup"],
 ];
