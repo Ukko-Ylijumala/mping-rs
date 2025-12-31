@@ -393,7 +393,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .map(|b| {
                     Bar::default()
                         .value(b.count)
-                        .label(format!("{:.1} - {:.1}", b.low, b.high).into())
+                        .label(format!("{:.1} - {:.1}", b.low, b.high))
                         .style(Style::default().fg(Color::Green))
                 })
                 .collect::<Vec<_>>();
