@@ -303,7 +303,7 @@ impl AppState {
             scheduled in the same runtime thread.
             */
             let logger = self.logger.clone();
-            std::thread::spawn(move || {
+            self.runtime.spawn_blocking(move || {
                 let now: Instant = Instant::now();
                 tgt_ptr1.determine_hops(UPDATE_TASK_TIMEOUT);
                 logger.log(templater!(
