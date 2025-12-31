@@ -266,22 +266,20 @@ impl AppLayout {
     /// Update popup and input areas (based on current full frame size).
     fn update_popup_areas(&mut self) {
         // centered help popup area
-        self.help.x = self.frame.width.saturating_sub(self.help_cols) / 2;
-        self.help.y = self.frame.height.saturating_sub(self.help_rows) / 2;
-        self.help.width = self.help_cols.min(self.frame.width); // if this is larger than frame, Ratatui will panic
-        self.help.height = self.help_rows.min(self.frame.height); // ditto
+        self.help = self.frame.centered(
+            Constraint::Length(self.help_cols.min(self.frame.width)), // if this is larger than frame, Ratatui will panic
+            Constraint::Length(self.help_rows.min(self.frame.height)),
+        );
 
         // centered popup area (75% width/height)
-        self.popup.x = self.frame.width / 8;
-        self.popup.y = self.frame.height / 8;
-        self.popup.width = self.frame.width * 3 / 4;
-        self.popup.height = self.frame.height * 3 / 4;
+        self.popup = self
+            .frame
+            .centered(Constraint::Ratio(3, 4), Constraint::Ratio(3, 4));
 
         // centered input area (30% width, 5 lines height)
-        self.input.x = self.frame.width * 35 / 100;
-        self.input.y = self.frame.height / 2 - 1;
-        self.input.width = self.frame.width * 30 / 100;
-        self.input.height = 5;
+        self.input = self
+            .frame
+            .centered(Constraint::Ratio(3, 10), Constraint::Length(5));
     }
 
     /// Recalculate the layout areas regardless of if it's needed or not.
