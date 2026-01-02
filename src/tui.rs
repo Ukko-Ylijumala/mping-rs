@@ -158,16 +158,7 @@ impl AppLayout {
 
     /// Reset the table widths to initial state (based on header widths).
     pub fn reset_table_widths(&mut self) {
-        let mut sum_widths: usize = 0;
-        self.tbl_constraints = self
-            .tbl_hdr_widths
-            .iter()
-            .map(|w| {
-                sum_widths += w;
-                Constraint::Length(*w as u16)
-            })
-            .collect();
-        self.tbl_width = sum_widths as u16;
+        (self.tbl_constraints, self.tbl_width) = calc_constraints_and_width(&self.tbl_hdr_widths);
     }
 
     /**
@@ -301,7 +292,6 @@ impl AppLayout {
     pub fn update_col_widths(&mut self, data: &[TableRow]) -> u16 {
         // Start with header widths as minimums
         let mut widths: Vec<usize> = self.tbl_hdr_widths.clone();
-        let mut sum_widths: usize = 0;
 
         for row in data {
             for (i, item) in row.iter().enumerate() {
@@ -316,16 +306,27 @@ impl AppLayout {
                 widths[i] = widths[i].max(item.len().max(cur_constr));
             }
         }
-        self.tbl_constraints = widths
-            .iter()
-            .map(|w| {
-                sum_widths += w;
-                Constraint::Length(*w as u16)
-            })
-            .collect();
 
-        sum_widths as u16
+        let (constraints, sum_widths) = calc_constraints_and_width(&widths);
+        self.tbl_constraints = constraints;
+        sum_widths
     }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/// Calculate table column [Constraint]s and total width from given widths.
+#[inline]
+fn calc_constraints_and_width(widths: &[usize]) -> (Vec<Constraint>, u16) {
+    let mut sum_widths: usize = 0;
+    let constraints = widths
+        .iter()
+        .map(|w| {
+            sum_widths += w;
+            Constraint::Length(*w as u16)
+        })
+        .collect();
+    (constraints, sum_widths as u16)
 }
 
 /* -------------------------------------------------------------------------- */
