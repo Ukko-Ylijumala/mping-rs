@@ -33,12 +33,12 @@ static DEFAULT_PAYLOAD_STR: LazyLock<&'static str> =
 #[derive(Parser, Default, Debug, Clone)]
 #[command(name = crate_name!(), version = crate_version!(), author = crate_authors!(), about = crate_description!())]
 pub(crate) struct MpConfig {
-    #[arg(value_name = "IP1 [IP2...]", help = HELP_TARGETS)]
+    #[arg(value_name = IP_LIST, help = HELP_TARGETS)]
     pub targets: Vec<String>,
 
     #[arg(
         long,
-        value_name = "IP1[,IP2...]",
+        value_name = IP_LIST_COMMA,
         value_delimiter = ',',
         require_equals = true,
         help = HELP_EXCLUDE
@@ -48,7 +48,7 @@ pub(crate) struct MpConfig {
     #[arg(
         long,
         short = 'I',
-        value_name = "SECS",
+        value_name = SECS,
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "1",
@@ -59,7 +59,7 @@ pub(crate) struct MpConfig {
     #[arg(
         long,
         short = 'T',
-        value_name = "SECS",
+        value_name = SECS,
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "2",
@@ -70,7 +70,7 @@ pub(crate) struct MpConfig {
     #[arg(
         long,
         short = 's',
-        value_name = "BYTES",
+        value_name = BYTES,
         required = false,
         value_parser = value_parser!(u16).range(32..32760),
         default_value = *DEFAULT_PAYLOAD_STR,
@@ -84,7 +84,7 @@ pub(crate) struct MpConfig {
     #[arg(
         long,
         short = 'H',
-        value_name = "NUM",
+        value_name = NUM,
         required = false,
         value_parser = value_parser!(u32).range(60..65536),
         default_value = "3600",
@@ -94,7 +94,7 @@ pub(crate) struct MpConfig {
 
     #[arg(
         long,
-        value_name = "NUM",
+        value_name = NUM,
         required = false,
         value_parser = value_parser!(u16).range(10..1000),
         default_value = "100",
@@ -117,7 +117,7 @@ pub(crate) struct MpConfig {
 
     #[arg(
         long,
-        value_name = "IP1[,IP2...]",
+        value_name = IP_LIST_COMMA,
         value_delimiter = ',',
         require_equals = true,
         value_parser = value_parser!(IpAddr),
@@ -127,7 +127,7 @@ pub(crate) struct MpConfig {
 
     #[arg(
         long,
-        value_name = "SECS",
+        value_name = SECS,
         required = false,
         value_parser = parse_float_into_duration,
         default_value = "5",
@@ -137,7 +137,7 @@ pub(crate) struct MpConfig {
 
     #[arg(
         long,
-        value_name = "FLOAT",
+        value_name = FLOAT,
         required = false,
         value_parser = value_parser!(f64),
         default_value = "1.0",
@@ -192,13 +192,13 @@ impl MpConfig {
         let wants_default_opts: bool = config.dns_timeout == DEFAULT_DNS_TIMEOUT;
         let (resolver_config, resolver_opts) = {
             if wants_default_conf && wants_default_opts {
-                config.buf.push("Using system DNS configuration");
+                config.buf.push(INFO_DNS);
                 read_system_conf()? // use system defaults
             } else {
                 let mut res_opts = ResolverOpts::default();
                 if !wants_default_opts {
                     config.buf.push(&format!(
-                        "Setting custom DNS timeout: {:.2}s",
+                        "{INFO_DNS_TIMEO}: {:.1}s",
                         config.dns_timeout.as_secs_f64()
                     ));
                     res_opts.timeout = config.dns_timeout;
@@ -210,7 +210,7 @@ impl MpConfig {
                     }
                     false => {
                         config.buf.push(&format!(
-                            "Using custom DNS server(s): {}",
+                            "{INFO_DNS_CUSTOM}: {}",
                             config
                                 .dns_servers
                                 .iter()
@@ -264,7 +264,7 @@ impl MpConfig {
                         resolved.append(&mut ips);
                     }
                     Err(e) => {
-                        let msg = config.buf.push(format!("{ERR_RESOLVE} '{name}': {e}"));
+                        let msg = config.buf.error(format!("{ERR_RESOLVE} '{name}': {e}"));
                         if config.verbose {
                             eprintln!("{msg}");
                         }
@@ -300,7 +300,7 @@ impl MpConfig {
         config.addrs = addrs;
         config.seen = seen;
         if config.addrs.is_empty() {
-            let msg = config.buf.push(format!("{WARN_NO_VALID_IPS}"));
+            let msg = config.buf.notice(format!("{WARN_NO_VALID_IPS}"));
             eprintln!("{msg}");
         } else {
             let msg = config
