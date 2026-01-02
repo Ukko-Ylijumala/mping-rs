@@ -3,7 +3,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use parking_lot::RwLock;
-use ratatui::widgets::{List, Paragraph};
+use ratatui::{
+    style::Stylize,
+    text::{Line, Span},
+    widgets::{List, Paragraph},
+};
 use std::{
     collections::VecDeque,
     fmt::{self, Display},
@@ -32,17 +36,18 @@ pub(crate) enum LogLevel {
 }
 
 impl Display for LogLevel {
+    #[rustfmt::skip]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: &str = match self {
             LogLevel::Emergency => "EMERG",
-            LogLevel::Alert => "ALERT",
-            LogLevel::Critical => "CRIT",
-            LogLevel::Error => "ERR",
-            LogLevel::Warn => "WARN",
-            LogLevel::Notice => "NOTICE",
-            LogLevel::Info => "INFO",
-            LogLevel::Debug => "DEBUG",
-            LogLevel::Trace => "TRACE",
+            LogLevel::Alert     => "ALERT",
+            LogLevel::Critical  => "CRIT",
+            LogLevel::Error     => "ERROR",
+            LogLevel::Warn      => "WARN",
+            LogLevel::Notice    => "NOTE",
+            LogLevel::Info      => "INFO",
+            LogLevel::Debug     => "DEBUG",
+            LogLevel::Trace     => "TRACE",
         };
         write!(f, "{s}")
     }
@@ -142,6 +147,27 @@ impl Message {
     #[inline]
     pub fn as_timestamped(&self) -> String {
         format!("{} {}: {}", self.when, self.lvl, self.msg)
+    }
+
+    /// Return the message as a styled [Line] for displaying with Ratatui.
+    /// The styling depends on the log level.
+    #[inline]
+    pub fn as_line(&self) -> Line<'static> {
+        // Clone the string so the Span owns it and doesn't borrow from self, allowing
+        // the produced Line to outlive any read lock used to access the message.
+        let msg = Span::raw(self.msg.clone());
+        Line::from_iter([
+            Span::raw(format!("{} {}: ", self.when, self.lvl)),
+            match self.lvl {
+                LogLevel::Critical => msg.bold().on_light_red(),
+                LogLevel::Error => msg.bold().light_red(),
+                LogLevel::Warn => msg.light_yellow(),
+                LogLevel::Notice => msg.cyan(),
+                LogLevel::Debug => msg.dim(),
+                LogLevel::Trace => msg.dim().italic(),
+                _ => msg,
+            },
+        ])
     }
 }
 
@@ -254,8 +280,9 @@ impl MessageBuffer {
     }
 
     /// Convert all messages (with timestamps) to a [List] for displaying with Ratatui.
+    /// Each message is styled according to its log level.
     pub fn to_list(&self) -> List<'_> {
-        List::new(self.to_timestamped())
+        List::new(self.with(|msgs| msgs.iter().map(|m| m.as_line()).collect::<Vec<Line>>()))
     }
 }
 
