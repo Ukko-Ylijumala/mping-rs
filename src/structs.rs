@@ -172,7 +172,7 @@ impl AppState {
         };
 
         self.add_targets(targets);
-        self.logger.trace("application state initialized");
+        self.logger.trace(INFO_STATE_INIT);
         Ok(self.into())
     }
 
@@ -201,7 +201,7 @@ impl AppState {
     /// Toggle perf mode on/off.
     pub fn toggle_perf(&self) {
         self.perf.fetch_xor(true, Ordering::SeqCst);
-        self.logger.log(templater!(
+        self.logger.debug(templater!(
             INFO_PERF,
             if self.perf() { ENABLED } else { DISABLED }
         ));
@@ -262,7 +262,7 @@ impl AppState {
     pub fn toggle_target_pause(&self, index: usize) {
         if let Some(tgt) = self.targets.read().get(index) {
             tgt.toggle_pause();
-            self.logger.log(templater!(
+            self.logger.debug(templater!(
                 INFO_PING,
                 tgt,
                 if tgt.is_paused() { PAUSED } else { RESUMED }
@@ -305,7 +305,7 @@ impl AppState {
             self.runtime.spawn_blocking(move || {
                 let now: Instant = Instant::now();
                 tgt_ptr1.determine_hops(UPDATE_TASK_TIMEOUT);
-                logger.log(templater!(
+                logger.debug(templater!(
                     INFO_HOPS,
                     tgt_ptr1,
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
@@ -322,7 +322,7 @@ impl AppState {
             self.runtime.spawn(async move {
                 let now: Instant = Instant::now();
                 tgt_ptr2.resolve_ptr(&resolver).await;
-                logger.log(templater!(
+                logger.debug(templater!(
                     INFO_PTR,
                     tgt_ptr2,
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
@@ -353,7 +353,7 @@ impl AppState {
     pub fn stop_target(&self, index: usize) {
         if let Some(tgt) = self.targets.read().get(index) {
             if !tgt.is_stopped() {
-                self.logger.log(templater!(INFO_STOP, tgt));
+                self.logger.notice(templater!(INFO_STOP, tgt));
             }
             tgt.stop();
         }
@@ -363,7 +363,7 @@ impl AppState {
     pub fn remove_target(&self, index: usize) {
         let mut targets = self.targets.write();
         if let Some(tgt) = targets.get(index) {
-            self.logger.log(templater!(INFO_REMOVE, tgt));
+            self.logger.notice(templater!(INFO_REMOVE, tgt));
             tgt.stop();
             targets.remove(index);
         }
@@ -383,7 +383,7 @@ impl AppState {
         });
         let num: usize = orig_len.saturating_sub(targets.len());
         if num > 0 {
-            self.logger.log(templater!(
+            self.logger.notice(templater!(
                 INFO_UNR_REM,
                 num,
                 format!("{:.2}", now.elapsed().as_secs_f32() * 1e3),

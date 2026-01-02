@@ -137,6 +137,7 @@ pub static ERR_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs sys
     sudo sysctl -w net.ipv4.ping_group_range=\"<start> <end>\"\n";
 
 // structs.rs
+pub static INFO_STATE_INIT: &str = "application state initialized";
 pub static INFO_PERF: &str = "performance mode {}";
 pub static INFO_NEW: &str = "{} new target(s) added ({} -> {})";
 pub static INFO_PING: &str = "pinging for '{}' {}";
