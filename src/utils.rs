@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{ip_addresses::parse_ip_or_range, strings::*, logging::Logger};
+use crate::{ip_addresses::parse_ip_or_range, logging::Logger, strings::*};
 use itertools::Itertools;
 use signal_hook::{
     consts::signal::{SIGINT, SIGQUIT, SIGTERM},
@@ -69,9 +69,13 @@ pub(crate) fn nice_permission_error(err: &Error, ip_ver: usize) -> Box<dyn std::
             .unwrap_or_else(|| APP_NAME.to_string());
         let bin_path: PathBuf = env::current_exe().unwrap_or_else(|_| PathBuf::from(&name));
 
-        eprintln!("{INFO_CAPS} {}", bin_path.display());
-        if ip_ver == 4 {
-            eprintln!("{INFO_CAPS_V4}");
+        eprintln!("{ERR_CAPS}");
+        #[cfg(target_os = "linux")]
+        {
+            eprintln!("{ERR_CAPS_LINUX} {}", bin_path.display());
+            if ip_ver == 4 {
+                eprintln!("{ERR_CAPS_V4}");
+            }
         }
         Box::new(Error::new(
             PermissionDenied,
@@ -139,7 +143,7 @@ where
                 all_addrs.append(&mut ips);
             }
             Err(e) => {
-                let msg = logger.log(format!("{ERR_PARSE_IP} '{target}': {e}"));
+                let msg = logger.error(format!("{ERR_PARSE_IP} '{target}': {e}"));
                 if verbose {
                     eprintln!("{msg}");
                 }
@@ -169,7 +173,7 @@ where
                     exclusions.extend(ips.drain(..));
                 }
                 Err(e) => {
-                    let msg = logger.log(format!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}"));
+                    let msg = logger.error(format!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}"));
                     if verbose {
                         eprintln!("{msg}");
                     }
@@ -182,9 +186,9 @@ where
             // let's see if we actually exclude anything
             let remainder: HashSet<IpAddr> = &seen - &exclusions;
             if remainder == seen {
-                logger.log(WARN_NO_MATCHES);
+                logger.warn(WARN_NO_MATCHES);
             } else if remainder.is_empty() {
-                logger.log(WARN_ALL_EXCLUDED);
+                logger.warn(WARN_ALL_EXCLUDED);
             } else {
                 let msg = logger.log(format!(
                     "{INFO_EXCLUDE}: {}",
@@ -206,15 +210,15 @@ pub fn reverse_name(addr: &IpAddr) -> String {
     match addr {
         IpAddr::V4(v4) => v4.octets().iter().rev().join(".") + PTR_IPV4,
         IpAddr::V6(v6) => {
-            let s = itertools::Itertools::intersperse(
+            itertools::Itertools::intersperse(
                 v6.octets()
                     .iter()
                     .rev()
-                    .flat_map(|b| format!("{:02x}", b).chars().rev().collect::<Vec<char>>()),
+                    .flat_map(|b| format!("{b:02x}").chars().rev().collect::<Vec<char>>()),
                 '.',
             )
-            .collect::<String>();
-            s + PTR_IPV6
+            .collect::<String>()
+                + PTR_IPV6
         }
     }
 }
