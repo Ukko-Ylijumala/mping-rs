@@ -172,6 +172,7 @@ impl AppState {
         };
 
         self.add_targets(targets);
+        self.logger.trace("application state initialized");
         Ok(self.into())
     }
 
@@ -447,7 +448,7 @@ impl PopupContents {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
             PopupContents::Multiline(s) => Paragraph::new(s.join("\n")),
             PopupContents::Buffer(buf) => buf.to_paragraph(),
-            PopupContents::None => Paragraph::new(""),
+            PopupContents::None => Paragraph::default(),
         }
     }
 
@@ -457,7 +458,7 @@ impl PopupContents {
             PopupContents::Line(s) => List::new(vec![s.clone()]),
             PopupContents::Multiline(s) => List::new(s.clone()),
             PopupContents::Buffer(buf) => buf.to_list(),
-            PopupContents::None => List::new([""]),
+            PopupContents::None => List::default(),
         }
     }
 

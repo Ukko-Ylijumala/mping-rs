@@ -192,12 +192,12 @@ impl MpConfig {
         let wants_default_opts: bool = config.dns_timeout == DEFAULT_DNS_TIMEOUT;
         let (resolver_config, resolver_opts) = {
             if wants_default_conf && wants_default_opts {
-                config.buf.push(INFO_DNS);
+                config.buf.debug(INFO_DNS);
                 read_system_conf()? // use system defaults
             } else {
                 let mut res_opts = ResolverOpts::default();
                 if !wants_default_opts {
-                    config.buf.push(&format!(
+                    config.buf.debug(&format!(
                         "{INFO_DNS_TIMEO}: {:.1}s",
                         config.dns_timeout.as_secs_f64()
                     ));
@@ -209,7 +209,7 @@ impl MpConfig {
                         sys_conf
                     }
                     false => {
-                        config.buf.push(&format!(
+                        config.buf.debug(&format!(
                             "{INFO_DNS_CUSTOM}: {}",
                             config
                                 .dns_servers
@@ -279,7 +279,7 @@ impl MpConfig {
             resolved.retain(|ip: &IpAddr| seen.insert(*ip));
             let msg = config
                 .buf
-                .push(format!("{INFO_RESOLVED}: {}", resolved.len()));
+                .notice(format!("{INFO_RESOLVED}: {}", resolved.len()));
             if config.verbose {
                 eprintln!("{msg}");
             }
@@ -332,7 +332,7 @@ impl MpConfig {
         */
         let limit: Duration = config.interval * 4; // max. 4 pending pings per target
         if config.timeout > limit {
-            let msg = config.buf.push(format!(
+            let msg = config.buf.notice(format!(
                 "{INFO_ADJUST} ({:.2}s -> {:.2}s, interval: {:.2}s)",
                 config.timeout.as_secs_f64(),
                 limit.as_secs_f64(),

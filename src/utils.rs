@@ -143,7 +143,7 @@ where
                 all_addrs.append(&mut ips);
             }
             Err(e) => {
-                let msg = logger.error(format!("{ERR_PARSE_IP} '{target}': {e}"));
+                let msg = logger.warn(format!("{ERR_PARSE_IP} '{target}': {e}"));
                 if verbose {
                     eprintln!("{msg}");
                 }
@@ -186,7 +186,7 @@ where
             // let's see if we actually exclude anything
             let remainder: HashSet<IpAddr> = &seen - &exclusions;
             if remainder == seen {
-                logger.warn(WARN_NO_MATCHES);
+                logger.notice(WARN_NO_MATCHES);
             } else if remainder.is_empty() {
                 logger.warn(WARN_ALL_EXCLUDED);
             } else {
