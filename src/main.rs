@@ -9,6 +9,7 @@ mod hopcount;
 mod ip_addresses;
 mod keyboard;
 mod latencywin;
+mod logging;
 mod macros;
 mod pingdata;
 mod strings;

@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
+    logging::MessageBuffer,
     strings::*,
-    structs::{DEFAULT_PAYLOAD_SIZE, MessageBuffer},
+    structs::{DEFAULT_PAYLOAD_SIZE},
     utils::{parse_float_into_duration, parse_ip_addresses},
 };
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
