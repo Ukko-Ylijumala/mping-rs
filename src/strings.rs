@@ -24,7 +24,7 @@ pub static DISABLED: &str = "disabled";
 // main.rs
 pub static ERR_V4_MISSING: &str = "IPv4 client missing";
 pub static ERR_V6_MISSING: &str = "IPv6 client missing";
-pub static ERR_KEV_JOIN: &str = "Error joining key event handler thread";
+pub static ERR_KEV_JOIN: &str = "Joining key event handler thread failed";
 pub static APP_RUNNING: &str = " mping initialized. Press 'q' to quit, 'h' for help.";
 pub static INFO_QUITTING: &str = "Main thread quitting. Waiting for tasks to terminate...";
 pub static INFO_INFO: &str = " Info ";
@@ -71,8 +71,8 @@ pub static GOT_SIGTERM: &str = "Received SIGTERM (kill -15), shutting down...";
 pub static GOT_SIGQUIT: &str = "Received SIGQUIT (Ctrl-\\), shutting down...";
 pub static ERR_TIMEVAL: &str = "invalid time value";
 pub static ERR_PARSE_IP: &str = "parsing failed for address";
-pub static WARN_NO_MATCHES: &str = "WARN: exclusions did not match any addresses.";
-pub static WARN_ALL_EXCLUDED: &str = "WARN: all target addresses were excluded.";
+pub static WARN_NO_MATCHES: &str = "exclusions did not match any addresses.";
+pub static WARN_ALL_EXCLUDED: &str = "all target addresses were excluded.";
 pub static INFO_EXPANDED: &str = "Number of addresses expanded from";
 pub static INFO_EXCLUDE: &str = "Excluding addresses from target list";
 pub static PTR_IPV4: &str = ".in-addr.arpa";
@@ -97,12 +97,21 @@ pub static INFO_SOCKET: &str = "Raw socket created for ICMPv";
 pub static INFO_SEND: &str = "Sending ICMP Echo Request to";
 
 // args.rs
-pub static ERR_RESOLVE: &str = "ERROR: failed to resolve hostname";
-pub static WARN_NO_VALID_IPS: &str = "WARN: no valid IP addresses provided.";
+pub static NUM: &str = "NUM";
+pub static SECS: &str = "SECS";
+pub static BYTES: &str = "BYTES";
+pub static FLOAT: &str = "FLOAT";
+pub static IP_LIST: &str = "IP1 [IP2...]";
+pub static IP_LIST_COMMA: &str = "IP1[,IP2...]";
+pub static ERR_RESOLVE: &str = "Failed to resolve hostname";
+pub static WARN_NO_VALID_IPS: &str = "No valid IP addresses provided.";
 pub static INFO_RESOLVE_ONE: &str = "Number of addresses resolved from hostname";
 pub static INFO_RESOLVED: &str = "Number of new addresses resolved from hostnames";
 pub static INFO_UNIQUE: &str = "Total unique addresses to monitor";
 pub static INFO_ADJUST: &str = "Adjusting timeout to avoid excessive concurrent pings";
+pub static INFO_DNS: &str = "Using system DNS configuration";
+pub static INFO_DNS_TIMEO: &str = "Setting custom DNS timeout";
+pub static INFO_DNS_CUSTOM: &str = "Using custom DNS server(s)";
 
 pub static HELP_TARGETS: &str = "Space separated list of IP addresses or ranges to monitor";
 pub static HELP_EXCLUDE: &str = "Comma separated IP addresses (and/or ranges) to exclude";
@@ -121,10 +130,10 @@ pub static HELP_PERF: &str = "Try to be more performant by reducing task spawn o
 pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";
 
-pub static INFO_CAPS: &str = "This program requires CAP_NET_RAW to send ICMP packets.
-Either run it with sudo, or grant the capability to the binary:
+pub static ERR_CAPS: &str = "This program requires raw sockets (CAP_NET_RAW on Linux) to send ICMP packets.";
+pub static ERR_CAPS_LINUX: &str = "Either run it with sudo, or grant the capability to the binary:
     sudo setcap cap_net_raw+ep";
-pub static INFO_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs system-wide (less secure):
+pub static ERR_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs system-wide (less secure):
     sudo sysctl -w net.ipv4.ping_group_range=\"<start> <end>\"\n";
 
 // structs.rs
