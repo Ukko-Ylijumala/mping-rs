@@ -26,7 +26,7 @@ use std::{
     ops::Deref,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -468,17 +468,6 @@ impl PopupContents {
     }
 }
 
-/**
-This enum encodes whether a popup is visible and what type it is, if so.
-Other code can use this to determine what to do when a different popup is already visible.
-*/
-#[derive(Default, Debug, Clone)]
-pub(crate) enum PopupState {
-    #[default]
-    Hidden,
-    MsgBufferVisible,
-}
-
 /* -------------------------------------------------------------------------- */
 
 /// An enum representing different types of remote query results.
@@ -535,24 +524,135 @@ impl Display for QueryResponse {
 
 /* -------------------------------------------------------------------------- */
 
-#[derive(Debug, Default, Clone)]
+/**
+Log level for messages. Follows Linux syslog convention, but
+adds "trace" at 15. Default is "info". "Emergency" and "alert"
+are expected to not be used, as we should not be system critical.
+*/
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) enum LogLevel {
+    Emergency,
+    Alert,
+    Critical,
+    Error,
+    Warn,
+    Notice,
+    #[default]
+    Info,
+    Debug,
+    Trace = 15,
+}
+
+impl Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = match self {
+            LogLevel::Emergency => "EMERG",
+            LogLevel::Alert => "ALERT",
+            LogLevel::Critical => "CRIT",
+            LogLevel::Error => "ERR",
+            LogLevel::Warn => "WARN",
+            LogLevel::Notice => "NOTICE",
+            LogLevel::Info => "INFO",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Trace => "TRACE",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/* ---------------------------------- */
+
+// Function name => Level variant mapper.
+macro_rules! level_variant {
+    (crit) => { LogLevel::Critical };
+    (error) => { LogLevel::Error };
+    (warn) => { LogLevel::Warn };
+    (notice) => { LogLevel::Notice };
+    (info) => { LogLevel::Info };
+    (debug) => { LogLevel::Debug };
+    (trace) => { LogLevel::Trace };
+}
+
+/// Template for [Message]-level methods.
+macro_rules! gen_level_methods_msg {
+    ($($fn:ident),+ $(,)?) => (
+        $(
+            #[inline]
+            pub fn $fn<S: Into<String>>(msg: S) -> Message {
+                Self::with_level(level_variant!($fn), msg)
+            }
+        )+
+    );
+}
+
+/// Template for [MessageBuffer]-level methods.
+macro_rules! gen_level_methods_buf {
+     ($($fn:ident),+ $(,)?) => (
+        $(
+            #[inline]
+            pub fn $fn(&self, msg: impl Into<String>) -> Message {
+                self.push_level(level_variant!($fn), msg)
+            }
+        )+
+     );
+}
+
+/// Template for [Logger] trait method blueprints.
+macro_rules! gen_level_methods_trait {
+    ($($fn:ident),+ $(,)?) => (
+        $(
+            /// Log a $fn-level message and return its representation.
+            fn $fn<S: AsRef<str>>(&self, msg: S) -> String;
+        )+
+    );
+}
+
+/// Template for [Logger] trait method implementations.
+macro_rules! gen_level_methods_impl {
+    ($($fn:ident),+ $(,)?) => (
+        $(
+            fn $fn<S: AsRef<str>>(&self, msg: S) -> String {
+                self.$fn(msg.as_ref()).as_timestamped()
+            }
+        )+
+    );
+}
+
+/* ---------------------------------- */
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct Message {
     pub when: TimeSinceEpoch,
+    lvl: LogLevel,
     msg: String,
 }
 
 impl Message {
+    /// Create a new info-level message with the current timestamp.
     pub fn new<S: Into<String>>(msg: S) -> Self {
         Self {
             when: TimeSinceEpoch::new(),
+            lvl: LogLevel::Info,
             msg: msg.into(),
         }
     }
 
+    /// Create a new log message with a given [LogLevel] and current timestamp.
+    pub fn with_level<S: Into<String>>(lvl: LogLevel, msg: S) -> Self {
+        Self {
+            when: TimeSinceEpoch::new(),
+            lvl,
+            msg: msg.into(),
+        }
+    }
+
+    // Helper methods for creating messages with specific log levels.
+    gen_level_methods_msg!(crit, error, warn, notice, info, debug, trace);
+
     /// Return the message as a timestamped string.
     #[inline]
     pub fn as_timestamped(&self) -> String {
-        format!("{} {}", self.when, self.msg)
+        format!("{} {}: {}", self.when, self.lvl, self.msg)
     }
 }
 
@@ -566,7 +666,19 @@ impl Deref for Message {
 
 impl Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {}", self.when, self.msg)
+        write!(f, "{} {}: {}", self.when, self.lvl, self.msg)
+    }
+}
+
+impl PartialOrd for Message {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.when.cmp(&other.when))
+    }
+}
+
+impl Ord for Message {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.when.cmp(&other.when)
     }
 }
 
@@ -578,6 +690,8 @@ impl Display for Message {
 pub(crate) struct MessageBuffer {
     buf: RwLock<VecDeque<Message>>,
     cap: usize,
+    /// Total number of messages ever added to the buffer.
+    total: AtomicU32,
 }
 
 impl MessageBuffer {
@@ -585,6 +699,7 @@ impl MessageBuffer {
         Self {
             buf: VecDeque::with_capacity(capacity).into(),
             cap: capacity,
+            total: AtomicU32::new(0),
         }
     }
 
@@ -596,14 +711,25 @@ impl MessageBuffer {
             buf.pop_front();
         }
         buf.push_back(msg.clone());
+        self.total.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Add a new message to the buffer and return a copy of it.
+    /// Add a new info-level message to the buffer and return a copy of it.
     pub fn push(&self, msg: impl Into<String>) -> Message {
         let msg = Message::new(msg);
         self.add(&msg);
         msg
     }
+
+    /// Add a new message with given [LogLevel] to the buffer and return a copy of it.
+    pub fn push_level(&self, lvl: LogLevel, msg: impl Into<String>) -> Message {
+        let msg = Message::with_level(lvl, msg);
+        self.add(&msg);
+        msg
+    }
+
+    // Helper methods for adding messages with specific log levels.
+    gen_level_methods_buf!(crit, error, warn, notice, info, debug, trace);
 
     /// Read access to the inner VecDeque via a closure.
     #[inline]
@@ -649,6 +775,7 @@ impl Clone for MessageBuffer {
         Self {
             buf: self.buf.read().clone().into(),
             cap: self.cap,
+            total: AtomicU32::new(self.total.load(Ordering::Relaxed)),
         }
     }
 }
@@ -675,6 +802,9 @@ pub trait Logger {
 
     /// The number of logged messages.
     fn len(&self) -> usize;
+
+    // Define level-specific logging methods to be implemented.
+    gen_level_methods_trait!(crit, error, warn, notice, info, debug, trace);
 }
 
 impl Logger for MessageBuffer {
@@ -693,4 +823,7 @@ impl Logger for MessageBuffer {
     fn len(&self) -> usize {
         self.len()
     }
+
+    // Implement level-specific logging methods.
+    gen_level_methods_impl!(crit, error, warn, notice, info, debug, trace);
 }
