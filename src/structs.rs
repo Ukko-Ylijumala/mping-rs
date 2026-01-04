@@ -21,6 +21,7 @@ use ratatui::{
     widgets::{List, Paragraph},
 };
 use std::{
+    collections::{HashMap, HashSet},
     fmt::{self, Display},
     net::IpAddr,
     sync::{
@@ -77,6 +78,7 @@ pub(crate) struct AppState {
     runtime: tokio::runtime::Handle,
     spawned_tasks: AtomicU64,
     perf: AtomicBool,
+    resolved: RwLock<Resolved>,
 }
 
 impl AppState {
@@ -143,6 +145,7 @@ impl AppState {
             perf: conf.perf.into(),
             popup_contents: PopupContents::None.into(),
             help_contents: PopupContents::Multiline(help),
+            resolved: conf.resolved.clone().into(),
         }
     }
 
@@ -395,6 +398,8 @@ impl AppState {
     }
 }
 
+/* ---------------------------------- */
+
 /// Viewport information for the target table in the UI.
 pub(crate) struct ViewPort {
     /// Total number of targets.
@@ -426,6 +431,81 @@ impl ViewPort {
     #[inline]
     pub fn needs_paging(&self) -> bool {
         self.targets > self.rows
+    }
+}
+
+/* ---------------------------------- */
+
+/**
+Map resolved IP addresses by name and by address.
+
+NOTE: in the current implementation, if the same IP address is added
+from multiple names, the last addition "wins" the IP -> name mapping.
+*/
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Resolved {
+    by_name: HashMap<Arc<str>, HashSet<IpAddr>>,
+    by_addr: HashMap<IpAddr, Arc<str>>,
+}
+
+impl Resolved {
+    pub fn len(&self) -> usize {
+        self.by_name.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_name.is_empty()
+    }
+
+    /// Add a resolved name and its associated IP address(es).
+    pub fn add<S: AsRef<str>>(&mut self, name: S, ips: &[IpAddr]) {
+        let name: Arc<str> = self
+            .by_name
+            .get_key_value(name.as_ref())
+            .map(|(k, _)| k.clone())
+            .unwrap_or_else(|| Arc::from(name.as_ref()));
+
+        // This would work too, but let's go with a simple for-loop for clarity.
+        // ips.iter().for_each(|a| {self.by_addr.insert(*a, name.clone());});
+        for ip in ips {
+            self.by_addr.insert(*ip, name.clone());
+        }
+
+        self.by_name
+            .entry(name)
+            .or_default()
+            .extend(ips.iter().copied());
+    }
+
+    pub fn contains_addr(&self, ip: &IpAddr) -> bool {
+        self.by_addr.contains_key(ip)
+    }
+
+    pub fn contains_name<S: AsRef<str>>(&self, name: S) -> bool {
+        self.by_name.contains_key(name.as_ref())
+    }
+
+    /// All resolved IP addresses as a Vec in no particular order.
+    pub fn addresses(&self) -> Vec<IpAddr> {
+        self.by_addr.keys().cloned().collect()
+    }
+
+    /// All resolved IP addresses as a Vec grouped by name.
+    pub fn addrs_by_name(&self) -> Vec<IpAddr> {
+        self.by_name
+            .iter()
+            .flat_map(|(_, ips)| ips.iter().cloned())
+            .collect()
+    }
+
+    /// Get the resolved name for the given IP address, if any.
+    pub fn get_name(&self, ip: &IpAddr) -> Option<Arc<str>> {
+        self.by_addr.get(ip).cloned()
+    }
+
+    /// Get the resolved IP addresses for the given name, if any.
+    pub fn get_addrs<S: AsRef<str>>(&self, name: S) -> Option<&HashSet<IpAddr>> {
+        self.by_name.get(name.as_ref())
     }
 }
 

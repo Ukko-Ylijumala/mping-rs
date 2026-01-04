@@ -5,7 +5,7 @@
 use crate::{
     logging::MessageBuffer,
     strings::*,
-    structs::{DEFAULT_PAYLOAD_SIZE},
+    structs::{DEFAULT_PAYLOAD_SIZE, Resolved},
     utils::{parse_float_into_duration, parse_ip_addresses},
 };
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
@@ -168,6 +168,9 @@ pub(crate) struct MpConfig {
 
     #[arg(skip)]
     pub buf: Arc<MessageBuffer>,
+
+    #[arg(skip)]
+    pub resolved: Resolved,
 }
 
 impl MpConfig {
@@ -247,12 +250,11 @@ impl MpConfig {
         );
 
         // Now try to resolve any entries that failed to parse as IPs.
-        let mut resolved: Vec<IpAddr> = Vec::with_capacity(failed.len()); // assume all would resolve 1:1
         if let Some(resolver) = &config.resolver {
             for name in &failed {
                 match resolver.lookup_ip(name).await {
                     Ok(lookup) => {
-                        let mut ips: Vec<IpAddr> = lookup.iter().collect();
+                        let ips: Vec<IpAddr> = lookup.iter().collect();
                         if !ips.is_empty() {
                             let msg = config
                                 .buf
@@ -261,7 +263,8 @@ impl MpConfig {
                                 eprintln!("{msg}");
                             }
                         }
-                        resolved.append(&mut ips);
+                        // if this was a fully qualified domain name, strip the trailing dot
+                        config.resolved.add(name.trim_end_matches("."), &ips);
                     }
                     Err(e) => {
                         let msg = config.buf.error(format!("{ERR_RESOLVE} '{name}': {e}"));
@@ -274,7 +277,8 @@ impl MpConfig {
         }
 
         // Did we resolve any new addresses?
-        if !resolved.is_empty() {
+        if !config.resolved.is_empty() {
+            let mut resolved: Vec<IpAddr> = config.resolved.addrs_by_name();
             // Remove duplicates by comparing against already parsed addresses.
             resolved.retain(|ip: &IpAddr| seen.insert(*ip));
             let msg = config
