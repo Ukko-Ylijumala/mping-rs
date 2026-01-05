@@ -6,7 +6,7 @@ use crate::{
     logging::MessageBuffer,
     strings::*,
     structs::{DEFAULT_PAYLOAD_SIZE, Resolved},
-    utils::{parse_float_into_duration, parse_ip_addresses},
+    utils::{parse_float_into_duration, parse_ip_addresses, resolve_names},
 };
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
 use hickory_resolver::{
@@ -250,30 +250,15 @@ impl MpConfig {
         );
 
         // Now try to resolve any entries that failed to parse as IPs.
-        if let Some(resolver) = &config.resolver {
-            for name in &failed {
-                match resolver.lookup_ip(name).await {
-                    Ok(lookup) => {
-                        let ips: Vec<IpAddr> = lookup.iter().collect();
-                        if !ips.is_empty() {
-                            let msg = config
-                                .buf
-                                .push(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
-                            if config.verbose {
-                                eprintln!("{msg}");
-                            }
-                        }
-                        // if this was a fully qualified domain name, strip the trailing dot
-                        config.resolved.add(name.trim_end_matches("."), &ips);
-                    }
-                    Err(e) => {
-                        let msg = config.buf.error(format!("{ERR_RESOLVE} '{name}': {e}"));
-                        if config.verbose {
-                            eprintln!("{msg}");
-                        }
-                    }
-                }
-            }
+        for (name, ips) in resolve_names(
+            failed,
+            &*config.resolver.as_ref().unwrap(),
+            &*config.buf,
+            config.verbose,
+        )
+        .await
+        {
+            config.resolved.add(name, &ips);
         }
 
         // Did we resolve any new addresses?

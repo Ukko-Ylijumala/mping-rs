@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{ip_addresses::parse_ip_or_range, logging::Logger, strings::*};
+use hickory_resolver::TokioResolver;
 use itertools::Itertools;
 use signal_hook::{
     consts::signal::{SIGINT, SIGQUIT, SIGTERM},
@@ -205,6 +206,8 @@ where
     (all_addrs, seen, exclusions, failed)
 }
 
+/* -------------------------------------------------------------------------- */
+
 /// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).
 pub fn reverse_name(addr: &IpAddr) -> String {
     match addr {
@@ -221,6 +224,48 @@ pub fn reverse_name(addr: &IpAddr) -> String {
                 + PTR_IPV6
         }
     }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+Asynchronously resolve a set of DNS names into IP addresses.
+
+### Returns:
+- a Vec of tuples ([String], [Vec] of [IpAddr]) for successfully resolved names
+*/
+pub(crate) async fn resolve_names<T>(
+    failed: HashSet<String>,
+    res: &TokioResolver,
+    logger: &T,
+    verbose: bool,
+) -> Vec<(String, Vec<IpAddr>)>
+where
+    T: Logger,
+{
+    let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(failed.len() * 2);
+    for name in &failed {
+        match res.lookup_ip(name).await {
+            Ok(lookup) => {
+                let ips: Vec<IpAddr> = lookup.iter().collect();
+                if !ips.is_empty() {
+                    let msg = logger.info(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
+                    if verbose {
+                        eprintln!("{msg}");
+                    }
+                }
+                // if this was a fully qualified domain name, strip the trailing dot
+                resolved.push((name.trim_end_matches(".").to_string(), ips));
+            }
+            Err(e) => {
+                let msg = logger.error(format!("{ERR_RESOLVE} '{name}': {e}"));
+                if verbose {
+                    eprintln!("{msg}");
+                }
+            }
+        }
+    }
+    resolved
 }
 
 /* -------------------------------------------------------------------------- */
