@@ -100,5 +100,18 @@ macro_rules! delegate_write {
     };
 }
 
+/**
+Stderr printing that avoids corrupting the TUI while in alt screen.
+
+Note: this only gates *your* prints; it cannot stop other crates or
+panics, so those must be handled separately.
+*/
+macro_rules! eprintln_nomangle {
+    ($($tt:tt)*) => {
+        $crate::tui::eprintln_safe(format_args!($($tt)*))
+    };
+}
+
 pub(crate) use delegate_read;
 pub(crate) use delegate_write;
+pub(crate) use eprintln_nomangle;

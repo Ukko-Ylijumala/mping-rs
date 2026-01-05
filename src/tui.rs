@@ -25,10 +25,12 @@ use std::{
     io::{Result, Stdout, stdout},
     ops::Index,
     panic,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 const TBL_WASTED_ROWS: u16 = 3; // borders + header
 const TBL_WASTED_COLS: u16 = 2; // borders
+static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Default)]
 /**
@@ -639,6 +641,7 @@ impl TerminalGuard {
         enable_raw_mode()?;
         let mut stdout: Stdout = stdout();
         execute!(stdout, EnterAlternateScreen, Hide)?;
+        set_alt_screen_active(true);
 
         Ok(Self {
             term: Terminal::new(CrosstermBackend::new(stdout))?,
@@ -657,6 +660,7 @@ impl Drop for TerminalGuard {
 fn terminal_teardown(verbose: bool) {
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), LeaveAlternateScreen, Show);
+    set_alt_screen_active(false);
 
     if verbose {
         eprintln!("{TUI_TERMINATE}");
@@ -667,4 +671,24 @@ fn terminal_teardown(verbose: bool) {
 pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
     terminal_teardown(true);
     eprintln!("{APP_PANIC}: {}", info);
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+Mark whether the application currently has the terminal in alternate screen mode.
+
+- `set_alt_screen_active(true)` immediately after entering alt screen,
+- `set_alt_screen_active(false)` immediately before/after leaving it.
+*/
+fn set_alt_screen_active(active: bool) {
+    ALT_SCREEN_ACTIVE.store(active, Ordering::Release);
+}
+
+/// Safely print to stderr only if not in alternate screen mode.
+#[inline]
+pub(crate) fn eprintln_safe(args: fmt::Arguments<'_>) {
+    if !ALT_SCREEN_ACTIVE.load(Ordering::Acquire) {
+        eprintln!("{args}");
+    }
 }
