@@ -116,7 +116,6 @@ Removes duplicates and preserves order of first occurrence.
 pub fn parse_ip_addresses<T>(
     targets: &[String],
     exclude: Option<&[String]>,
-    verbose: bool,
     logger: &T,
 ) -> (
     Vec<IpAddr>,
@@ -136,18 +135,12 @@ where
         match parse_ip_or_range(target) {
             Ok(mut ips) => {
                 if ips.len() > 1 {
-                    let msg = logger.log(format!("{INFO_EXPANDED} '{target}': {}", ips.len()));
-                    if verbose {
-                        eprintln!("{msg}");
-                    }
+                    logger.log(format!("{INFO_EXPANDED} '{target}': {}", ips.len()));
                 }
                 all_addrs.append(&mut ips);
             }
             Err(e) => {
-                let msg = logger.warn(format!("{ERR_PARSE_IP} '{target}': {e}"));
-                if verbose {
-                    eprintln!("{msg}");
-                }
+                logger.warn(format!("{ERR_PARSE_IP} '{target}': {e}"));
                 failed.insert(target.clone());
             }
         }
@@ -163,21 +156,15 @@ where
             match parse_ip_or_range(exc) {
                 Ok(mut ips) => {
                     if ips.len() > 1 {
-                        let msg = logger.log(format!(
+                        logger.log(format!(
                             "{INFO_EXPANDED} '{exc}': {} (exclusion)",
                             ips.len()
                         ));
-                        if verbose {
-                            eprintln!("{msg}");
-                        }
                     }
                     exclusions.extend(ips.drain(..));
                 }
                 Err(e) => {
-                    let msg = logger.error(format!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}"));
-                    if verbose {
-                        eprintln!("{msg}");
-                    }
+                    logger.error(format!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}"));
                 }
             }
         }
@@ -191,13 +178,10 @@ where
             } else if remainder.is_empty() {
                 logger.warn(WARN_ALL_EXCLUDED);
             } else {
-                let msg = logger.log(format!(
+                logger.log(format!(
                     "{INFO_EXCLUDE}: {}",
                     (seen.len() - remainder.len())
                 ));
-                if verbose {
-                    eprintln!("{msg}");
-                }
                 all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
             }
         };
@@ -238,30 +222,23 @@ pub(crate) async fn resolve_names<T>(
     failed: HashSet<String>,
     res: &TokioResolver,
     logger: &T,
-    verbose: bool,
 ) -> Vec<(String, Vec<IpAddr>)>
 where
     T: Logger,
 {
-    let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(failed.len() * 2);
+    let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(failed.len());
     for name in &failed {
         match res.lookup_ip(name).await {
             Ok(lookup) => {
                 let ips: Vec<IpAddr> = lookup.iter().collect();
                 if !ips.is_empty() {
-                    let msg = logger.info(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
-                    if verbose {
-                        eprintln!("{msg}");
-                    }
+                    logger.info(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
                 }
                 // if this was a fully qualified domain name, strip the trailing dot
                 resolved.push((name.trim_end_matches(".").to_string(), ips));
             }
             Err(e) => {
-                let msg = logger.error(format!("{ERR_RESOLVE} '{name}': {e}"));
-                if verbose {
-                    eprintln!("{msg}");
-                }
+                logger.error(format!("{ERR_RESOLVE} '{name}': {e}"));
             }
         }
     }

@@ -2,6 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use crate::macros::eprintln_nomangle;
 use parking_lot::RwLock;
 use ratatui::{
     style::Stylize,
@@ -21,7 +22,7 @@ Log level for messages. Follows Linux syslog convention, but
 adds "trace" at 15. Default is "info". "Emergency" and "alert"
 are expected to not be used, as we should not be system critical.
 */
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd)]
 pub(crate) enum LogLevel {
     Emergency,
     Alert,
@@ -199,23 +200,36 @@ impl Ord for Message {
 
 /* ---------------------------------- */
 
-/// A fixed-size buffer for storing recent in-app (log) messages with timestamps.
-/// These can be displayed in a popup window in the UI if desired f.ex.
+/**
+A fixed-size buffer for storing recent in-app (log) messages with timestamps.
+These can be displayed in a popup window in the UI if desired f.ex.
+
+Log level `to_stderr` controls which messages (with same or higher priority)
+get printed to stderr when added (if TUI alternate screen is not active).
+Default is [LogLevel::Notice].
+*/
 #[derive(Debug)]
 pub(crate) struct MessageBuffer {
     buf: RwLock<VecDeque<Message>>,
     cap: usize,
     /// Total number of messages ever added to the buffer.
     total: AtomicU32,
+    to_stderr: LogLevel,
 }
 
 impl MessageBuffer {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, to_stderr: LogLevel) -> Self {
         Self {
             buf: VecDeque::with_capacity(capacity).into(),
             cap: capacity,
             total: AtomicU32::new(0),
+            to_stderr,
         }
+    }
+
+    /// Set the log level threshold for printing messages to stderr.
+    pub fn to_stderr(&mut self, lvl: LogLevel) {
+        self.to_stderr = lvl;
     }
 
     /// Internal - add a new message to the buffer.
@@ -227,6 +241,9 @@ impl MessageBuffer {
         }
         buf.push_back(msg.clone());
         self.total.fetch_add(1, Ordering::Relaxed);
+        if msg.lvl <= self.to_stderr {
+            eprintln_nomangle!("{}", msg.as_timestamped());
+        }
     }
 
     /// Add a new info-level message to the buffer and return a copy of it.
@@ -292,13 +309,14 @@ impl Clone for MessageBuffer {
             buf: self.buf.read().clone().into(),
             cap: self.cap,
             total: AtomicU32::new(self.total.load(Ordering::Relaxed)),
+            to_stderr: self.to_stderr.clone(),
         }
     }
 }
 
 impl Default for MessageBuffer {
     fn default() -> Self {
-        Self::new(1024)
+        Self::new(1024, LogLevel::Notice)
     }
 }
 

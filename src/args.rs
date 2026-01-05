@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
-    logging::MessageBuffer,
+    logging::{LogLevel, MessageBuffer},
     strings::*,
     structs::{DEFAULT_PAYLOAD_SIZE, Resolved},
     utils::{parse_float_into_duration, parse_ip_addresses, resolve_names},
@@ -182,6 +182,17 @@ impl MpConfig {
             .buf
             .push(format!("mping v{} - starting initialization", config.ver));
 
+        if config.verbose || config.debug {
+            // Adjust stderr logging priority. Debug takes precedence.
+            let lvl = if config.debug {
+                LogLevel::Debug
+            } else {
+                LogLevel::Info
+            };
+            // Have to perform a bit of a dance here due to Arc immutability...
+            Arc::get_mut(&mut config.buf).unwrap().to_stderr(lvl);
+        }
+
         // clamp DNS timeout between 1 and 10 seconds
         config.dns_timeout = match config.dns_timeout {
             d if d < Duration::from_secs(1) => Duration::from_secs(1),
@@ -245,7 +256,6 @@ impl MpConfig {
         let (mut addrs, mut seen, _excl, failed) = parse_ip_addresses(
             &config.targets,
             Some(&config.exclude),
-            config.verbose,
             &*config.buf,
         );
 
@@ -254,7 +264,6 @@ impl MpConfig {
             failed,
             &*config.resolver.as_ref().unwrap(),
             &*config.buf,
-            config.verbose,
         )
         .await
         {
@@ -266,12 +275,9 @@ impl MpConfig {
             let mut resolved: Vec<IpAddr> = config.resolved.addrs_by_name();
             // Remove duplicates by comparing against already parsed addresses.
             resolved.retain(|ip: &IpAddr| seen.insert(*ip));
-            let msg = config
+            config
                 .buf
                 .notice(format!("{INFO_RESOLVED}: {}", resolved.len()));
-            if config.verbose {
-                eprintln!("{msg}");
-            }
             addrs.append(&mut resolved);
         }
 
@@ -289,15 +295,11 @@ impl MpConfig {
         config.addrs = addrs;
         config.seen = seen;
         if config.addrs.is_empty() {
-            let msg = config.buf.notice(format!("{WARN_NO_VALID_IPS}"));
-            eprintln!("{msg}");
+            config.buf.notice(format!("{WARN_NO_VALID_IPS}"));
         } else {
-            let msg = config
+            config
                 .buf
                 .push(format!("{INFO_UNIQUE}: {}", config.addrs.len()));
-            if config.verbose {
-                eprintln!("{msg}");
-            }
         }
 
         // clamp interval between 10ms and 10s...
@@ -321,15 +323,12 @@ impl MpConfig {
         */
         let limit: Duration = config.interval * 4; // max. 4 pending pings per target
         if config.timeout > limit {
-            let msg = config.buf.notice(format!(
+            config.buf.notice(format!(
                 "{INFO_ADJUST} ({:.2}s -> {:.2}s, interval: {:.2}s)",
                 config.timeout.as_secs_f64(),
                 limit.as_secs_f64(),
                 config.interval.as_secs_f64(),
             ));
-            if config.verbose {
-                eprintln!("{msg}");
-            }
             config.timeout = limit;
         }
 
