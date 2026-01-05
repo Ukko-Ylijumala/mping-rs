@@ -140,7 +140,7 @@ where
                 all_addrs.append(&mut ips);
             }
             Err(e) => {
-                logger.warn(format!("{ERR_PARSE_IP} '{target}': {e}"));
+                logger.warn(format!("{ERR_PARSE_IP}: {e}"));
                 failed.insert(target.clone());
             }
         }
@@ -164,7 +164,7 @@ where
                     exclusions.extend(ips.drain(..));
                 }
                 Err(e) => {
-                    logger.error(format!("{ERR_PARSE_IP} '{exc}' (exclusion): {e}"));
+                    logger.error(format!("{ERR_PARSE_IP} (exclusion): {e}"));
                 }
             }
         }
