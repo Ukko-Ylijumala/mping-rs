@@ -244,12 +244,21 @@ impl AppState {
         ViewPort::new(self)
     }
 
-    /// Add new ping targets to the application state.
+    /**
+    Add new ping targets to the application state. Will also set their names if resolved.
+
+    NOTE: locks `targets` for writing and `resolved` for reading.
+    */
     pub fn add_targets<I: IntoIterator<Item = PingTarget>>(&self, targets: I) {
         let orig_len: usize = self.len();
-        self.targets
-            .write()
-            .extend(targets.into_iter().map(|t| Arc::new(t)));
+        let names = self.resolved.read();
+        self.targets.write().extend(targets.into_iter().map(|t| {
+            // set the hostname if we have one for this IP
+            if let Some(name) = names.get_name(&t.addr) {
+                t.set_name(name);
+            }
+            Arc::new(t)
+        }));
         let new_len: usize = self.len();
         if new_len > orig_len {
             self.logger.log(templater!(
