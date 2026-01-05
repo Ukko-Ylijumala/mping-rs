@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
+    logging::MessageBuffer,
     macros::{delegate_read, delegate_write},
     strings::*,
 };
@@ -25,7 +26,11 @@ use std::{
     io::{Result, Stdout, stdout},
     ops::Index,
     panic,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 const TBL_WASTED_ROWS: u16 = 3; // borders + header
@@ -626,15 +631,15 @@ RAII guard object for TUI console using [ratatui] and [crossterm].
 */
 pub struct TerminalGuard {
     pub term: Terminal<CrosstermBackend<Stdout>>,
-    verbose: bool,
+    logger: Arc<MessageBuffer>,
 }
 
 impl TerminalGuard {
-    pub fn new(interval_ms: u128, verbose: bool) -> Result<Self> {
-        if verbose {
-            let hz: f64 = 1e3 / interval_ms as f64;
-            eprintln!("{TUI_INIT}: {hz:.1} Hz.");
-        }
+    pub fn new(interval: Duration, logger: Arc<MessageBuffer>) -> Result<Self> {
+        logger.info(format!(
+            "{TUI_INIT}: {:.1} Hz.",
+            1e3 / interval.as_millis() as f32
+        ));
 
         // set up the ratatui/crossterm environment (panic hook first!)
         panic::set_hook(Box::new(panic_handler));
@@ -642,34 +647,32 @@ impl TerminalGuard {
         let mut stdout: Stdout = stdout();
         execute!(stdout, EnterAlternateScreen, Hide)?;
         set_alt_screen_active(true);
+        logger.trace(TUI_TERMINAL);
 
         Ok(Self {
             term: Terminal::new(CrosstermBackend::new(stdout))?,
-            verbose,
+            logger,
         })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        terminal_teardown(self.verbose);
+        terminal_teardown();
     }
 }
 
 /// Tear down the terminal environment cleanly. Restores terminal to a sane state.
-fn terminal_teardown(verbose: bool) {
+fn terminal_teardown() {
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), LeaveAlternateScreen, Show);
     set_alt_screen_active(false);
-
-    if verbose {
-        eprintln!("{TUI_TERMINATE}");
-    }
+    eprintln!("{TUI_TERMINATE}");
 }
 
 /// Panic handler to restore the console to a sane state if a panic occurs
 pub(crate) fn panic_handler(info: &panic::PanicHookInfo) {
-    terminal_teardown(true);
+    terminal_teardown();
     eprintln!("{APP_PANIC}: {}", info);
 }
 

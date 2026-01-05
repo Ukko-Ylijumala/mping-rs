@@ -45,7 +45,8 @@ pub static INFO_LOG: &str = " Log messages: {} ";
 pub static INFO_HELP: &str = " Help ";
 
 // tui.rs
-pub static TUI_INIT: &str = "Initializing terminal UI. Display refresh rate";
+pub static TUI_INIT: &str = "TerminalGuard: initializing terminal UI. Display refresh rate";
+pub static TUI_TERMINAL: &str = "TerminalGuard: alternative screen entered. Initializing Ratatui.";
 pub static TUI_TERMINATE: &str = "Terminal UI was terminated.";
 pub static APP_PANIC: &str = "Application panic";
 

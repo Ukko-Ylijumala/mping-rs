@@ -558,7 +558,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(app.quit.clone());
-    let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval.as_millis(), app.verbose)?;
+    let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval, app.logger.clone())?;
     let mut tick: Interval = time::interval(app.internal_tick);
 
     // Start the key event handling thread
