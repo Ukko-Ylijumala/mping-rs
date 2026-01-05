@@ -18,7 +18,7 @@ use std::{
     net::IpAddr,
     ops::Index,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -179,6 +179,7 @@ abort the (spawned) ping task, which currently is irreversible.
 - `hops`: Last known hop count query response (protected by a [RwLock]).
 - `ptr`: Last known PTR record query response (protected by a [RwLock]).
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
+- `hostname`: The host or DNS name this target was resolved from, if any.
 */
 #[derive(Debug)]
 pub(crate) struct PingTarget {
@@ -190,6 +191,7 @@ pub(crate) struct PingTarget {
     hops: RwLock<QueryResponse>,
     ptr: RwLock<QueryResponse>,
     rev_ptr: RwLock<QueryResponse>,
+    hostname: OnceLock<Arc<str>>,
 }
 
 impl PingTarget {
@@ -220,6 +222,7 @@ impl PingTarget {
             rev_ptr: QueryResponse::default().into(),
             paused: AtomicBool::new(paused),
             cancel: CancellationToken::new(),
+            hostname: OnceLock::new(),
         }
     }
 
@@ -250,6 +253,22 @@ impl PingTarget {
             },
         };
         inner.recent.push(rec);
+    }
+
+    /**
+    Set the (DNS/host) name associated with this target.
+    Returns `true` if set successfully, `false` if it was already set.
+
+    NOTE: the name can only be set once.
+    */
+    pub fn set_name(&self, name: Arc<str>) -> bool {
+        self.hostname.set(name).is_ok()
+    }
+
+    /// Get the (DNS/host) name associated with this target, if any.
+    #[inline]
+    pub fn name(&self) -> Option<Arc<str>> {
+        self.hostname.get().cloned()
     }
 
     /// Try to determine the hop count (distance) to this target. Blocking.
@@ -607,7 +626,11 @@ impl PingTarget {
 
 impl fmt::Display for PingTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.addr)
+        if let Some(name) = self.name() {
+            write!(f, "{} ({})", self.addr, &*name)
+        } else {
+            write!(f, "{}", self.addr)
+        }
     }
 }
 

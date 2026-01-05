@@ -326,7 +326,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     let w_info_upper = Paragraph::new(if let Some(t) = selected {
         templater!(
             INFO_TARGET,
-            t.addr.to_string(),
+            t.to_string(),
             &t.rev,
             t.ptr().to_string(),
             t.rev_ptr().to_string(),
