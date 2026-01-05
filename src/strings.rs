@@ -79,6 +79,19 @@ pub static INFO_EXCLUDE: &str = "excluding addresses from target list";
 pub static PTR_IPV4: &str = ".in-addr.arpa";
 pub static PTR_IPV6: &str = ".ip6.arpa";
 
+// ip_addresses.rs
+pub static ERR_INVALID_IP: &str = "invalid IP address, CIDR, or range";
+pub static ERR_RNG_FMT: &str = "invalid range format";
+pub static ERR_START: &str = "invalid start IP in range";
+pub static ERR_END: &str = "invalid end IP in range";
+pub static ERR_MIXED: &str = "cannot mix IPv4 and IPv6 in range";
+pub static ERR_RNG_END: &str = "invalid range end value";
+pub static ERR_V4_OCTET: &str = "IPv4 octet must be <= 255, got";
+pub static ERR_V6_HEXTET: &str = "IPv6 hextet must be <= 65535, got";
+pub static ERR_RANGE_ORDER: &str = "start IP is greater than end IP";
+pub static ERR_TOOLARGE: &str = "range too large - addresses";
+pub static ERR_MISMATCH: &str = "IP version mismatch in range";
+
 // hopcount.rs
 pub static BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
 pub static BIND_SOCKET_IPV6: &str = "[::]:0";

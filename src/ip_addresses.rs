@@ -2,8 +2,11 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use crate::strings::*;
 use ipnet::IpNet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+const MAX_RANGE_SIZE: usize = 65536; // max number of addresses in a range allowed
 
 /**
 Parse an IP address, CIDR, or IP range from a string.
@@ -30,11 +33,11 @@ pub fn parse_ip_or_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     }
 
     // Try range notation (10.10.10.1-10 or 10.10.10.1-10.10.10.10)
-    if arg.contains('-') {
+    if arg.contains(MISSING) {
         return parse_ip_range(arg);
     }
 
-    Err(format!("Invalid IP address, CIDR, or range: {arg}"))
+    Err(format!("{ERR_INVALID_IP}: {arg}"))
 }
 
 /**
@@ -45,7 +48,7 @@ Parse an IP range in the format:
 pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     let parts: Vec<&str> = arg.split('-').collect();
     if parts.len() != 2 {
-        return Err(format!("Invalid range format: {arg}"));
+        return Err(format!("{ERR_RNG_FMT}: {arg}"));
     }
 
     let start_str: &str = parts[0].trim();
@@ -54,14 +57,14 @@ pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     // Parse the start IP
     let start_ip: IpAddr = start_str
         .parse::<IpAddr>()
-        .map_err(|_| format!("Invalid start IP in range: {start_str}"))?;
+        .map_err(|_| format!("{ERR_START}: {start_str}"))?;
 
     // Determine if this is short form (just a number) or full IP
     let end_ip: IpAddr = if end_str.contains('.') || end_str.contains(':') {
         // Full IP form
         end_str
             .parse::<IpAddr>()
-            .map_err(|_| format!("Invalid end IP in range: {end_str}"))?
+            .map_err(|_| format!("{ERR_END}: {end_str}"))?
     } else {
         // Short form - parse as last octet/hextet
         parse_short_range_end(&start_ip, end_str)?
@@ -70,7 +73,7 @@ pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     // Validate same IP version
     match (start_ip, end_ip) {
         (IpAddr::V4(_), IpAddr::V6(_)) | (IpAddr::V6(_), IpAddr::V4(_)) => {
-            return Err("Cannot mix IPv4 and IPv6 in range".to_string());
+            return Err(ERR_MIXED.to_string());
         }
         _ => {}
     }
@@ -82,12 +85,12 @@ pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
 fn parse_short_range_end(start_ip: &IpAddr, end_str: &str) -> Result<IpAddr, String> {
     let end_val: u32 = end_str
         .parse()
-        .map_err(|_| format!("Invalid range end value: {end_str}"))?;
+        .map_err(|_| format!("{ERR_RNG_END}: {end_str}"))?;
 
     match start_ip {
         IpAddr::V4(start_v4) => {
             if end_val > 255 {
-                return Err(format!("IPv4 octet must be <= 255, got: {end_val}"));
+                return Err(format!("{ERR_V4_OCTET}: {end_val}"));
             }
             let octets: [u8; 4] = start_v4.octets();
             let new_ip: Ipv4Addr = Ipv4Addr::new(octets[0], octets[1], octets[2], end_val as u8);
@@ -95,7 +98,7 @@ fn parse_short_range_end(start_ip: &IpAddr, end_str: &str) -> Result<IpAddr, Str
         }
         IpAddr::V6(start_v6) => {
             if end_val > 65535 {
-                return Err(format!("IPv6 hextet must be <= 65535, got: {end_val}"));
+                return Err(format!("{ERR_V6_HEXTET}: {end_val}"));
             }
             let segments: [u16; 8] = start_v6.segments();
             let mut new_segments: [u16; 8] = segments;
@@ -114,12 +117,12 @@ pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, Stri
             let end_num: u32 = u32::from(end_v4);
 
             if start_num > end_num {
-                return Err(format!("Start IP {start} is greater than end IP {end}"));
+                return Err(format!("{ERR_RANGE_ORDER} ({start} > {end})"));
             }
 
             let count: usize = (end_num - start_num + 1) as usize;
-            if count > 65536 {
-                return Err(format!("Range too large: {count} addresses (max 65536)"));
+            if count > MAX_RANGE_SIZE {
+                return Err(format!("{ERR_TOOLARGE}: {count} (max {MAX_RANGE_SIZE})"));
             }
 
             Ok((start_num..=end_num)
@@ -131,19 +134,19 @@ pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, Stri
             let end_num: u128 = u128::from(end_v6);
 
             if start_num > end_num {
-                return Err(format!("Start IP {start} is greater than end IP {end}"));
+                return Err(format!("{ERR_RANGE_ORDER} ({start} > {end})"));
             }
 
             let count: u128 = end_num.saturating_sub(start_num).saturating_add(1);
-            if count > 65536 {
-                return Err(format!("Range too large: {count} addresses (max 65536)"));
+            if count > MAX_RANGE_SIZE as u128 {
+                return Err(format!("{ERR_TOOLARGE}: {count} (max {MAX_RANGE_SIZE})"));
             }
 
             Ok((start_num..=end_num)
                 .map(|n: u128| IpAddr::V6(Ipv6Addr::from(n)))
                 .collect())
         }
-        _ => Err("IP version mismatch in range".to_string()),
+        _ => Err(ERR_MISMATCH.to_string()),
     }
 }
 
@@ -153,48 +156,93 @@ pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, Stri
 mod tests {
     use super::*;
 
+    const TEST_1: &str = "192.168.1.1";
+    const TEST_2: &str = "192.168.1.2";
+    const TEST_3: &str = "10.0.0.1";
+    const TEST_4: &str = "10.0.0.5";
+    const CIDR_1: &str = "192.168.1.0/30";
+    const RANGE_1: &str = "10.0.0.1-5";
+    const RANGE_2: &str = "10.0.0.1-10.0.0.5";
+    const BAD_RANGE: &str = "10.0.0.5-10.0.0.1";
+    const BIG_RANGE_V4: &str = "10.0.0.0/12";
+
+    const TEST_V6_1: &str = "::1";
+    const TEST_V6_2: &str = "::5";
+    const TEST_V6_3: &str = "::ffff";
+    const RANGE_V6: &str = "::1-5";
+    const BAD_RANGE_V6: &str = "::5-1";
+    const BIG_RANGE_V6: &str = "::1-::ffff";
+    const TOOBIG_V6: &str = "::1-::ffff:ffff"; // 4B addresses
+
     #[test]
     fn test_parse_single_ip() {
-        let result: Vec<IpAddr> = parse_ip_or_range("192.168.1.1").unwrap();
+        let result: Vec<IpAddr> = parse_ip_or_range(TEST_1).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], "192.168.1.1".parse::<IpAddr>().unwrap());
+        assert_eq!(result[0], TEST_1.parse::<IpAddr>().unwrap());
     }
 
     #[test]
     fn test_parse_cidr() {
-        let result: Vec<IpAddr> = parse_ip_or_range("192.168.1.0/30").unwrap();
+        let result: Vec<IpAddr> = parse_ip_or_range(CIDR_1).unwrap();
         assert_eq!(result.len(), 2); // .1 and .2 (hosts only)
-        assert!(result.contains(&"192.168.1.1".parse::<IpAddr>().unwrap()));
-        assert!(result.contains(&"192.168.1.2".parse::<IpAddr>().unwrap()));
+        assert!(result.contains(&TEST_1.parse::<IpAddr>().unwrap()));
+        assert!(result.contains(&TEST_2.parse::<IpAddr>().unwrap()));
     }
 
     #[test]
     fn test_parse_short_range() {
-        let result: Vec<IpAddr> = parse_ip_or_range("10.0.0.1-5").unwrap();
+        let result: Vec<IpAddr> = parse_ip_or_range(RANGE_1).unwrap();
         assert_eq!(result.len(), 5);
-        assert_eq!(result[0], "10.0.0.1".parse::<IpAddr>().unwrap());
-        assert_eq!(result[4], "10.0.0.5".parse::<IpAddr>().unwrap());
+        assert_eq!(result[0], TEST_3.parse::<IpAddr>().unwrap());
+        assert_eq!(result[4], TEST_4.parse::<IpAddr>().unwrap());
     }
 
     #[test]
     fn test_parse_full_range() {
-        let result: Vec<IpAddr> = parse_ip_or_range("10.0.0.1-10.0.0.5").unwrap();
+        let result: Vec<IpAddr> = parse_ip_or_range(RANGE_2).unwrap();
         assert_eq!(result.len(), 5);
-        assert_eq!(result[0], "10.0.0.1".parse::<IpAddr>().unwrap());
-        assert_eq!(result[4], "10.0.0.5".parse::<IpAddr>().unwrap());
+        assert_eq!(result[0], TEST_3.parse::<IpAddr>().unwrap());
+        assert_eq!(result[4], TEST_4.parse::<IpAddr>().unwrap());
     }
 
     #[test]
-    fn test_invalid_range() {
-        let result: Result<Vec<IpAddr>, String> = parse_ip_or_range("10.0.0.5-10.0.0.1");
-        assert!(result.is_err());
+    fn test_big_v4() {
+        let result: Result<Vec<IpAddr>, String> = parse_ip_or_range(BIG_RANGE_V4);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2u64.pow(20) as usize - 2);
     }
 
     #[test]
     fn test_ipv6_short_range() {
-        let result: Vec<IpAddr> = parse_ip_or_range("::1-5").unwrap();
+        let result: Vec<IpAddr> = parse_ip_or_range(RANGE_V6).unwrap();
         assert_eq!(result.len(), 5);
-        assert_eq!(result[0], "::1".parse::<IpAddr>().unwrap());
-        assert_eq!(result[4], "::5".parse::<IpAddr>().unwrap());
+        assert_eq!(result[0], TEST_V6_1.parse::<IpAddr>().unwrap());
+        assert_eq!(result[4], TEST_V6_2.parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_ipv6_large_range() {
+        let result: Vec<IpAddr> = parse_ip_or_range(BIG_RANGE_V6).unwrap();
+        assert_eq!(result.len(), 65535);
+        assert_eq!(result[0], TEST_V6_1.parse::<IpAddr>().unwrap());
+        assert_eq!(result[65534], TEST_V6_3.parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn test_invalid_range() {
+        let result: Result<Vec<IpAddr>, String> = parse_ip_or_range(BAD_RANGE);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_range_v6() {
+        let result: Result<Vec<IpAddr>, String> = parse_ip_or_range(BAD_RANGE_V6);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_toobig_v6() {
+        let result: Result<Vec<IpAddr>, String> = parse_ip_or_range(TOOBIG_V6);
+        assert!(result.is_err());
     }
 }
