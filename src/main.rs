@@ -501,20 +501,44 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         let contents = &*state.popup_contents.read();
         if !contents.is_empty() {
             frame.render_widget(Clear, layout.popup);
-            let b_popup = b_pad.clone();
+
+            let b_popup = b_pad
+                .clone()
+                .border_type(BorderType::Double)
+                .border_style(Color::Indexed(190));
+
             match contents {
-                PopupContents::Buffer(_) => frame.render_widget(
-                    contents.to_list().block(
-                        b_popup
-                            .title(templater!(INFO_LOG, state.logger.len()))
-                            .border_type(BorderType::Double)
-                            .border_style(Color::Indexed(190)),
-                    ),
-                    layout.popup,
-                ),
+                PopupContents::Buffer(_) => {
+                    let num = state.logger.len();
+                    let b_popup = b_popup.title(templater!(INFO_LOG, num));
+
+                    if !(num > layout.popup_usable_rows()) {
+                        // no statefulness needed here
+                        frame.render_widget(contents.to_list().block(b_popup), layout.popup)
+                    } else {
+                        frame.render_stateful_widget(
+                            contents.to_list().block(b_popup),
+                            layout.popup,
+                            &mut layout.liststate,
+                        );
+
+                        // Render scrollbar for log popup
+                        let bar_pos = layout
+                            .liststate
+                            .selected()
+                            .unwrap_or_else(|| layout.liststate.offset());
+                        frame.render_stateful_widget(
+                            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+                            layout.popup,
+                            &mut ScrollbarState::new(num).position(bar_pos),
+                        );
+                    }
+                }
+
                 PopupContents::Multiline(_) => {
                     frame.render_widget(contents.to_list().block(b_popup), layout.popup)
                 }
+
                 _ => frame.render_widget(contents.to_para().block(b_popup), layout.popup),
             }
         }

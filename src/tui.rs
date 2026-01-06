@@ -19,7 +19,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Cell, Row, TableState},
+    widgets::{Cell, ListState, Row, TableState},
 };
 use std::{
     fmt,
@@ -35,6 +35,9 @@ use std::{
 
 const TBL_WASTED_ROWS: u16 = 3; // borders + header
 const TBL_WASTED_COLS: u16 = 2; // borders
+const HELP_WASTED_ROWS: u16 = 2; // box
+const HELP_WASTED_COLS: u16 = 4; // box + margins
+const POPUP_WASTED_ROWS: u16 = 2; // box
 static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Default)]
@@ -121,6 +124,8 @@ pub(crate) struct AppLayout {
     pub tbl_constraints: Vec<Constraint>,
     /// Stateful table state for managing selection, scrolling, etc.
     pub tablestate: TableState,
+    /// Popup state for List-based content.
+    pub liststate: ListState,
     pub help_visible: bool,
     pub popup_visible: bool,
     pub input_visible: bool,
@@ -159,8 +164,8 @@ impl AppLayout {
 
     /// Setup the initial help area with given rows and columns.
     pub fn setup_help_area(&mut self, rows: u16, cols: u16) {
-        self.help_rows = rows + 2; // box
-        self.help_cols = cols + 4; // box + margins
+        self.help_rows = rows + HELP_WASTED_ROWS;
+        self.help_cols = cols + HELP_WASTED_COLS;
     }
 
     /// Reset the table widths to initial state (based on header widths).
@@ -293,6 +298,11 @@ impl AppLayout {
     /// Get the number of usable rows in the table area (excluding borders and header).
     pub fn tbl_usable_rows(&self) -> usize {
         self.table.height.saturating_sub(TBL_WASTED_ROWS) as usize
+    }
+
+    /// Get the number of usable rows in the popup area (excluding borders).
+    pub fn popup_usable_rows(&self) -> usize {
+        self.popup.height.saturating_sub(POPUP_WASTED_ROWS) as usize
     }
 
     /// Update column widths based on data. Returns total table width without any spacing.
