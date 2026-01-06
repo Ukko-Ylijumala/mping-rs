@@ -11,7 +11,7 @@ const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
 /// This key event handler loop is intended to be run in a dedicated thread.
 /// It listens for keyboard events and updates the application state accordingly.
 pub(crate) fn key_event_handler(state: Arc<AppState>) {
-    state.logger.debug("Key event handler thread started");
+    state.logger.debug(crate::strings::KEV_START);
     while !state.is_quitting() {
         if key_event_poll(50, &state).is_ok_and(|e| e) {
             // notify the main loop about the key event for immediate refresh
@@ -141,13 +141,21 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     }
                 }
 
-                // Toggle "performance" mode
-                (KeyCode::F(10), _) => {
-                    app.toggle_perf();
+                // Close active popup/help/input overlays
+                (KeyCode::Esc, _) => {
+                    let mut lo = app.layout.write();
+                    if lo.help_visible {
+                        lo.help_visible = false;
+                    } else if lo.input_visible {
+                        lo.input_visible = false;
+                    } else if lo.popup_visible {
+                        *app.popup_contents.write() = PopupContents::None;
+                        lo.popup_visible = false;
+                    }
                 }
 
                 // Show/hide the help popup
-                (KeyCode::Char('h') | KeyCode::F(1), _) => {
+                (KeyCode::F(1), _) => {
                     let mut lo = app.layout.write();
                     match lo.help_visible {
                         false => {
@@ -159,6 +167,11 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                             lo.help_visible = false;
                         }
                     }
+                }
+
+                // Toggle "performance" mode
+                (KeyCode::F(10), _) => {
+                    app.toggle_perf();
                 }
 
                 // Show/hide the log message buffer

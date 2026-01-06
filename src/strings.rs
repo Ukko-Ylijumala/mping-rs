@@ -24,9 +24,9 @@ pub static DISABLED: &str = "disabled";
 // main.rs
 pub static ERR_V4_MISSING: &str = "IPv4 client missing";
 pub static ERR_V6_MISSING: &str = "IPv6 client missing";
-pub static ERR_KEV_JOIN: &str = "Joining key event handler thread failed";
-pub static APP_RUNNING: &str = " mping initialized. Press 'q' to quit, 'h' for help.";
-pub static INFO_QUITTING: &str = "Main thread quitting. Waiting for tasks to terminate...";
+pub static ERR_KEV_JOIN: &str = "joining key event handler thread failed";
+pub static APP_RUNNING: &str = " mping initialized. Press 'q' to quit, 'F1' for help.";
+pub static INFO_QUITTING: &str = "main thread quitting. Waiting for tasks to terminate...";
 pub static INFO_INFO: &str = " Info ";
 pub static INFO_TGTS: &str = " Targets: {} ";
 pub static INFO_NO_TGTS: &str = " No targets";
@@ -49,6 +49,9 @@ pub static TUI_INIT: &str = "TerminalGuard: initializing terminal UI. Display re
 pub static TUI_TERMINAL: &str = "TerminalGuard: alternative screen entered. Initializing Ratatui.";
 pub static TUI_TERMINATE: &str = "Terminal UI was terminated.";
 pub static APP_PANIC: &str = "Application panic";
+
+// keyboard.rs
+pub static KEV_START: &str = "key event handler thread started";
 
 // pingdata.rs
 pub static ERR_PTR_EMPTY: &str = "PTR record empty";
@@ -127,6 +130,7 @@ pub static INFO_DNS: &str = "using system DNS configuration";
 pub static INFO_DNS_TIMEO: &str = "setting custom DNS timeout";
 pub static INFO_DNS_CUSTOM: &str = "using custom DNS server(s)";
 
+// Clap cmdline args help texts
 pub static HELP_TARGETS: &str = "Space separated list of IP addresses or ranges to monitor";
 pub static HELP_EXCLUDE: &str = "Comma separated IP addresses (and/or ranges) to exclude";
 pub static HELP_INTERVAL: &str = "Interval between pings to each target [0.01 - 10]";
@@ -144,6 +148,7 @@ pub static HELP_PERF: &str = "Try to be more performant by reducing task spawn o
 pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";
 
+// capabilities error messages
 pub static ERR_CAPS: &str = "This program requires raw sockets (CAP_NET_RAW on Linux) to send ICMP packets.";
 pub static ERR_CAPS_LINUX: &str = "Either run it with sudo, or grant the capability to the binary:
     sudo setcap cap_net_raw+ep";
@@ -168,7 +173,7 @@ pub static EMPTY_RESP: &str = "empty response";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 20] = [
+pub static HELP_KEYS: [[&str; 2]; 22] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["PageUp, PageDn", "Page target list up/down (with shift: 10 lines)"],
@@ -184,9 +189,11 @@ pub static HELP_KEYS: [[&str; 2]; 20] = [
     ["S",              "Stop pinging the selected target permanently"],
     ["Delete",         "Stop pinging the selected target and remove it"],
     ["CTRL+Delete",    "Stop and remove all unreachable targets"],
-    ["",                ""],
+    ["",               ""],
+    ["Esc",            "Close popups (help, messages) or input box"],
     ["q, CTRL-C",      "Quit the program"],
-    ["F1, h",          "Show/hide this help screen"],
+    ["",                ""],
+    ["F1",             "Show/hide this help screen"],
     ["F10",            "Toggle \"perf\" mode (reduce task spawn overhead)"],
     ["F12",            "Display application log message buffer in a popup"],
 ];
