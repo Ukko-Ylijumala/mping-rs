@@ -40,6 +40,21 @@ const HELP_WASTED_COLS: u16 = 4; // box + margins
 const POPUP_WASTED_ROWS: u16 = 2; // box
 static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+// Define static constraints here for convenience
+static CON_FILL: Constraint = Constraint::Fill(1);
+static CON_LEN_1: Constraint = Constraint::Length(1);
+static CON_MIN_1: Constraint = Constraint::Min(1);
+
+static CON_75_P: Constraint = Constraint::Ratio(3, 4);
+static CON_PROC_W: Constraint = Constraint::Min(43);
+static CON_INPUT_W: Constraint = Constraint::Ratio(3, 10);
+static CON_INPUT_H: Constraint = Constraint::Length(5);
+
+static CON_NFO_L: Constraint = Constraint::Length(5);
+static CON_NFO_T: Constraint = Constraint::Length(7);
+static CON_NFO_G: Constraint = Constraint::Length(20);
+static CON_NFO_H: Constraint = Constraint::Length(11);
+
 #[derive(Debug, Default)]
 /**
 Layout structure for Ratatui frames.
@@ -198,14 +213,9 @@ impl AppLayout {
 
     /// Update top-level areas (title line, middle area, status line).
     fn update_main_areas(&mut self, frame: Rect) {
-        // Create vertical layout
+        // Create vertical layout - title (1 line), middle (the rest), status (1 line)
         (self.title, self.middle, self.status) = {
-            let full = Layout::vertical([
-                Constraint::Length(1), // title - 1 line
-                Constraint::Min(1),    // table
-                Constraint::Length(1), // status - 1 line
-            ])
-            .split(frame);
+            let full = Layout::vertical([CON_LEN_1, CON_MIN_1, CON_LEN_1]).split(frame);
             (full[0], full[1], full[2])
         };
 
@@ -215,13 +225,9 @@ impl AppLayout {
 
     /// Split status line between left and right parts.
     fn update_status_line(&mut self) {
-        // split status into left and right sides
+        // split status into left (app status) and right (procinfo, fixed) sides
         (self.status_l, self.status_r) = {
-            let status = Layout::horizontal([
-                Constraint::Fill(1), // left side
-                Constraint::Min(43), // right side (process info)
-            ])
-            .split(self.status);
+            let status = Layout::horizontal([CON_FILL, CON_PROC_W]).split(self.status);
             (status[0], status[1])
         };
     }
@@ -229,12 +235,12 @@ impl AppLayout {
     /// Update middle area (contains table + info areas).
     #[inline]
     fn update_middle(&mut self) {
-        // split middle into table and info areas with table size being fixed
+        // split middle into table (fixed, with borders) and info (dynamic) areas
         let spacing: u16 = self.tbl_colspacing * (self.tbl_hdr_widths.len() as u16 - 1);
         (self.table, self.info) = {
             let middle = Layout::horizontal([
                 Constraint::Max(self.tbl_width + spacing + TBL_WASTED_COLS), // table + borders
-                Constraint::Fill(1),                                         // info
+                CON_FILL,
             ])
             .split(self.middle);
             (middle[0], middle[1])
@@ -244,24 +250,16 @@ impl AppLayout {
     /// Update info areas (nested in `self.info`).
     #[inline]
     fn update_info_areas(&mut self) {
-        // split info into upper and lower parts
+        // split info into upper and lower parts (lower is fixed size)
         (self.info_upper, self.info_lower) = {
-            let info = Layout::vertical([
-                Constraint::Fill(1),   // upper info
-                Constraint::Length(5), // lower info
-            ])
-            .split(self.info);
+            let info = Layout::vertical([CON_FILL, CON_NFO_L]).split(self.info);
             (info[0], info[1])
         };
 
         // Split info_upper into [text, graph, hist] areas
         (self.i_upper_text, self.i_upper_graph, self.i_upper_histo) = {
-            let info_split = Layout::vertical([
-                Constraint::Length(7),
-                Constraint::Length(20),
-                Constraint::Length(11),
-            ])
-            .split(self.info_upper);
+            let info_split =
+                Layout::vertical([CON_NFO_T, CON_NFO_G, CON_NFO_H]).split(self.info_upper);
             (info_split[0], info_split[1], info_split[2])
         };
     }
@@ -270,19 +268,16 @@ impl AppLayout {
     fn update_popup_areas(&mut self) {
         // centered help popup area
         self.help = self.frame.centered(
-            Constraint::Length(self.help_cols.min(self.frame.width)), // if this is larger than frame, Ratatui will panic
+            // have to cap these, or Ratatui might panic
+            Constraint::Length(self.help_cols.min(self.frame.width)),
             Constraint::Length(self.help_rows.min(self.frame.height)),
         );
 
         // centered popup area (75% width/height)
-        self.popup = self
-            .frame
-            .centered(Constraint::Ratio(3, 4), Constraint::Ratio(3, 4));
+        self.popup = self.frame.centered(CON_75_P, CON_75_P);
 
         // centered input area (30% width, 5 lines height)
-        self.input = self
-            .frame
-            .centered(Constraint::Ratio(3, 10), Constraint::Length(5));
+        self.input = self.frame.centered(CON_INPUT_W, CON_INPUT_H);
     }
 
     /// Recalculate the layout areas regardless of if it's needed or not.
