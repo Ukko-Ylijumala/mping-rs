@@ -358,15 +358,18 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         if !rtt_data.is_empty() {
             let samples: usize = rtt_data.len();
             let sample_t: f64 = samples as f64 * state.ping_interval.as_secs_f64();
-            // get both values and max RTT in one pass
-            let mut values: Vec<f64> = vec![];
-            let max_rtt: f64 = rtt_data
+            let mut values: Vec<f64> = Vec::with_capacity(samples);
+
+            // get values and min/max RTT in one pass
+            let (min_rtt, max_rtt) = rtt_data
                 .iter()
                 .map(|&(_, y)| {
                     values.push(y);
                     y
                 })
-                .fold(0.0, f64::max);
+                .fold((f64::INFINITY, 0.0), |(min, max), y| {
+                    (f64::min(min, y), f64::max(max, y))
+                });
 
             // RTT line graph widget
             let dataset = Dataset::default()
@@ -380,13 +383,12 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .x_axis(
                     Axis::default()
                         .bounds([0.0, samples as f64 - 1.0])
-                        .labels([format!("-{:.0}s", sample_t).bold(), INFO_NOW.bold()]),
+                        .labels([format!("-{sample_t:.0}s").bold(), INFO_NOW.bold()]),
                 )
-                .y_axis(
-                    Axis::default()
-                        .bounds([0.0, max_rtt * 1.1])
-                        .labels(vec!["0".bold(), format!("{:.0}", max_rtt).bold()]),
-                );
+                .y_axis(Axis::default().bounds([min_rtt, max_rtt]).labels([
+                    format!("{min_rtt:.1}").bold(),
+                    format!("{max_rtt:.1}").bold(),
+                ]));
 
             // RTT histogram widget
             let bars = make_histogram_buckets(values, 8)
