@@ -7,13 +7,14 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::{io::Result, sync::Arc, time::Duration};
 
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
+const POLL_WAIT_MS: u64 = 50; // key event poll wait time in milliseconds
 
 /// This key event handler loop is intended to be run in a dedicated thread.
 /// It listens for keyboard events and updates the application state accordingly.
 pub(crate) fn key_event_handler(state: Arc<AppState>) {
     state.logger.debug(crate::strings::KEV_START);
     while !state.is_quitting() {
-        if key_event_poll(50, &state).is_ok_and(|e| e) {
+        if key_event_poll(POLL_WAIT_MS, &state).is_ok_and(|e| e) {
             // notify the main loop about the key event for immediate refresh
             state.key_event.notify_one();
         }
@@ -52,21 +53,32 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 (KeyCode::End, _) => app.layout.write().tablestate.select_last(),
 
                 // Table navigation: page up/down
+                // When popup is visible, scroll the popup content instead.
                 (KeyCode::PageUp, m) => {
                     let mut lo = app.layout.write();
-                    let step: u16 = match m {
-                        KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
-                        _ => lo.tbl_usable_rows() as u16 - 1,
-                    };
-                    lo.tablestate.scroll_up_by(step);
+                    if lo.popup_visible && m != KeyModifiers::SHIFT {
+                        let step: u16 = lo.popup_usable_rows() as u16 * 2 - 1;
+                        lo.liststate.scroll_up_by(step);
+                    } else {
+                        let step: u16 = match m {
+                            KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
+                            _ => lo.tbl_usable_rows() as u16 - 1,
+                        };
+                        lo.tablestate.scroll_up_by(step);
+                    }
                 }
                 (KeyCode::PageDown, m) => {
                     let mut lo = app.layout.write();
-                    let step: u16 = match m {
-                        KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
-                        _ => lo.tbl_usable_rows() as u16 - 1,
-                    };
-                    lo.tablestate.scroll_down_by(step);
+                    if lo.popup_visible && m != KeyModifiers::SHIFT {
+                        let step: u16 = lo.popup_usable_rows() as u16 * 2 - 1;
+                        lo.liststate.scroll_down_by(step);
+                    } else {
+                        let step: u16 = match m {
+                            KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
+                            _ => lo.tbl_usable_rows() as u16 - 1,
+                        };
+                        lo.tablestate.scroll_down_by(step);
+                    }
                 }
 
                 // Clear table selections
@@ -151,6 +163,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     } else if lo.popup_visible {
                         *app.popup_contents.write() = PopupContents::None;
                         lo.popup_visible = false;
+                        lo.liststate.select(None);
                     }
                 }
 
@@ -159,11 +172,9 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     let mut lo = app.layout.write();
                     match lo.help_visible {
                         false => {
-                            // show help popup
                             lo.help_visible = true;
                         }
                         true => {
-                            // hide popup
                             lo.help_visible = false;
                         }
                     }
@@ -179,12 +190,10 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     let mut lo = app.layout.write();
                     match lo.popup_visible {
                         false => {
-                            // show help popup
                             *app.popup_contents.write() = PopupContents::Buffer(app.logger.clone());
                             lo.popup_visible = true;
                         }
                         true => {
-                            // hide popup
                             *app.popup_contents.write() = PopupContents::None;
                             lo.popup_visible = false;
                         }

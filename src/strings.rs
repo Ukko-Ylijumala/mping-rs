@@ -173,10 +173,11 @@ pub static EMPTY_RESP: &str = "empty response";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 22] = [
+pub static HELP_KEYS: [[&str; 2]; 23] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["PageUp, PageDn", "Page target list up/down (with shift: 10 lines)"],
+    ["",               "(if popup is visible, page its content up/down instead)"],
     ["Home, End",      "Jump to top/bottom of target list"],
     ["Backspace",      "Clear row and column selections"],
     ["",                ""],
