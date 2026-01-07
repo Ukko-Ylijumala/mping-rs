@@ -319,7 +319,7 @@ impl AppState {
                 tgt_ptr1.determine_hops(UPDATE_TASK_TIMEOUT);
                 logger.debug(templater!(
                     INFO_HOPS,
-                    tgt_ptr1,
+                    tgt_ptr1.addr,
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
                 ));
             });
@@ -336,7 +336,7 @@ impl AppState {
                 tgt_ptr2.resolve_ptr(&resolver).await;
                 logger.debug(templater!(
                     INFO_PTR,
-                    tgt_ptr2,
+                    tgt_ptr2.addr,
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
                 ));
             });

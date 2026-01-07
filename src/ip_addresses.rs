@@ -37,7 +37,7 @@ pub fn parse_ip_or_range(arg: &str) -> Result<Vec<IpAddr>, String> {
         return parse_ip_range(arg);
     }
 
-    Err(format!("{ERR_INVALID_IP}: {arg}"))
+    Err(format!("{ERR_INVALID_IP}: '{arg}'"))
 }
 
 /**
@@ -48,7 +48,7 @@ Parse an IP range in the format:
 pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     let parts: Vec<&str> = arg.split('-').collect();
     if parts.len() != 2 {
-        return Err(format!("{ERR_RNG_FMT}: {arg}"));
+        return Err(format!("{ERR_RNG_FMT}: '{arg}'"));
     }
 
     let start_str: &str = parts[0].trim();
@@ -57,14 +57,14 @@ pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
     // Parse the start IP
     let start_ip: IpAddr = start_str
         .parse::<IpAddr>()
-        .map_err(|_| format!("{ERR_START}: {start_str}"))?;
+        .map_err(|_| format!("{ERR_START}: '{start_str}'"))?;
 
     // Determine if this is short form (just a number) or full IP
     let end_ip: IpAddr = if end_str.contains('.') || end_str.contains(':') {
         // Full IP form
         end_str
             .parse::<IpAddr>()
-            .map_err(|_| format!("{ERR_END}: {end_str}"))?
+            .map_err(|_| format!("{ERR_END}: '{end_str}'"))?
     } else {
         // Short form - parse as last octet/hextet
         parse_short_range_end(&start_ip, end_str)?
@@ -85,7 +85,7 @@ pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
 fn parse_short_range_end(start_ip: &IpAddr, end_str: &str) -> Result<IpAddr, String> {
     let end_val: u32 = end_str
         .parse()
-        .map_err(|_| format!("{ERR_RNG_END}: {end_str}"))?;
+        .map_err(|_| format!("{ERR_RNG_END}: '{end_str}'"))?;
 
     match start_ip {
         IpAddr::V4(start_v4) => {
