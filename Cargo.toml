@@ -58,4 +58,4 @@ path = "src/main.rs"
 
 [[bin]]
 name = "hopcount"
-path = "src/hopcount_bin.rs"
+path = "src/hopcount/main.rs"
