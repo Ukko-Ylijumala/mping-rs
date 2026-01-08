@@ -360,8 +360,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             let sample_t: f64 = samples as f64 * state.ping_interval.as_secs_f64();
             let mut values: Vec<f64> = Vec::with_capacity(samples);
 
-            // get values and min/max RTT in one pass
-            let (min_rtt, max_rtt) = rtt_data
+            // get values and min/max RTT (for graph scaling) in one pass
+            let (mut min_rtt, mut max_rtt) = rtt_data
                 .iter()
                 .map(|&(_, y)| {
                     values.push(y);
@@ -370,6 +370,14 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .fold((f64::INFINITY, 0.0), |(min, max), y| {
                     (f64::min(min, y), f64::max(max, y))
                 });
+
+            // round max_rtt up and min_rtt down for cleaner graph axis labels
+            max_rtt = (max_rtt * 10.0).ceil() / 10.0;
+            if min_rtt < 0.5 {
+                min_rtt = 0.0;
+            } else {
+                min_rtt = (min_rtt * 10.0).floor() / 10.0;
+            };
 
             // RTT line graph widget
             let dataset = Dataset::default()
@@ -386,8 +394,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                         .labels([format!("-{sample_t:.0}s").bold(), INFO_NOW.bold()]),
                 )
                 .y_axis(Axis::default().bounds([min_rtt, max_rtt]).labels([
-                    format!("{min_rtt:.1}").bold(),
-                    format!("{max_rtt:.1}").bold(),
+                    format!("{min_rtt:.1}").bold().cyan(),
+                    format!("{max_rtt:.1}").bold().cyan(),
                 ]));
 
             // RTT histogram widget
@@ -396,7 +404,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .map(|b| {
                     Bar::default()
                         .value(b.count)
-                        .label(format!("{:.1} - {:.1}", b.low, b.high))
+                        .label(format!("{:.2} - {:.2}", b.low, b.high))
                         .style(Style::default().fg(Color::Green))
                 })
                 .collect::<Vec<_>>();
