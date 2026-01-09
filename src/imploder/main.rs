@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.0",
+    version = "0.1.1",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/CIDRs into minimal CIDR representation")]
 struct Args {
@@ -49,9 +49,10 @@ fn main() {
     } else {
         if args.debug {
             eprintln!(
-                "Imploded {} entries down to {} CIDR(s) in {duration:.2?}",
+                "Imploded {} entries down to {} CIDR(s) in {duration:.2?} ({} IPs total)",
                 args.entries.len(),
-                result.len()
+                result.len(),
+                result.iter().fold(0u128, |acc, c| acc + c.len())
             );
         }
         for cidr in result {
