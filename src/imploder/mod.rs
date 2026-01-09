@@ -38,6 +38,11 @@ impl Range {
         };
         (fam_key, self.beg, self.end)
     }
+
+    /// The length of the range. Cannot be an [usize] due to IPv6.
+    pub fn len(&self) -> u128 {
+        self.end.saturating_sub(self.beg).saturating_add(1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,6 +54,25 @@ pub struct Cidr {
 }
 
 impl Cidr {
+    /// Number of IP addresses contained by this [Cidr]. Cannot be an [usize] due to IPv6.
+    pub fn len(&self) -> u128 {
+        let bits: u8 = match self.addr {
+            IpAddr::V4(_) => IPV4_BITS,
+            IpAddr::V6(_) => IPV6_BITS,
+        };
+        let host_bits: u8 = bits.saturating_sub(self.prefix);
+        1u128 << host_bits
+    }
+
+    /// Number of IP addresses contained by this [Cidr] if IPv4, else None.
+    pub fn len_v4(&self) -> Option<usize> {
+        if self.is_ipv4() {
+            Some(1usize << IPV4_BITS.saturating_sub(self.prefix))
+        } else {
+            None
+        }
+    }
+
     /// Returns true if the CIDR represents a single host address.
     pub fn is_host(&self) -> bool {
         match self.addr {
