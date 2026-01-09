@@ -34,7 +34,7 @@ pub fn parse_ip_or_range(arg: &str) -> Result<Vec<IpAddr>, String> {
 
     // Try range notation (10.10.10.1-10 or 10.10.10.1-10.10.10.10)
     if arg.contains(MISSING) {
-        return parse_ip_range(arg);
+        return parse_ip_range(arg, false);
     }
 
     Err(format!("{ERR_INVALID_IP}: '{arg}'"))
@@ -44,8 +44,10 @@ pub fn parse_ip_or_range(arg: &str) -> Result<Vec<IpAddr>, String> {
 Parse an IP range in the format:
 - 10.10.10.1-10 (short form, last octet only)
 - 10.10.10.1-10.10.10.10 (full form)
+
+If `range` > [MAX_RANGE_SIZE], returns an error, unless `allow_large` is true.
 */
-pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
+pub fn parse_ip_range(arg: &str, allow_large: bool) -> Result<Vec<IpAddr>, String> {
     let parts: Vec<&str> = arg.split('-').collect();
     if parts.len() != 2 {
         return Err(format!("{ERR_RNG_FMT}: '{arg}'"));
@@ -78,7 +80,7 @@ pub fn parse_ip_range(arg: &str) -> Result<Vec<IpAddr>, String> {
         _ => {}
     }
 
-    generate_ip_range(start_ip, end_ip)
+    generate_ip_range(start_ip, end_ip, allow_large)
 }
 
 /// Parse short-form range end (e.g., "10" in "192.168.1.1-10")
@@ -109,8 +111,12 @@ fn parse_short_range_end(start_ip: &IpAddr, end_str: &str) -> Result<IpAddr, Str
     }
 }
 
-/// Generate all IPs between start and end (inclusive)
-pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, String> {
+/**
+Generate all IPs between start and end (inclusive).
+
+If `range` > [MAX_RANGE_SIZE], returns an error, unless `allow_large` is true.
+*/
+pub fn generate_ip_range(start: IpAddr, end: IpAddr, allow_large: bool) -> Result<Vec<IpAddr>, String> {
     match (start, end) {
         (IpAddr::V4(start_v4), IpAddr::V4(end_v4)) => {
             let start_num: u32 = u32::from(start_v4);
@@ -121,7 +127,7 @@ pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, Stri
             }
 
             let count: usize = (end_num - start_num + 1) as usize;
-            if count > MAX_RANGE_SIZE {
+            if count > MAX_RANGE_SIZE && !allow_large{
                 return Err(format!("{ERR_TOOLARGE}: {count} (max {MAX_RANGE_SIZE})"));
             }
 
@@ -138,7 +144,7 @@ pub fn generate_ip_range(start: IpAddr, end: IpAddr) -> Result<Vec<IpAddr>, Stri
             }
 
             let count: u128 = end_num.saturating_sub(start_num).saturating_add(1);
-            if count > MAX_RANGE_SIZE as u128 {
+            if count > MAX_RANGE_SIZE as u128 && !allow_large {
                 return Err(format!("{ERR_TOOLARGE}: {count} (max {MAX_RANGE_SIZE})"));
             }
 
