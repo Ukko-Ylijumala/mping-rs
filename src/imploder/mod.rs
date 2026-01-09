@@ -39,9 +39,13 @@ impl Range {
         (fam_key, self.beg, self.end)
     }
 
-    /// The length of the range. Cannot be an [usize] due to IPv6.
+    /// The length of the range. Cannot be an [usize] due to IPv6. Saturating.
     pub fn len(&self) -> u128 {
-        self.end.saturating_sub(self.beg).saturating_add(1)
+        let diff: u128 = self.end.saturating_sub(self.beg);
+        if diff == u128::MAX {
+            return u128::MAX;
+        }
+        diff.saturating_add(1)
     }
 }
 
@@ -54,20 +58,30 @@ pub struct Cidr {
 }
 
 impl Cidr {
-    /// Number of IP addresses contained by this [Cidr]. Cannot be an [usize] due to IPv6.
+    /// Number of IP addresses contained by this [Cidr]. Cannot be an [usize] due to IPv6. Saturating.
     pub fn len(&self) -> u128 {
         let bits: u8 = match self.addr {
             IpAddr::V4(_) => IPV4_BITS,
             IpAddr::V6(_) => IPV6_BITS,
         };
         let host_bits: u8 = bits.saturating_sub(self.prefix);
+
+        // 2^128 does not fit in u128
+        if bits == IPV6_BITS && host_bits == IPV6_BITS {
+            return u128::MAX;
+        }
+
         1u128 << host_bits
     }
 
     /// Number of IP addresses contained by this [Cidr] if IPv4, else None.
     pub fn len_v4(&self) -> Option<usize> {
         if self.is_ipv4() {
-            Some(1usize << IPV4_BITS.saturating_sub(self.prefix))
+            let host_bits: u8 = IPV4_BITS.saturating_sub(self.prefix);
+            if host_bits == IPV4_BITS {
+                return Some(u32::MAX as usize);
+            }
+            Some(1usize << host_bits)
         } else {
             None
         }
@@ -89,7 +103,12 @@ impl Cidr {
         matches!(self.addr, IpAddr::V6(_))
     }
 
-    /// Returns an iterator over all [IpAddr]s in the CIDR range.
+    /**
+    Returns an iterator over all [IpAddr]s in the CIDR range.
+
+    NOTE: For large CIDRs (e.g., /0), this can produce a very large number of
+    addresses, especially for IPv6. Use with caution. You have been warned.
+    */
     pub fn iter(&self) -> CidrIterator {
         CidrIterator::new(*self)
     }
@@ -129,6 +148,9 @@ impl FromStr for Cidr {
         }
 
         let parts: Vec<&str> = s.split(SLASH).collect();
+        if parts.len() != 2 {
+            return Err(format!("Invalid CIDR format (too many slashes): '{s}'"));
+        }
         let addr: &str = parts[0].trim();
         let prefix: &str = parts[1].trim();
 
@@ -312,6 +334,12 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
         IpFam::V6 => IPV6_BITS,
     };
 
+    // Full address space special-case
+    if bits == IPV6_BITS && r.beg == 0 && r.end == u128::MAX {
+        #[rustfmt::skip]
+        return vec![Cidr { addr: IpAddr::V6(Ipv6Addr::UNSPECIFIED), prefix: 0 }];
+    }
+
     let mut start: u128 = r.beg;
     let end: u128 = r.end;
     let mut out: Vec<Cidr> = Vec::new();
@@ -326,7 +354,7 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
         let max_align_prefix: u8 = bits.saturating_sub(tz.min(bits));
 
         // largest block that fits in remaining range length
-        let remaining: u128 = end - start + 1;
+        let remaining: u128 = (end - start).saturating_add(1);
         let max_fit_prefix: u8 = bits - floor_log2_u128(remaining);
 
         let prefix: u8 = max_align_prefix.max(max_fit_prefix);
@@ -337,7 +365,14 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
             prefix,
         });
 
+        // prefix==0 for v6 should have been caught by the full-space
+        // special case above; but keep this guard anyway.
+        if bits == IPV6_BITS && prefix == 0 {
+            break;
+        }
+
         // advance start by block size = 2^(bits-prefix)
+        // pow is <= 128; for v6, pow==128 would imply prefix==0, but we guard above.
         let block_size_pow: u32 = (bits - prefix) as u32;
         let block_size: u128 = 1u128 << block_size_pow;
         start = start.saturating_add(block_size);
