@@ -246,14 +246,14 @@ pub fn collapse_ips(input: &[IpAddr]) -> Vec<Cidr> {
 }
 
 /// Collapse a list of strings (CIDRs or IPs) into an equivalent, minimal set of CIDRs.
-pub fn collapse_strings(input: &[String]) -> Vec<Cidr> {
+pub fn collapse_strings(input: &[impl AsRef<str>]) -> Vec<Cidr> {
     let mut cidrs: Vec<Cidr> = Vec::with_capacity(input.len());
     for s in input {
-        if s.contains(SLASH) {
-            if let Ok(cidr) = s.parse::<Cidr>() {
+        if s.as_ref().contains(SLASH) {
+            if let Ok(cidr) = s.as_ref().parse::<Cidr>() {
                 cidrs.push(cidr);
             }
-        } else if let Ok(ip) = s.parse::<IpAddr>() {
+        } else if let Ok(ip) = s.as_ref().parse::<IpAddr>() {
             cidrs.push(ip_to_host_cidr(ip));
         }
     }
