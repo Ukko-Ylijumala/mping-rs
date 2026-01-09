@@ -6,7 +6,7 @@
 
 mod args;
 mod hopcount;
-mod imploder;
+pub mod imploder;
 mod ip_addresses;
 pub mod latencywin;
 mod logging;
