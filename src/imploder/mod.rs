@@ -91,7 +91,17 @@ impl FromStr for Cidr {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if !s.contains(SLASH) {
-            return Err(format!("Invalid CIDR format (missing '{SLASH}'): '{s}'"));
+            let addr: IpAddr = s
+                .trim()
+                .parse::<IpAddr>()
+                .map_err(|_| format!("Invalid IP address: '{s}'"))?;
+            return Ok(Cidr {
+                addr,
+                prefix: match addr {
+                    IpAddr::V4(_) => IPV4_BITS,
+                    IpAddr::V6(_) => IPV6_BITS,
+                },
+            });
         }
 
         let parts: Vec<&str> = s.split(SLASH).collect();
