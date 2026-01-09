@@ -7,7 +7,7 @@ readme = "README.md"
 repository = "https://github.com/Ukko-Ylijumala/mping-rs"
 license = "MIT OR Apache-2.0"
 categories = ["network-programming"]
-keywords = ["icmp", "ping", "networking", "ncurses", "async"]
+keywords = ["icmp", "ping", "networking", "tui", "ratatui", "async"]
 publish = false
 edition = "2024"
 default-run = "mping"
@@ -37,6 +37,10 @@ features = ["rt-multi-thread", "macros", "time", "parking_lot"]
 [dependencies.clap]
 version = "4.5"
 features = ["cargo", "derive"]
+
+[dependencies.reqwest]
+version = "0.13.1"
+features = ["blocking"]
 
 [dependencies.miniutils]
 git = "https://github.com/Ukko-Ylijumala/miniutils-rs"
