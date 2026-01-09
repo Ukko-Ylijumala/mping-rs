@@ -2,10 +2,10 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use clap::{Parser, crate_authors, value_parser};
+use clap::{Parser, crate_authors};
 use mping::{
-    imploder::{Cidr, collapse_cidrs},
-    parse_float_into_duration,
+    imploder::{Cidr, collapse_cidrs, collapse_ips},
+    parse_float_into_duration, parse_ip_range,
 };
 use std::time::{Duration, Instant};
 
@@ -13,16 +13,15 @@ use std::time::{Duration, Instant};
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.1",
+    version = "0.1.2",
     author = crate_authors!(),
-    about = "Implode (collapse) IP addresses/CIDRs into minimal CIDR representation")]
+    about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
     #[arg(
         value_name = "IP_or_CIDR",
-        value_parser = value_parser!(Cidr),
-        help = "IP address(es) and/or CIDRs to collapse"
+        help = "IP addresses/ranges/CIDRs to collapse"
     )]
-    pub entries: Vec<Cidr>,
+    pub entries: Vec<String>,
 
     #[arg(
         long,
@@ -38,11 +37,23 @@ struct Args {
     pub debug: bool,
 }
 
-fn main() {
-    let args = Args::parse();
-    let start = Instant::now();
-    let result = collapse_cidrs(&args.entries);
-    let duration = Instant::now() - start;
+fn main() -> Result<(), String> {
+    let args: Args = Args::parse();
+    let mut entries: Vec<Cidr> = Vec::new();
+
+    for entry in &args.entries {
+        if entry.contains("-") {
+            let ips =
+                parse_ip_range(entry, true).map_err(|e| format!("Invalid range '{entry}': {e}"))?;
+            entries.extend(collapse_ips(&ips));
+        } else {
+            entries.push(entry.parse::<Cidr>()?);
+        }
+    }
+
+    let start: Instant = Instant::now();
+    let result: Vec<Cidr> = collapse_cidrs(&entries);
+    let duration: Duration = Instant::now() - start;
 
     if result.is_empty() {
         eprintln!("No CIDRs generated from the provided input.");
@@ -59,4 +70,5 @@ fn main() {
             println!("{cidr}");
         }
     }
+    Ok(())
 }

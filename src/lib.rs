@@ -19,5 +19,6 @@ mod tui;
 mod utils;
 
 pub use hopcount::determine_hops;
+pub use ip_addresses::parse_ip_range;
 pub use utils::parse_float_into_duration;
 pub use utils::parse_ip_addresses;
