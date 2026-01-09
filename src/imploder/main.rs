@@ -7,13 +7,19 @@ use mping::{
     imploder::{Cidr, collapse_cidrs, collapse_ips},
     parse_float_into_duration, parse_ip_range,
 };
-use std::time::{Duration, Instant};
+use std::{
+    fs::File,
+    io::{BufRead, BufReader},
+    time::{Duration, Instant},
+};
+
+const COMMENT_CHARS: [char; 2] = ['#', ';'];
 
 /// Configuration struct for imploder.
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.2",
+    version = "0.1.3",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -22,6 +28,14 @@ struct Args {
         help = "IP addresses/ranges/CIDRs to collapse"
     )]
     pub entries: Vec<String>,
+
+    #[arg(
+        long,
+        short = 'F',
+        value_name = "PATH",
+        help = "Path to a file containing IP addresses/ranges/CIDRs (one per line)"
+    )]
+    pub file: Option<String>,
 
     #[arg(
         long,
@@ -37,11 +51,56 @@ struct Args {
     pub debug: bool,
 }
 
+#[inline]
+fn add_line(lines: &mut Vec<String>, line: String) {
+    #[rustfmt::skip]
+    let item: String = line.split(&COMMENT_CHARS[..]).next().unwrap_or("").trim().to_string();
+    if !item.is_empty() {
+        lines.push(item);
+    }
+}
+
+/**
+Read a text file, remove empty lines and comments (full lines and
+inline comments), and return whatever is left. At present, handles
+Unix-style ("#") and INI-style (";") comments.
+*/
+fn read_input_file(path: &str) -> Result<Vec<String>, String> {
+    let file: File = File::open(path).map_err(|e| format!("Failed to open file '{path}': {e}"))?;
+    let reader: BufReader<File> = BufReader::new(file);
+    let mut lines: Vec<String> = Vec::new();
+
+    for rl in reader.lines() {
+        let line: String = rl.map_err(|e| format!("Failed to read line from '{path}': {e}"))?;
+        add_line(&mut lines, line);
+    }
+
+    Ok(lines)
+}
+
 fn main() -> Result<(), String> {
     let args: Args = Args::parse();
     let mut entries: Vec<Cidr> = Vec::new();
+    let mut entries_f: Vec<String> = Vec::new();
+    let mut timer: Instant = Instant::now();
 
-    for entry in &args.entries {
+    // Get entries from file if specified
+    if let Some(path) = &args.file {
+        let mut lines = read_input_file(path)?;
+        if args.debug {
+            eprintln!("Read {} entries from file '{}'", lines.len(), path);
+        }
+        entries_f.append(&mut lines);
+    }
+
+    if args.debug {
+        eprintln!("File processed in {:.2?}", Instant::now() - timer);
+    }
+
+    // Chain the iterators and process all entries
+    entries.reserve(args.entries.len() + entries_f.len());
+    timer = Instant::now();
+    for entry in args.entries.iter().chain(entries_f.iter()) {
         if entry.contains("-") {
             let ips =
                 parse_ip_range(entry, true).map_err(|e| format!("Invalid range '{entry}': {e}"))?;
@@ -51,18 +110,22 @@ fn main() -> Result<(), String> {
         }
     }
 
-    let start: Instant = Instant::now();
+    if args.debug {
+        eprintln!("Entries preprocessed in {:.2?}", Instant::now() - timer);
+    }
+
+    timer = Instant::now();
     let result: Vec<Cidr> = collapse_cidrs(&entries);
-    let duration: Duration = Instant::now() - start;
 
     if result.is_empty() {
         eprintln!("No CIDRs generated from the provided input.");
     } else {
         if args.debug {
             eprintln!(
-                "Imploded {} entries down to {} CIDR(s) in {duration:.2?} ({} IPs total)",
-                args.entries.len(),
+                "Imploded {} entries down to {} CIDR(s) in {:.2?} ({} IPs total)",
+                args.entries.len() + entries_f.len(),
                 result.len(),
+                Instant::now() - timer,
                 result.iter().fold(0u128, |acc, c| acc + c.len())
             );
         }
