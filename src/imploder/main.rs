@@ -4,7 +4,7 @@
 
 use clap::{Parser, crate_authors};
 use mping::{
-    imploder::{Cidr, collapse_cidrs, collapse_ips},
+    imploder::{Cidr, collapse_cidrs, collapse_ranges},
     parse_float_into_duration, parse_ip_range,
 };
 use reqwest::blocking::Client;
@@ -20,7 +20,7 @@ const COMMENT_CHARS: [char; 2] = ['#', ';'];
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.4",
+    version = "0.1.5",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -151,6 +151,7 @@ fn main() -> Result<(), String> {
 
     // Chain the iterators and process all entries
     entries.reserve(args.entries.len() + entries_f.len() + entries_u.len());
+    let mut ranges = Vec::new();
     timer = Instant::now();
     for entry in args
         .entries
@@ -159,12 +160,17 @@ fn main() -> Result<(), String> {
         .chain(entries_u.iter())
     {
         if entry.contains("-") {
-            let ips =
-                parse_ip_range(entry, true).map_err(|e| format!("Invalid range '{entry}': {e}"))?;
-            entries.extend(collapse_ips(&ips));
+            let range = parse_ip_range(entry).map_err(|e| format!("{e}"))?;
+            ranges.push(range);
         } else {
             entries.push(entry.parse::<Cidr>()?);
         }
+    }
+
+    if !ranges.is_empty() {
+        // It would be simpler to call `collapse_ranges` repeatedly in the loop, but that would be
+        // wasteful since we'll now only do one sort + merge pass. A small win is still a win.
+        entries.extend(collapse_ranges(&ranges).map_err(|e| format!("{e}"))?);
     }
 
     if args.debug {
@@ -183,7 +189,7 @@ fn main() -> Result<(), String> {
                 args.entries.len() + entries_f.len() + entries_u.len(),
                 result.len(),
                 Instant::now() - timer,
-                result.iter().fold(0u128, |acc, c| acc + c.len())
+                result.iter().fold(0u128, |acc, c| acc.saturating_add(c.len()))
             );
         }
         for cidr in result {
