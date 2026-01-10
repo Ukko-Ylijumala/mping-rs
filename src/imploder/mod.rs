@@ -4,6 +4,7 @@
 
 //! IP address and/or CIDR collapsing into minimal representations.
 
+use crate::ip_addresses::{AddressError, IpRange};
 use std::{
     fmt,
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -274,6 +275,43 @@ pub fn ip_to_host_cidr(ip: IpAddr) -> Cidr {
     }
 }
 
+/**
+Collapse a list of inclusive IP ranges into an equivalent, minimal set of CIDRs.
+
+This does *not* enumerate IPs and hence scales to very large ranges.
+*/
+pub fn collapse_ranges(input: &[IpRange]) -> Result<Vec<Cidr>, AddressError> {
+    let mut ranges: Vec<Range> = Vec::with_capacity(input.len());
+
+    for r in input.iter().copied() {
+        let rr: Range = iprange_to_range(r)?;
+        ranges.push(rr);
+    }
+
+    // 1) Sort ranges
+    ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
+
+    // 2) Merge overlaps/adjacent within each family
+    let merged: Vec<Range> = merge_ranges(&ranges);
+
+    // 3) Convert merged ranges to minimal CIDRs
+    let mut out: Vec<Cidr> = Vec::new();
+    for r in merged {
+        out.extend(range_to_cidrs(r));
+    }
+    Ok(out)
+}
+
+/// Convenience overload for call sites which have tuples.
+pub fn collapse_ranges_tuples(input: &[(IpAddr, IpAddr)]) -> Result<Vec<Cidr>, AddressError> {
+    let v: Vec<IpRange> = input
+        .iter()
+        .copied()
+        .map(|(beg, end)| IpRange::new(beg, end))
+        .collect::<Result<Vec<IpRange>, AddressError>>()?;
+    collapse_ranges(&v)
+}
+
 /* ---------------------------------- */
 
 /// Convert a CIDR to an inclusive range.
@@ -379,6 +417,33 @@ fn range_to_cidrs(r: Range) -> Vec<Cidr> {
     }
 
     out
+}
+
+/// Convert an [IpRange] to a [Range].
+fn iprange_to_range(r: IpRange) -> Result<Range, AddressError> {
+    match (r.beg, r.end) {
+        (IpAddr::V4(a), IpAddr::V4(b)) => {
+            let aa: u32 = u32::from_be_bytes(a.octets());
+            let bb: u32 = u32::from_be_bytes(b.octets());
+            let (beg, end) = if aa <= bb { (aa, bb) } else { (bb, aa) };
+            Ok(Range {
+                fam: IpFam::V4,
+                beg: beg as u128,
+                end: end as u128,
+            })
+        }
+        (IpAddr::V6(a), IpAddr::V6(b)) => {
+            let aa: u128 = u128::from_be_bytes(a.octets());
+            let bb: u128 = u128::from_be_bytes(b.octets());
+            let (beg, end) = if aa <= bb { (aa, bb) } else { (bb, aa) };
+            Ok(Range {
+                fam: IpFam::V6,
+                beg,
+                end,
+            })
+        }
+        (beg, end) => Err(AddressError::Mismatch(beg, end)),
+    }
 }
 
 /* ---------------------------------- */
