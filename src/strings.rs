@@ -96,6 +96,7 @@ pub static ERR_V6_HEXTET: &str = "IPv6 hextet must be <= 65535, got";
 pub static ERR_RANGE_ORDER: &str = "start IP is greater than end IP";
 pub static ERR_TOOLARGE: &str = "range too large - addresses";
 pub static ERR_MISMATCH: &str = "IP version mismatch in range";
+pub static PANIC_NAUGHTY: &str = "Naughty programmer! Beginning cannot be larger than end!";
 
 // hopcount.rs
 pub static BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
