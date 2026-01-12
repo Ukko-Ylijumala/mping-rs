@@ -20,7 +20,7 @@ const COMMENT_CHARS: [char; 2] = ['#', ';'];
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.5",
+    version = "0.1.6",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -36,7 +36,7 @@ struct Args {
         value_name = "PATH",
         help = "Path to a file containing IP addresses/ranges/CIDRs (one per line)"
     )]
-    pub file: Option<String>,
+    pub file: Option<Vec<String>>,
 
     #[arg(
         long,
@@ -44,7 +44,7 @@ struct Args {
         value_name = "URL",
         help = "HTTP URL of IP addresses/ranges/CIDRs (one per line)"
     )]
-    pub url: Option<String>,
+    pub url: Option<Vec<String>>,
 
     #[arg(
         long,
@@ -123,29 +123,32 @@ fn main() -> Result<(), String> {
     let mut timer: Instant = Instant::now();
 
     // Get entries from file if specified
-    if let Some(path) = &args.file {
-        let mut lines = read_input_file(path)?;
-        if args.debug {
-            eprintln!("Read {} entries from file '{}'", lines.len(), path);
+    if let Some(paths) = &args.file {
+        for path in paths {
+            let mut lines = read_input_file(path)?;
+            if args.debug {
+                eprintln!("Read {} entries from file '{}'", lines.len(), path);
+            }
+            entries_f.append(&mut lines);
         }
-        entries_f.append(&mut lines);
-
         if args.debug {
-            eprintln!("File processed in {:.2?}", Instant::now() - timer);
+            eprintln!("File(s) processed in {:.2?}", Instant::now() - timer);
         }
     }
 
     // Get entries from URL if specified
-    if let Some(url) = &args.url {
-        timer = Instant::now();
-        let mut lines = read_from_url(url, args.timeout)?;
-        if args.debug {
-            eprintln!("Read {} entries from URL '{}'", lines.len(), url);
-        }
-        entries_u.append(&mut lines);
+    if let Some(urls) = &args.url {
+        for url in urls {
+            timer = Instant::now();
+            let mut lines = read_from_url(url, args.timeout)?;
+            if args.debug {
+                eprintln!("Read {} entries from URL '{}'", lines.len(), url);
+            }
+            entries_u.append(&mut lines);
 
-        if args.debug {
-            eprintln!("URL processed in {:.2?}", Instant::now() - timer);
+            if args.debug {
+                eprintln!("URL processed in {:.2?}", Instant::now() - timer);
+            }
         }
     }
 
