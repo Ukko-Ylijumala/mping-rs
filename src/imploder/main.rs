@@ -9,6 +9,7 @@ use mping::{
 };
 use reqwest::blocking::Client;
 use std::{
+    collections::HashSet,
     fs::File,
     io::{BufRead, BufReader},
     time::{Duration, Instant},
@@ -20,7 +21,7 @@ const COMMENT_CHARS: [char; 2] = ['#', ';'];
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.6",
+    version = "0.1.7",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -118,50 +119,51 @@ fn read_from_url(url: &str, timeout: Duration) -> Result<Vec<String>, String> {
 fn main() -> Result<(), String> {
     let args: Args = Args::parse();
     let mut entries: Vec<Cidr> = Vec::new();
-    let mut entries_f: Vec<String> = Vec::new();
-    let mut entries_u: Vec<String> = Vec::new();
-    let mut timer: Instant = Instant::now();
+    let mut entries_read: HashSet<String> = HashSet::new();
+    let mut num_read: usize = 0;
+    let mut num_dupl: usize = 0;
 
     // Get entries from file if specified
     if let Some(paths) = &args.file {
         for path in paths {
-            let mut lines = read_input_file(path)?;
+            let timer: Instant = Instant::now();
+            let lines: Vec<String> = read_input_file(path)?;
+            let num: usize = lines.len();
+            let before_len: usize = entries_read.len();
+            entries_read.extend(lines);
+
             if args.debug {
-                eprintln!("Read {} entries from file '{}'", lines.len(), path);
+                let t: Duration = Instant::now() - timer;
+                num_read += num;
+                num_dupl += num - entries_read.len().saturating_sub(before_len);
+                eprintln!("Read {num} entries in {t:.2?} from file '{path}'");
             }
-            entries_f.append(&mut lines);
-        }
-        if args.debug {
-            eprintln!("File(s) processed in {:.2?}", Instant::now() - timer);
         }
     }
 
     // Get entries from URL if specified
     if let Some(urls) = &args.url {
         for url in urls {
-            timer = Instant::now();
-            let mut lines = read_from_url(url, args.timeout)?;
-            if args.debug {
-                eprintln!("Read {} entries from URL '{}'", lines.len(), url);
-            }
-            entries_u.append(&mut lines);
+            let timer: Instant = Instant::now();
+            let lines: Vec<String> = read_from_url(url, args.timeout)?;
+            let num: usize = lines.len();
+            let before_len: usize = entries_read.len();
+            entries_read.extend(lines);
 
             if args.debug {
-                eprintln!("URL processed in {:.2?}", Instant::now() - timer);
+                let t: Duration = Instant::now() - timer;
+                num_read += num;
+                num_dupl += num - entries_read.len().saturating_sub(before_len);
+                eprintln!("Read {num} entries in {t:.2?} from URL '{url}'");
             }
         }
     }
 
     // Chain the iterators and process all entries
-    entries.reserve(args.entries.len() + entries_f.len() + entries_u.len());
+    entries.reserve(args.entries.len() + entries_read.len());
     let mut ranges = Vec::new();
-    timer = Instant::now();
-    for entry in args
-        .entries
-        .iter()
-        .chain(entries_f.iter())
-        .chain(entries_u.iter())
-    {
+    let mut timer: Instant = Instant::now();
+    for entry in args.entries.iter().chain(entries_read.iter()) {
         if entry.contains("-") {
             let range = parse_ip_range(entry).map_err(|e| format!("{e}"))?;
             ranges.push(range);
@@ -177,7 +179,8 @@ fn main() -> Result<(), String> {
     }
 
     if args.debug {
-        eprintln!("Entries preprocessed in {:.2?}", Instant::now() - timer);
+        let t: Duration = Instant::now() - timer;
+        eprintln!("Entries preprocessed in {t:.2?} (total: {num_read}, duplicates: {num_dupl})");
     }
 
     timer = Instant::now();
@@ -189,7 +192,7 @@ fn main() -> Result<(), String> {
         if args.debug {
             eprintln!(
                 "Imploded {} entries down to {} CIDR(s) in {:.2?} ({} IPs total)",
-                args.entries.len() + entries_f.len() + entries_u.len(),
+                args.entries.len() + entries_read.len(),
                 result.len(),
                 Instant::now() - timer,
                 result.iter().fold(0u128, |acc, c| acc.saturating_add(c.len()))
