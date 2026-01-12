@@ -21,7 +21,7 @@ const COMMENT_CHARS: [char; 2] = ['#', ';'];
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.7",
+    version = "0.1.8",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -56,6 +56,19 @@ struct Args {
         help = "HTTP requrest timeout in seconds"
     )]
     pub timeout: Duration,
+
+    #[arg(
+        short = '4',
+        help = "Only output IPv4 CIDRs (ignore IPv6 entries)"
+    )]
+    pub v4: bool,
+
+    #[arg(
+        short = '6',
+        conflicts_with_all = ["v4"],
+        help = "Only output IPv6 CIDRs (ignore IPv4 entries)"
+    )]
+    pub v6: bool,
 
     #[arg(long, help = "Enable debug output")]
     pub debug: bool,
@@ -176,6 +189,14 @@ fn main() -> Result<(), String> {
         // It would be simpler to call `collapse_ranges` repeatedly in the loop, but that would be
         // wasteful since we'll now only do one sort + merge pass. A small win is still a win.
         entries.extend(collapse_ranges(&ranges).map_err(|e| format!("{e}"))?);
+    }
+
+    // We could also filter the families during parsing, but this way looks
+    // conceptually cleaner and the performance impact should be negligible.
+    if args.v4 {
+        entries.retain(|c| c.is_ipv4());
+    } else if args.v6 {
+        entries.retain(|c| c.is_ipv6());
     }
 
     if args.debug {
