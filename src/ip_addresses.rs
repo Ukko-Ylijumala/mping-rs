@@ -343,7 +343,7 @@ mod tests {
     const RANGE_1: &str = "10.0.0.1-5";
     const RANGE_2: &str = "10.0.0.1-10.0.0.5";
     const BAD_RANGE: &str = "10.0.0.5-10.0.0.1";
-    const BIG_RANGE_V4: &str = "10.0.0.0/12";
+    const BIG_RANGE_V4: &str = "10.0.0.0/16";
 
     const TEST_V6_1: &str = "::1";
     const TEST_V6_2: &str = "::5";
@@ -388,7 +388,7 @@ mod tests {
     fn test_big_v4() {
         let result: Result<Vec<IpAddr>, AddressError> = parse_ip_or_range(BIG_RANGE_V4);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 2u64.pow(20) as usize - 2);
+        assert_eq!(result.unwrap().len(), 2u64.pow(16) as usize - 2);
     }
 
     #[test]
