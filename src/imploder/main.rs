@@ -21,7 +21,7 @@ const COMMENT_CHARS: [char; 2] = ['#', ';'];
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.9",
+    version = "0.2.0",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -78,6 +78,9 @@ struct Args {
         help = "Maximum gap between IPs to fuzzily merge nearby ranges (0 = exact)"
     )]
     pub merge_gap: u16,
+
+    #[arg(long, help = "Output host addresses as /32 (IPv4) or /128 (IPv6) CIDRs too")]
+    pub host_cidr: bool,
 
     #[arg(long, help = "Enable debug output")]
     pub debug: bool,
@@ -229,7 +232,11 @@ fn main() -> Result<(), String> {
             );
         }
         for cidr in result {
-            println!("{cidr}");
+            if !args.host_cidr && cidr.is_host() {
+                println!("{}", cidr.addr);
+            } else {
+                println!("{cidr}");
+            }
         }
     }
     Ok(())
