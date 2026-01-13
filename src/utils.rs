@@ -2,9 +2,10 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{ip_addresses::parse_ip_or_range, logging::Logger, strings::*};
+use crate::{logging::Logger, strings::*};
 use hickory_resolver::TokioResolver;
 use itertools::Itertools;
+use miniutils::iptools::parse_ip_or_range;
 use signal_hook::{
     consts::signal::{SIGINT, SIGQUIT, SIGTERM},
     iterator::Signals,

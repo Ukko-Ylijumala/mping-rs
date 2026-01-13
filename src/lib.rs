@@ -6,19 +6,15 @@
 
 mod args;
 mod hopcount;
-pub mod imploder;
-mod ip_addresses;
 pub mod latencywin;
 mod logging;
 mod macros;
 mod pingdata;
 mod strings;
 mod structs;
-mod tabulator;
 mod tui;
 mod utils;
 
 pub use hopcount::determine_hops;
-pub use ip_addresses::parse_ip_range;
 pub use utils::parse_float_into_duration;
 pub use utils::parse_ip_addresses;

@@ -3,10 +3,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use clap::{Parser, crate_authors, value_parser};
-use mping::{
-    imploder::{Cidr, collapse_cidrs, collapse_ranges},
-    parse_float_into_duration, parse_ip_range,
-};
+use miniutils::iptools::{Cidr, collapse_cidrs, collapse_ranges, parse_ip_range};
+use mping::parse_float_into_duration;
 use reqwest::blocking::Client;
 use std::{
     collections::HashSet,
@@ -57,10 +55,7 @@ struct Args {
     )]
     pub timeout: Duration,
 
-    #[arg(
-        short = '4',
-        help = "Only output IPv4 CIDRs (ignore IPv6 entries)"
-    )]
+    #[arg(short = '4', help = "Only output IPv4 CIDRs (ignore IPv6 entries)")]
     pub v4: bool,
 
     #[arg(

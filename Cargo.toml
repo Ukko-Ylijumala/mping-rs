@@ -44,7 +44,7 @@ features = ["blocking"]
 
 [dependencies.miniutils]
 git = "https://github.com/Ukko-Ylijumala/miniutils-rs"
-version = "0.2.5"
+version = "0.2.6"
 
 [dependencies.timesince]
 git = "https://github.com/Ukko-Ylijumala/timesince-rs"
