@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use clap::{Parser, crate_authors};
+use clap::{Parser, crate_authors, value_parser};
 use mping::{
     imploder::{Cidr, collapse_cidrs, collapse_ranges},
     parse_float_into_duration, parse_ip_range,
@@ -21,7 +21,7 @@ const COMMENT_CHARS: [char; 2] = ['#', ';'];
 #[derive(Parser, Debug)]
 #[command(
     name = "imploder",
-    version = "0.1.8",
+    version = "0.1.9",
     author = crate_authors!(),
     about = "Implode (collapse) IP addresses/ranges/CIDRs into minimal CIDR representations")]
 struct Args {
@@ -69,6 +69,15 @@ struct Args {
         help = "Only output IPv6 CIDRs (ignore IPv4 entries)"
     )]
     pub v6: bool,
+
+    #[arg(
+        long,
+        value_name = "N",
+        default_value = "0",
+        value_parser = value_parser!(u16).range(0..=65535),
+        help = "Maximum gap between IPs to fuzzily merge nearby ranges (0 = exact)"
+    )]
+    pub merge_gap: u16,
 
     #[arg(long, help = "Enable debug output")]
     pub debug: bool,
@@ -205,7 +214,7 @@ fn main() -> Result<(), String> {
     }
 
     timer = Instant::now();
-    let result: Vec<Cidr> = collapse_cidrs(&entries);
+    let result: Vec<Cidr> = collapse_cidrs(&entries, args.merge_gap as u128);
 
     if result.is_empty() {
         eprintln!("No CIDRs generated from the provided input.");

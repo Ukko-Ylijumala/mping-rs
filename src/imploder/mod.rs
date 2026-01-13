@@ -222,15 +222,23 @@ Collapse a list of CIDRs into an equivalent, minimal set of CIDRs.
 
 Input CIDRs may be non-normalized host addresses; they will be normalized
 to the network address.
+
+If `max_gap` > 0, nearby ranges separated by <= `max_gap` IPs will be
+fuzzily merged as well (over-approximation).
 */
-pub fn collapse_cidrs(input: &[Cidr]) -> Vec<Cidr> {
+pub fn collapse_cidrs(input: &[Cidr], max_gap: u128) -> Vec<Cidr> {
     let mut ranges: Vec<Range> = input.iter().map(|c| cidr_to_range(*c)).collect();
 
     // 1) Sort ranges
     ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
 
     // 2) Merge overlaps/adjacent within each family
-    let merged: Vec<Range> = merge_ranges(&ranges);
+    let mut merged: Vec<Range> = merge_ranges(&ranges);
+
+    // 2b) Fuzzy merge nearby with gaps <= max_gap
+    if max_gap > 0 {
+        merged = merge_ranges_fuzzy(&merged, max_gap);
+    }
 
     // 3) Convert each merged range back into minimal CIDRs
     let mut out: Vec<Cidr> = Vec::new();
@@ -240,14 +248,24 @@ pub fn collapse_cidrs(input: &[Cidr]) -> Vec<Cidr> {
     out
 }
 
-/// Collapse a list of IPs into an equivalent, minimal set of CIDRs.
-pub fn collapse_ips(input: &[IpAddr]) -> Vec<Cidr> {
+/**
+Collapse a list of IPs into an equivalent, minimal set of CIDRs.
+
+If `max_gap` > 0, nearby ranges separated by <= `max_gap` IPs will be
+fuzzily merged as well (over-approximation).
+*/
+pub fn collapse_ips(input: &[IpAddr], max_gap: u128) -> Vec<Cidr> {
     let cidrs: Vec<Cidr> = input.iter().map(|&ip| ip_to_host_cidr(ip)).collect();
-    collapse_cidrs(&cidrs)
+    collapse_cidrs(&cidrs, max_gap)
 }
 
-/// Collapse a list of strings (CIDRs or IPs) into an equivalent, minimal set of CIDRs.
-pub fn collapse_strings(input: &[impl AsRef<str>]) -> Vec<Cidr> {
+/**
+Collapse a list of strings (CIDRs or IPs) into an equivalent, minimal set of CIDRs.
+
+If `max_gap` > 0, nearby ranges separated by <= `max_gap` IPs will be
+fuzzily merged as well (over-approximation).
+*/
+pub fn collapse_strings(input: &[impl AsRef<str>], max_gap: u128) -> Vec<Cidr> {
     let mut cidrs: Vec<Cidr> = Vec::with_capacity(input.len());
     for s in input {
         if s.as_ref().contains(SLASH) {
@@ -258,7 +276,7 @@ pub fn collapse_strings(input: &[impl AsRef<str>]) -> Vec<Cidr> {
             cidrs.push(ip_to_host_cidr(ip));
         }
     }
-    collapse_cidrs(&cidrs)
+    collapse_cidrs(&cidrs, max_gap)
 }
 
 /// Convert a single IP (host) to an equivalent CIDR (/32 or /128).
@@ -296,6 +314,36 @@ pub fn collapse_ranges(input: &[IpRange]) -> Result<Vec<Cidr>, AddressError> {
 
     // 3) Convert merged ranges to minimal CIDRs
     let mut out: Vec<Cidr> = Vec::new();
+    for r in merged {
+        out.extend(range_to_cidrs(r));
+    }
+    Ok(out)
+}
+
+/**
+Collapse a list of inclusive IP ranges into an equivalent, minimal set of CIDRs.
+
+Fuzzily merges nearby ranges separated by <= `max_gap` IPs (over-approximation).
+*/
+pub fn collapse_ranges_fuzzy(input: &[IpRange], max_gap: u128) -> Result<Vec<Cidr>, AddressError> {
+    let mut ranges: Vec<Range> = Vec::with_capacity(input.len());
+
+    for r in input.iter().copied() {
+        let rr: Range = iprange_to_range(r)?;
+        ranges.push(rr);
+    }
+
+    // 1) Sort ranges
+    ranges.sort_by(|a, b| a.cmp_key().cmp(&b.cmp_key()));
+
+    // 2) Merge overlaps/adjacent within each family
+    let mut merged: Vec<Range> = merge_ranges(&ranges);
+
+    // 2b) Fuzzy merge nearby with gaps <= max_gap
+    merged = merge_ranges_fuzzy(&merged, max_gap);
+
+    // 3) Convert merged ranges to minimal CIDRs
+    let mut out: Vec<Cidr> = Vec::with_capacity(merged.len());
     for r in merged {
         out.extend(range_to_cidrs(r));
     }
@@ -344,7 +392,7 @@ fn cidr_to_range(c: Cidr) -> Range {
     }
 }
 
-/// Merge overlapping/adjacent ranges within each IP family.
+/// Merge overlapping/adjacent ranges within each IP family. Input must be sorted.
 #[inline]
 fn merge_ranges(sorted: &[Range]) -> Vec<Range> {
     let mut out: Vec<Range> = Vec::with_capacity(sorted.len());
@@ -356,6 +404,30 @@ fn merge_ranges(sorted: &[Range]) -> Vec<Range> {
                     if r.end > last.end {
                         last.end = r.end;
                     }
+                    continue;
+                }
+            }
+        }
+        out.push(r);
+    }
+    out
+}
+
+/**
+Merge nearby ranges separated by <= `max_gap` IPs (fuzzy over-approximation).
+
+Input must be sorted and previously merged, or it'll be a GIGO situation.
+*/
+#[inline]
+fn merge_ranges_fuzzy(merged: &[Range], max_gap: u128) -> Vec<Range> {
+    let mut out: Vec<Range> = Vec::with_capacity(merged.len());
+    for r in merged.iter().copied() {
+        if let Some(last) = out.last_mut() {
+            if last.fam == r.fam {
+                let gap: u128 = r.beg.saturating_sub(last.end.saturating_add(1));
+                if gap <= max_gap {
+                    // swallow the gap by extending end
+                    last.end = r.end.max(last.end);
                     continue;
                 }
             }
@@ -513,6 +585,12 @@ mod tests {
     const TST_D_V6: [&str; 4] = ["2001:db8::4", "2001:db8::5", "2001:db8::6", "2001:db8::7"];
     const RES_D_V6: &str = "2001:db8::4/126";
 
+    const TST_E_V4: [&str; 4] = ["172.16.0.8", "172.16.0.11", "172.16.0.13", "172.16.0.15"];
+    const RES_E_V4: &str = "172.16.0.8/29";
+
+    const TST_E_V6: [&str; 4] = ["2001:db8::0", "2001:db8::3", "2001:db8::5", "2001:db8::7"];
+    const RES_E_V6: &str = "2001:db8::/125";
+
     #[test]
     fn test_merges_adjacent_v4() {
         let input = [
@@ -525,7 +603,7 @@ mod tests {
                 prefix: 24,
             },
         ];
-        let out = collapse_cidrs(&input);
+        let out = collapse_cidrs(&input, 0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_string(), RES_T_A);
     }
@@ -542,7 +620,7 @@ mod tests {
                 prefix: 24,
             },
         ];
-        let out = collapse_cidrs(&input);
+        let out = collapse_cidrs(&input, 0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_string(), RES_T_B);
     }
@@ -559,7 +637,7 @@ mod tests {
                 prefix: 65,
             },
         ];
-        let out = collapse_cidrs(&input);
+        let out = collapse_cidrs(&input, 0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_string(), RES_T_C);
     }
@@ -582,7 +660,7 @@ mod tests {
             .iter()
             .map(|s| ip_to_host_cidr(s.parse().unwrap()))
             .collect();
-        let out = collapse_cidrs(&input);
+        let out = collapse_cidrs(&input, 0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_string(), RES_D_V4);
     }
@@ -593,7 +671,7 @@ mod tests {
             .iter()
             .map(|s| ip_to_host_cidr(s.parse().unwrap()))
             .collect();
-        let out = collapse_cidrs(&input);
+        let out = collapse_cidrs(&input, 0);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].to_string(), RES_D_V6);
     }
@@ -606,6 +684,7 @@ mod tests {
                 .map(|s| s.to_string())
                 .collect::<Vec<String>>()
                 .as_slice(),
+            0,
         )[0];
         let ip_strs: Vec<String> = cidr.iter().map(|c| c.to_string()).collect();
         let expected: Vec<String> = TST_D_V4.iter().map(|s| s.to_string()).collect();
@@ -620,9 +699,34 @@ mod tests {
                 .map(|s| s.to_string())
                 .collect::<Vec<String>>()
                 .as_slice(),
+            0,
         )[0];
         let ip_strs: Vec<String> = cidr.iter().map(|c| c.to_string()).collect();
         let expected: Vec<String> = TST_D_V6.iter().map(|s| s.to_string()).collect();
         assert_eq!(ip_strs, expected);
+    }
+
+    #[test]
+    fn test_fuzz_v4() {
+        let input: Vec<Cidr> = TST_E_V4
+            .iter()
+            .map(|s| ip_to_host_cidr(s.parse().unwrap()))
+            .collect();
+        let out = collapse_cidrs(&input, 2);
+        eprintln!("{:?}", out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].to_string(), RES_E_V4);
+    }
+
+    #[test]
+    fn test_fuzz_v6() {
+        let input: Vec<Cidr> = TST_E_V6
+            .iter()
+            .map(|s| ip_to_host_cidr(s.parse().unwrap()))
+            .collect();
+        let out = collapse_cidrs(&input, 2);
+        eprintln!("{:?}", out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].to_string(), RES_E_V6);
     }
 }
