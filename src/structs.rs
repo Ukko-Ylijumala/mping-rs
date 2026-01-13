@@ -7,12 +7,11 @@ use crate::{
     logging::{Logger, MessageBuffer},
     pingdata::PingTarget,
     strings::*,
-    tabulator::simple_tabulate,
     tui::{AppLayout, MutableLine, TableRow},
     utils::nice_permission_error,
 };
 use hickory_resolver::TokioResolver;
-use miniutils::{ProcessInfo, inject, templater};
+use miniutils::{ProcessInfo, inject, simple_tabulate, templater};
 use parking_lot::RwLock;
 use ratatui::{
     prelude::Stylize,

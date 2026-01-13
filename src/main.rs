@@ -14,7 +14,6 @@ mod macros;
 mod pingdata;
 mod strings;
 mod structs;
-mod tabulator;
 mod tui;
 mod utils;
 
@@ -24,7 +23,6 @@ use crate::{
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
     structs::{AppState, PopupContents},
-    tabulator::simple_tabulate,
     tui::{TableRow, TerminalGuard},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
@@ -33,7 +31,7 @@ use futures::{
     future::join_all,
     stream::{FuturesUnordered, StreamExt},
 };
-use miniutils::{ToDisplay, inject, templater};
+use miniutils::{ToDisplay, inject, simple_tabulate, templater};
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
 use std::{fmt::Display, future::Future, net::IpAddr, sync::Arc, thread, time::Duration};
