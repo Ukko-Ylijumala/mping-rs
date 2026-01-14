@@ -21,7 +21,7 @@ use crate::{
     keyboard::key_event_handler,
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
-    structs::{AppState, PopupContents},
+    structs::{AppState, PopupContents, TargetDefaults},
     tui::{TableRow, TerminalGuard},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
@@ -43,10 +43,10 @@ const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 /* -------------------------------------------------------------------------- */
 
 /// Create [PingTarget] instances for each IP address.
-fn make_targets(addrs: &[IpAddr], histsize: u32, detailed: u16, paused: bool) -> Vec<PingTarget> {
+fn make_targets(addrs: &[IpAddr], defaults: &TargetDefaults) -> Vec<PingTarget> {
     addrs
         .iter()
-        .map(|addr| PingTarget::new(*addr, histsize as usize, detailed as usize, paused))
+        .map(|addr| PingTarget::new(*addr, defaults.histsize, defaults.detailed, defaults.paused))
         .collect()
 }
 
@@ -81,7 +81,7 @@ fn mark_sent_and_next_seq(tgt: &PingTarget) -> u16 {
 /// needed. Internally, [Arc::make_mut] will perform a clone-on-write if necessary.
 #[inline]
 fn build_payload(app: &AppState) -> Arc<[u8]> {
-    match app.randomize {
+    match app.defaults.randomize {
         true => {
             let mut payload: Arc<[u8]> = app.payload.clone();
             let payload: &mut [u8] = Arc::make_mut(&mut payload);
@@ -110,7 +110,7 @@ fn build_ping_future(
 
     async move {
         let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
-        pinger.timeout(app.ping_timeout);
+        pinger.timeout(app.defaults.timeout);
 
         let seq: u16 = mark_sent_and_next_seq(&tgt);
         let rec: PacketRecord = PacketRecord::new(seq);
@@ -124,7 +124,7 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
     // We must create a new Pinger for each async context, since otherwise we'll have
     // to wait for the previous ping to complete before sending the next one.
     let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
-    pinger.timeout(app.ping_timeout);
+    pinger.timeout(app.defaults.timeout);
 
     let pl: Arc<[u8]> = build_payload(&app);
     let seq: u16 = mark_sent_and_next_seq(&tgt);
@@ -148,8 +148,8 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
     let mut next_ping: Instant = tokio::time::Instant::now();
 
     // These variables are used only if perf mode is enabled
-    let interval: f64 = app.ping_interval.as_secs_f64().max(1e-6); // 1 us min to avoid div by zero
-    let timeout: f64 = app.ping_timeout.as_secs_f64();
+    let interval: f64 = app.defaults.interval.as_secs_f64().max(1e-6); // 1 us min to avoid div by zero
+    let timeout: f64 = app.defaults.timeout.as_secs_f64();
     let max_inflight: usize = ((timeout / interval).ceil() as usize).clamp(1, 4);
     let mut inflight = FuturesUnordered::new();
 
@@ -177,14 +177,14 @@ async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
 
                 if app.perf() {
                     if inflight.len() >= max_inflight {
-                        next_ping = now + app.ping_interval;
+                        next_ping = now + app.defaults.interval;
                         continue;
                     }
                     inflight.push(build_ping_future(tgt.clone(), client.clone(), app.clone(), id));
                 } else {
                     ping_task(tgt.clone(), &client, &app, id).await;
                 }
-                next_ping += app.ping_interval;
+                next_ping += app.defaults.interval;
             }
         }
     }
@@ -264,7 +264,7 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
     if all || !vp.needs_paging() {
         return join_all(
             tgts.iter()
-                .map(|t| format_row(t, state.debug, state.ping_timeout)),
+                .map(|t| format_row(t, state.debug, state.defaults.timeout)),
         )
         .await;
     }
@@ -285,7 +285,7 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
             join_all(
                 visible
                     .iter()
-                    .map(|t| format_row(t, state.debug, state.ping_timeout)),
+                    .map(|t| format_row(t, state.debug, state.defaults.timeout)),
             )
             .await
             .into_iter(),
@@ -354,7 +354,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
         if !rtt_data.is_empty() {
             let samples: usize = rtt_data.len();
-            let sample_t: f64 = samples as f64 * state.ping_interval.as_secs_f64();
+            let sample_t: f64 = samples as f64 * state.defaults.interval.as_secs_f64();
             let mut values: Vec<f64> = Vec::with_capacity(samples);
 
             // get values and min/max RTT (for graph scaling) in one pass
@@ -426,10 +426,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     /* -------- Lower info area - bottom right corner -------- */
     let w_info_lower = Paragraph::new(templater!(
         INFO_STATE,
-        state.ping_interval.as_millis(),
-        state.ping_timeout.as_millis(),
+        state.defaults.interval.as_millis(),
+        state.defaults.timeout.as_millis(),
         state.payload.len(),
-        if state.randomize { INFO_RAND } else { "" },
+        if state.defaults.randomize { INFO_RAND } else { "" },
         state.spawned_tasks()
     ))
     .block(Block::new().padding(Padding::left(1)));
@@ -571,12 +571,9 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 #[tokio::main(worker_threads = 8)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let conf: MpConfig = MpConfig::parse().await?;
-    let app: Arc<AppState> = AppState::from_conf(&conf).build(make_targets(
-        &conf.addrs,
-        conf.histsize,
-        conf.detailed,
-        conf.paused,
-    ))?;
+    let app: AppState = AppState::from_conf(&conf);
+    let tgts: Vec<PingTarget> = make_targets(&conf.addrs, &app.defaults);
+    let app: Arc<AppState> = app.build(tgts)?;
 
     // Spawn ping tasks
     {

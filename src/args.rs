@@ -5,7 +5,7 @@
 use crate::{
     logging::{LogLevel, MessageBuffer},
     strings::*,
-    structs::{DEFAULT_PAYLOAD_SIZE, Resolved},
+    structs::{DEFAULT_DETAILED, DEFAULT_HISTSIZE, DEFAULT_PAYLOAD_SIZE, Resolved},
     utils::{parse_float_into_duration, parse_ip_addresses, resolve_names},
 };
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
@@ -24,10 +24,14 @@ use std::{
 };
 
 const DEFAULT_DNS_TIMEOUT: Duration = Duration::from_secs(5);
-// Default payload size as a string constant for clap default_value.
+// Some default sizes as string constants for clap default_value.
 // Wow, this is mega convoluted...
 static DEFAULT_PAYLOAD_STR: LazyLock<&'static str> =
     LazyLock::new(|| Box::leak(DEFAULT_PAYLOAD_SIZE.to_string().into_boxed_str()));
+static DEFAULT_HISTSIZE_STR: LazyLock<&'static str> =
+    LazyLock::new(|| Box::leak(DEFAULT_HISTSIZE.to_string().into_boxed_str()));
+static DEFAULT_DETAILED_STR: LazyLock<&'static str> =
+    LazyLock::new(|| Box::leak(DEFAULT_DETAILED.to_string().into_boxed_str()));
 
 /// Configuration struct for the program.
 #[derive(Parser, Default, Debug, Clone)]
@@ -87,7 +91,7 @@ pub(crate) struct MpConfig {
         value_name = NUM,
         required = false,
         value_parser = value_parser!(u32).range(60..65536),
-        default_value = "3600",
+        default_value = *DEFAULT_HISTSIZE_STR,
         help = HELP_HISTSIZE
     )]
     pub histsize: u32,
@@ -97,7 +101,7 @@ pub(crate) struct MpConfig {
         value_name = NUM,
         required = false,
         value_parser = value_parser!(u16).range(10..1000),
-        default_value = "100",
+        default_value = *DEFAULT_DETAILED_STR,
         help = HELP_DETAILED
     )]
     pub detailed: u16,
@@ -253,19 +257,12 @@ impl MpConfig {
         );
 
         // Parse the addresses which are straight up IPs/ranges first.
-        let (mut addrs, mut seen, _excl, failed) = parse_ip_addresses(
-            &config.targets,
-            Some(&config.exclude),
-            &*config.buf,
-        );
+        let (mut addrs, mut seen, _excl, failed) =
+            parse_ip_addresses(&config.targets, Some(&config.exclude), &*config.buf);
 
         // Now try to resolve any entries that failed to parse as IPs.
-        for (name, ips) in resolve_names(
-            failed,
-            &*config.resolver.as_ref().unwrap(),
-            &*config.buf,
-        )
-        .await
+        for (name, ips) in
+            resolve_names(failed, &*config.resolver.as_ref().unwrap(), &*config.buf).await
         {
             config.resolved.add(name, &ips);
         }

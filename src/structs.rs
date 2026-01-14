@@ -32,7 +32,9 @@ use std::{
 use surge_ping::{Client, Config, ICMP};
 use tokio::sync::Notify;
 
-pub const DEFAULT_PAYLOAD_SIZE: usize = 48;
+pub(crate) const DEFAULT_PAYLOAD_SIZE: usize = 48;
+pub(crate) const DEFAULT_HISTSIZE: usize = 3600; // one hour of per-second history
+pub(crate) const DEFAULT_DETAILED: usize = 100; // detailed RTT history size
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
 const UPDATE_TASK_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(target_os = "linux")]
@@ -58,12 +60,9 @@ pub(crate) struct AppState {
     pub ui_interval: Duration,
     /// Next scheduled UI refresh time
     pub ui_next_refresh: RwLock<tokio::time::Instant>,
-    pub verbose: bool,
+    pub defaults: TargetDefaults,
     pub debug: bool,
     pub quit: Arc<AtomicBool>,
-    pub ping_interval: Duration,
-    pub ping_timeout: Duration,
-    pub randomize: bool,
     pub payload: Arc<[u8]>,
     pub internal_tick: Duration,
     pub key_event: Notify,
@@ -87,11 +86,13 @@ impl AppState {
     - initial [AppLayout]
     - [ProcessInfo] tracking
     - intervals: UI refresh, pinging, internal tick
-    - flags: verbose, debug, randomize, perf
+    - flags: debug, randomize, perf
     - events: key event notifier, quit flag
     - default payload
+    - [TargetDefaults] as per config
     - other default fields
     */
+    #[must_use = "AppState must be built using .build()"]
     pub fn from_conf(conf: &MpConfig) -> Self {
         // setup app title row with version and styling
         let mut title = Line::from(APP_TITLE).centered().bold().red().on_green();
@@ -113,6 +114,16 @@ impl AppState {
         let max_width: usize = help.iter().map(|s| s.len()).max().unwrap();
         layout.setup_help_area(help.len() as u16, max_width as u16);
 
+        // gather target defaults from config
+        let tgt_defaults = TargetDefaults {
+            histsize: conf.histsize as usize,
+            detailed: conf.detailed as usize,
+            interval: conf.interval,
+            timeout: conf.timeout,
+            paused: conf.paused,
+            randomize: conf.randomize,
+        };
+
         Self {
             pi: ProcessInfo::new().with_min_interval(PROCINFO_INTERVAL),
             c_v4: None,
@@ -124,12 +135,9 @@ impl AppState {
             headers,
             ui_interval: Duration::from_millis(conf.refresh),
             ui_next_refresh: tokio::time::Instant::now().into(),
-            verbose: conf.verbose,
+            defaults: tgt_defaults,
             debug: conf.debug,
             quit: AtomicBool::new(false).into(),
-            ping_interval: conf.interval,
-            ping_timeout: conf.timeout,
-            randomize: conf.randomize,
             payload: vec![0u8; conf.size as usize].into(), // 48 bytes -> 56-byte packet
             // adjust internal tick (delay) lower if it's higher than ping
             // interval, othwerwise we'd send out fewer pings than intended
@@ -152,6 +160,8 @@ impl AppState {
     Build the final application state from initial targets.
     - set up [surge_ping::Client] instances for IPv4 and IPv6
     - add provided ping targets (if any)
+
+    Returns an error if client creation fails.
 
     NOTE: sharing a client is (async) safe and allows socket reuse.
     */
@@ -443,6 +453,32 @@ impl ViewPort {
 }
 
 /* ---------------------------------- */
+
+/// Default settings for new ping targets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TargetDefaults {
+    pub histsize: usize,
+    pub detailed: usize,
+    pub interval: Duration,
+    pub timeout: Duration,
+    pub paused: bool,
+    pub randomize: bool,
+}
+
+impl Default for TargetDefaults {
+    fn default() -> Self {
+        Self {
+            histsize: DEFAULT_HISTSIZE,
+            detailed: DEFAULT_DETAILED,
+            interval: Duration::from_secs(1),
+            timeout: Duration::from_secs(2),
+            paused: false,
+            randomize: false,
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
 
 /**
 Map resolved IP addresses by name and by address.
