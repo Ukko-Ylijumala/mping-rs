@@ -4,6 +4,7 @@
 
 use crate::{
     args::MpConfig,
+    input::AddTargetDialogState,
     logging::{Logger, MessageBuffer},
     pingdata::PingTarget,
     strings::*,
@@ -70,6 +71,7 @@ pub(crate) struct AppState {
     pub status_line: MutableLine<'static>,
     pub help_contents: PopupContents,
     pub popup_contents: RwLock<PopupContents>,
+    pub input_state: RwLock<AddTargetDialogState>,
     pub resolver: Arc<TokioResolver>,
     pub logger: Arc<MessageBuffer>,
     pub distance_stretch_factor: f64,
@@ -152,6 +154,7 @@ impl AppState {
             perf: conf.perf.into(),
             popup_contents: PopupContents::None.into(),
             help_contents: PopupContents::Multiline(help),
+            input_state: AddTargetDialogState::default().into(),
             resolved: conf.resolved.clone().into(),
         }
     }
@@ -413,6 +416,20 @@ impl AppState {
             ));
         }
         num
+    }
+
+    /// Open the add target dialog in the UI.
+    pub fn add_tgt_dialog_open(&self) {
+        let mut state = self.input_state.write();
+        *state = AddTargetDialogState::default();
+        self.layout.write().input_visible = true;
+    }
+
+    /// Close the add target dialog.
+    pub fn add_tgt_dialog_close(&self) {
+        let mut state = self.input_state.write();
+        *state = AddTargetDialogState::default();
+        self.layout.write().input_visible = false;
     }
 }
 

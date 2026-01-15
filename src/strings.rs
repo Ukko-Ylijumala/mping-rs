@@ -10,6 +10,18 @@ pub static HDR_SEQ: &str = "Seq";
 // missing value placeholder for textual output
 pub static MISSING: &str = "-";
 
+// glyphs
+pub static CHECK_OK: &str = "✅";
+pub static CHECK_NOK: &str = "❌";
+pub static CHECK_EMPTY: &str = "⬜";
+pub static EXCLAMATION: &str = "⚠️";
+pub static QUESTION: &str = "❓";
+pub static ARROW_UP: &str = "↑";
+pub static ARROW_DOWN: &str = "↓";
+pub static ARROW_RIGHT: &str = "→";
+pub static ARROW_LEFT: &str = "←";
+pub static TABULATOR: &str = "⇥ ⇤";
+
 // generic
 pub static TIMEOUT: &str = "timeout";
 pub static UNAVAIL: &str = "unavailable";
@@ -157,6 +169,10 @@ pub static INFO_STOP: &str = "stopping '{}'";
 pub static INFO_REMOVE: &str = "removing '{}'";
 pub static INFO_UNR_REM: &str = "removed {} unreachable target(s) in {}ms ({} -> {})";
 pub static EMPTY_RESP: &str = "empty response";
+pub static ADD_TGT_DIALOG: &str = "Add targets and exclusions (space separated; Esc to cancel)";
+pub static ADD_TGT_DIA_ADDRS: &str = "IP addrs/ranges/CIDRs:";
+pub static ADD_TGT_DIA_EXCLS: &str = "Exclusions (optional):";
+pub static ADD_TGT_DIA_PAUSE: &str = "Add as paused";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];

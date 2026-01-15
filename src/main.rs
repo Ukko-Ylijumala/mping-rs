@@ -6,6 +6,7 @@
 
 mod args;
 mod hopcount;
+mod input;
 mod keyboard;
 mod latencywin;
 mod logging;
