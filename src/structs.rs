@@ -4,11 +4,10 @@
 
 use crate::{
     args::MpConfig,
-    input::AddTargetDialogState,
     logging::{Logger, MessageBuffer},
     pingdata::PingTarget,
     strings::*,
-    tui::{AppLayout, MutableLine, TableRow},
+    ui::{AddTargetDialogState, AppLayout, MutableLine, TableRow},
     utils::nice_permission_error,
 };
 use hickory_resolver::TokioResolver;

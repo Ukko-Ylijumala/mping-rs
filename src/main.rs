@@ -6,24 +6,21 @@
 
 mod args;
 mod hopcount;
-mod input;
-mod keyboard;
 mod latencywin;
 mod logging;
 mod macros;
 mod pingdata;
 mod strings;
 mod structs;
-mod tui;
+mod ui;
 mod utils;
 
 use crate::{
     args::MpConfig,
-    keyboard::key_event_handler,
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
     structs::{AppState, PopupContents, TargetDefaults},
-    tui::{TableRow, TerminalGuard},
+    ui::{TableRow, TerminalGuard, keyboard::key_event_handler},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
 
@@ -425,6 +422,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     }
 
     /* -------- Lower info area - bottom right corner -------- */
+    #[rustfmt::skip]
     let w_info_lower = Paragraph::new(templater!(
         INFO_STATE,
         state.defaults.interval.as_millis(),

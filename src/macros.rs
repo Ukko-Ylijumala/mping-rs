@@ -108,7 +108,7 @@ panics, so those must be handled separately.
 */
 macro_rules! eprintln_nomangle {
     ($($tt:tt)*) => {
-        $crate::tui::eprintln_safe(format_args!($($tt)*))
+        $crate::ui::eprintln_safe(format_args!($($tt)*))
     };
 }
 

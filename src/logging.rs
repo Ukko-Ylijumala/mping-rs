@@ -23,7 +23,7 @@ adds "trace" at 15. Default is "info". "Emergency" and "alert"
 are expected to not be used, as we should not be system critical.
 */
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd)]
-pub(crate) enum LogLevel {
+pub enum LogLevel {
     Emergency,
     Alert,
     Critical,
@@ -116,7 +116,7 @@ macro_rules! gen_level_methods_impl {
 /* ---------------------------------- */
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Message {
+pub struct Message {
     pub when: TimeSinceEpoch,
     lvl: LogLevel,
     msg: String,
@@ -209,7 +209,7 @@ get printed to stderr when added (if TUI alternate screen is not active).
 Default is [LogLevel::Notice].
 */
 #[derive(Debug)]
-pub(crate) struct MessageBuffer {
+pub struct MessageBuffer {
     buf: RwLock<VecDeque<Message>>,
     cap: usize,
     /// Total number of messages ever added to the buffer.

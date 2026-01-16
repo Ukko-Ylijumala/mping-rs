@@ -6,16 +6,15 @@
 
 mod args;
 mod hopcount;
-mod input;
-pub mod latencywin;
+mod latencywin;
 mod logging;
 mod macros;
 mod pingdata;
 mod strings;
 mod structs;
-mod tui;
+mod ui;
 mod utils;
 
 pub use hopcount::determine_hops;
+pub use ui::TerminalGuard;
 pub use utils::parse_float_into_duration;
-pub use utils::parse_ip_addresses;
