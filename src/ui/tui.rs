@@ -19,7 +19,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Cell, ListState, Row, TableState},
+    widgets::{Cell, List, ListState, Paragraph, Row, TableState},
 };
 use std::{
     fmt,
@@ -623,6 +623,44 @@ impl Index<usize> for TableRow {
 
     fn index(&self, index: usize) -> &Self::Output {
         &self.items[index]
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/// Contents for popup dialog in the UI.
+#[derive(Debug, Default)]
+pub(crate) enum PopupContents {
+    Multiline(Vec<String>),
+    Paragraph(String),
+    Line(String),
+    Buffer(Arc<MessageBuffer>),
+    #[default]
+    None,
+}
+
+impl PopupContents {
+    pub fn to_para(&self) -> Paragraph<'_> {
+        match self {
+            PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
+            PopupContents::Multiline(s) => Paragraph::new(s.join("\n")),
+            PopupContents::Buffer(buf) => buf.to_paragraph(),
+            PopupContents::None => Paragraph::default(),
+        }
+    }
+
+    pub fn to_list(&self) -> List<'_> {
+        match self {
+            PopupContents::Paragraph(s) => List::new(s.split("\n")),
+            PopupContents::Line(s) => List::new(vec![s.clone()]),
+            PopupContents::Multiline(s) => List::new(s.clone()),
+            PopupContents::Buffer(buf) => buf.to_list(),
+            PopupContents::None => List::default(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        matches!(self, PopupContents::None)
     }
 }
 

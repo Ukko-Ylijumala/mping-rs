@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::structs::{AppState, PopupContents};
+use crate::{structs::AppState, ui::PopupContents};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::{io::Result, sync::Arc, time::Duration};
 

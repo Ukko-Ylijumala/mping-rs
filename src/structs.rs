@@ -7,18 +7,13 @@ use crate::{
     logging::{Logger, MessageBuffer},
     pingdata::PingTarget,
     strings::*,
-    ui::{AddTargetDialogState, AppLayout, MutableLine, TableRow},
+    ui::{AddTargetDialogState, AppLayout, MutableLine, PopupContents, TableRow},
     utils::nice_permission_error,
 };
 use hickory_resolver::TokioResolver;
 use miniutils::{ProcessInfo, inject, simple_tabulate, templater};
 use parking_lot::RwLock;
-use ratatui::{
-    prelude::Stylize,
-    style::Style,
-    text::Line,
-    widgets::{List, Paragraph},
-};
+use ratatui::{prelude::Stylize, style::Style, text::Line};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -566,44 +561,6 @@ impl Resolved {
     /// Get the resolved IP addresses for the given name, if any.
     pub fn get_addrs<S: AsRef<str>>(&self, name: S) -> Option<&HashSet<IpAddr>> {
         self.by_name.get(name.as_ref())
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-
-/// Contents for popup dialog in the UI.
-#[derive(Debug, Default)]
-pub(crate) enum PopupContents {
-    Multiline(Vec<String>),
-    Paragraph(String),
-    Line(String),
-    Buffer(Arc<MessageBuffer>),
-    #[default]
-    None,
-}
-
-impl PopupContents {
-    pub fn to_para(&self) -> Paragraph<'_> {
-        match self {
-            PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
-            PopupContents::Multiline(s) => Paragraph::new(s.join("\n")),
-            PopupContents::Buffer(buf) => buf.to_paragraph(),
-            PopupContents::None => Paragraph::default(),
-        }
-    }
-
-    pub fn to_list(&self) -> List<'_> {
-        match self {
-            PopupContents::Paragraph(s) => List::new(s.split("\n")),
-            PopupContents::Line(s) => List::new(vec![s.clone()]),
-            PopupContents::Multiline(s) => List::new(s.clone()),
-            PopupContents::Buffer(buf) => buf.to_list(),
-            PopupContents::None => List::default(),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        matches!(self, PopupContents::None)
     }
 }
 

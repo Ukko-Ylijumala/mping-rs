@@ -19,8 +19,8 @@ use crate::{
     args::MpConfig,
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
-    structs::{AppState, PopupContents, TargetDefaults},
-    ui::{TableRow, TerminalGuard, keyboard::key_event_handler},
+    structs::{AppState, TargetDefaults},
+    ui::{PopupContents, TableRow, TerminalGuard, keyboard::key_event_handler},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
 

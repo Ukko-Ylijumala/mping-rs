@@ -9,6 +9,6 @@ pub(crate) mod keyboard;
 mod tui;
 
 pub(crate) use input::AddTargetDialogState;
-pub(crate) use tui::{AppLayout, MutableLine, TableRow, eprintln_safe};
+pub(crate) use tui::{AppLayout, MutableLine, PopupContents, TableRow, eprintln_safe};
 
 pub use tui::TerminalGuard;
