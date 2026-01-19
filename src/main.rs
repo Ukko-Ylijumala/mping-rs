@@ -31,7 +31,14 @@ use futures::{
 use miniutils::{ToDisplay, inject, simple_tabulate, templater};
 use rand::{fill, random};
 use ratatui::{prelude::*, widgets::*};
-use std::{fmt::Display, future::Future, net::IpAddr, sync::Arc, thread, time::Duration};
+use std::{
+    fmt::Display,
+    future::Future,
+    net::IpAddr,
+    sync::{Arc, LazyLock},
+    thread,
+    time::Duration,
+};
 use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
 use tokio::time::{self, Instant, Interval};
 
@@ -292,6 +299,51 @@ async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
         .collect()
 }
 
+/* -------- Static Ratatui constructs for render_frame() -------- */
+static ST_REV: Style = Style::new().reversed();
+static ST_COL: Style = Style::new().bg(Color::Indexed(240));
+static ST_CYAN: Style = Style::new().fg(Color::Cyan);
+static ST_GREEN: Style = Style::new().fg(Color::Green);
+static BORDERS: Block = Block::bordered();
+static BLK_PAD_L1: Block = Block::new().padding(Padding::left(1));
+static BLK_NFO_INNER: Block = Block::new()
+    .borders(Borders::TOP)
+    .border_type(BorderType::QuadrantOutside)
+    .title_alignment(Alignment::Center);
+static SCROLLBAR: Scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+static BLK_NFO: LazyLock<Block> = LazyLock::new(|| BORDERS.clone().title_top(INFO_INFO));
+static BLK_POPUP: LazyLock<Block> = LazyLock::new(|| {
+    BORDERS
+        .clone()
+        .padding(Padding::horizontal(1))
+        .border_type(BorderType::Double)
+        .border_style(Color::Indexed(190))
+});
+static BLK_HELP: LazyLock<Block> = LazyLock::new(|| {
+    BORDERS
+        .clone()
+        .title(INFO_HELP)
+        .padding(Padding::horizontal(1))
+        .border_type(BorderType::QuadrantOutside)
+        .border_style(Color::Indexed(216))
+});
+static PARA_NFO_SEL: LazyLock<Paragraph> = LazyLock::new(|| Paragraph::new(INFO_SELECT));
+static PARA_NO_TGTS: LazyLock<Paragraph> = LazyLock::new(|| Paragraph::new(INFO_NO_TGTS));
+static PARA_NO_DATA: LazyLock<Paragraph> = LazyLock::new(|| Paragraph::new(INFO_NO_RTT));
+static DATASET_BASE: LazyLock<Dataset> = LazyLock::new(|| {
+    Dataset::default()
+        .name(INFO_RTT)
+        .marker(symbols::Marker::Braille)
+        .style(ST_CYAN)
+        .graph_type(GraphType::Line)
+});
+static HISTOGRAM_BASE: LazyLock<BarChart> = LazyLock::new(|| {
+    BarChart::default()
+        .bar_width(1)
+        .bar_gap(0)
+        .direction(Direction::Horizontal)
+});
+
 /**
 Render the current frame. Display will be updated as soon as this function completes.
 
@@ -309,17 +361,9 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         // TableState::selected can return an out-of-bounds index, so clamp it here.
         .and_then(|i: usize| tgts.get(i.min(num_tgts.saturating_sub(1))));
 
-    /* -------- Border blocks with titles -------- */
-    let block = Block::bordered();
-    let b_pad = block.clone().padding(Padding::horizontal(1));
-    let b_tbl = block
-        .clone()
-        .title_bottom(Line::from(templater!(INFO_TGTS, num_tgts)));
-    let b_info_upper = block.clone().title_top(INFO_INFO);
-
     /* -------- Info areas -------- */
-    let w_info_upper = Paragraph::new(if let Some(t) = selected {
-        templater!(
+    let w_info_upper = if let Some(t) = selected {
+        Paragraph::new(templater!(
             INFO_TARGET,
             t.to_string(),
             &t.rev,
@@ -327,11 +371,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             t.rev_ptr().to_string(),
             t.est_distance_str(state.distance_stretch_factor),
             t.hops().to_string(),
-        )
+        ))
     } else {
-        INFO_SELECT.into()
-    })
-    .block(b_info_upper.clone());
+        PARA_NFO_SEL.clone()
+    }
+    .block(BLK_NFO.clone());
 
     /* -------- Recent RTT graph and histogram for selected target. -------- */
     if let Some(target) = selected {
@@ -341,14 +385,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
         // Carve out areas for graph and histogram and define the inner Block.
         // We need to do this since the outer enclosing Block includes borders.
-        let a_graph = b_info_upper.inner(layout.i_upper_graph);
-        let a_histo = b_info_upper.inner(layout.i_upper_histo);
-        let b_inner = Block::new()
-            .borders(Borders::TOP)
-            .border_type(BorderType::QuadrantOutside)
-            .title_alignment(Alignment::Center);
-        let b_graph = b_inner.clone().title(INFO_RTT_G);
-        let b_histo = b_inner.title(INFO_RTT_H);
+        let a_graph = BLK_NFO.inner(layout.i_upper_graph);
+        let a_histo = BLK_NFO.inner(layout.i_upper_histo);
+        let b_graph = BLK_NFO_INNER.clone().title(INFO_RTT_G);
+        let b_histo = BLK_NFO_INNER.clone().title(INFO_RTT_H);
 
         if !rtt_data.is_empty() {
             let samples: usize = rtt_data.len();
@@ -375,13 +415,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             };
 
             // RTT line graph widget
-            let dataset = Dataset::default()
-                .name(INFO_RTT)
-                .marker(symbols::Marker::Braille)
-                .style(Style::default().fg(Color::Cyan))
-                .graph_type(GraphType::Line)
-                .data(&rtt_data);
-            let w_rtt_chart = Chart::new(vec![dataset])
+            let w_rtt_chart = Chart::new(vec![DATASET_BASE.clone().data(&rtt_data)])
                 .block(b_graph)
                 .x_axis(
                     Axis::default()
@@ -400,22 +434,19 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                     Bar::default()
                         .value(b.count)
                         .label(format!("{:.2} - {:.2}", b.low, b.high))
-                        .style(Style::default().fg(Color::Green))
+                        .style(ST_GREEN)
                 })
                 .collect::<Vec<_>>();
-            let w_histogram = BarChart::default()
+            let w_histogram = HISTOGRAM_BASE
+                .clone()
                 .block(b_histo)
-                .data(BarGroup::default().bars(&bars))
-                .bar_width(1)
-                .bar_gap(0)
-                .direction(Direction::Horizontal);
+                .data(BarGroup::new(bars));
 
             frame.render_widget(w_rtt_chart, a_graph);
             frame.render_widget(w_histogram, a_histo);
         } else {
-            let w_no_data = Paragraph::new(INFO_NO_RTT).block(b_graph);
-            frame.render_widget(&w_no_data, a_graph);
-            frame.render_widget(w_no_data.block(b_histo), a_histo);
+            frame.render_widget(PARA_NO_DATA.clone().block(b_graph), a_graph);
+            frame.render_widget(PARA_NO_DATA.clone().block(b_histo), a_histo);
         }
     } else {
         drop(tgts);
@@ -431,7 +462,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         if state.defaults.randomize { INFO_RAND } else { "" },
         state.spawned_tasks()
     ))
-    .block(Block::new().padding(Padding::left(1)));
+    .block(BLK_PAD_L1.clone());
 
     /* -------- CPU & process info - bottom line, right side -------- */
     let w_procinfo = Line::from(templater!(
@@ -458,8 +489,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
     /* -------- Data table -------- */
     if num_tgts == 0 {
-        frame.render_widget(Paragraph::new(INFO_NO_TGTS).block(b_tbl), layout.table);
+        frame.render_widget(PARA_NO_TGTS.clone().block(BORDERS.clone()), layout.table);
     } else {
+        let b_tbl = BORDERS
+            .clone()
+            .title_bottom(Line::from(templater!(INFO_TGTS, num_tgts)));
         let w_table = Table::new(
             data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
             &layout.tbl_constraints,
@@ -467,8 +501,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         .header((&state.headers).into())
         .column_spacing(layout.tbl_colspacing)
         .block(b_tbl)
-        .row_highlight_style(Style::new().reversed())
-        .column_highlight_style(Style::new().bg(Color::Indexed(240)));
+        .row_highlight_style(ST_REV)
+        .column_highlight_style(ST_COL);
         frame.render_stateful_widget(w_table, layout.table, &mut layout.tablestate);
 
         /*
@@ -486,7 +520,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 .selected()
                 .unwrap_or_else(|| layout.tablestate.offset());
             frame.render_stateful_widget(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight).style(Color::Cyan),
+                SCROLLBAR.clone().style(ST_CYAN),
                 layout.table,
                 &mut ScrollbarState::new(num_tgts).position(bar_pos),
             );
@@ -508,15 +542,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         if !contents.is_empty() {
             frame.render_widget(Clear, layout.popup);
 
-            let b_popup = b_pad
-                .clone()
-                .border_type(BorderType::Double)
-                .border_style(Color::Indexed(190));
-
             match contents {
                 PopupContents::Buffer(_) => {
                     let num = state.logger.len();
-                    let b_popup = b_popup.title(templater!(INFO_LOG, num));
+                    let b_popup = BLK_POPUP.clone().title(templater!(INFO_LOG, num));
 
                     if !(num > layout.popup_usable_rows()) {
                         // no statefulness needed here
@@ -534,7 +563,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                             .selected()
                             .unwrap_or_else(|| layout.liststate.offset());
                         frame.render_stateful_widget(
-                            Scrollbar::new(ScrollbarOrientation::VerticalRight),
+                            SCROLLBAR.clone(),
                             layout.popup,
                             &mut ScrollbarState::new(num).position(bar_pos),
                         );
@@ -542,10 +571,10 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
                 }
 
                 PopupContents::Multiline(_) => {
-                    frame.render_widget(contents.to_list().block(b_popup), layout.popup)
+                    frame.render_widget(contents.to_list().block(BLK_POPUP.clone()), layout.popup)
                 }
 
-                _ => frame.render_widget(contents.to_para().block(b_popup), layout.popup),
+                _ => frame.render_widget(contents.to_para().block(BLK_POPUP.clone()), layout.popup),
             }
         }
     }
@@ -554,12 +583,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     if layout.help_visible {
         frame.render_widget(Clear, layout.help);
         frame.render_widget(
-            state.help_contents.to_para().block(
-                b_pad
-                    .title(INFO_HELP)
-                    .border_type(BorderType::QuadrantOutside)
-                    .border_style(Color::Indexed(216)),
-            ),
+            state.help_contents.to_para().block(BLK_HELP.clone()),
             layout.help,
         );
     }
