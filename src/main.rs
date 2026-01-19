@@ -45,6 +45,9 @@ use tokio::time::{self, Instant, Interval};
 const PAYLOAD_RND_BYTES: usize = 32;
 const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 
+type WritableLayout<'a> =
+    parking_lot::lock_api::RwLockWriteGuard<'a, parking_lot::RawRwLock, ui::AppLayout>;
+
 /* -------------------------------------------------------------------------- */
 
 /// Create [PingTarget] instances for each IP address.
@@ -536,7 +539,13 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     frame.render_widget(w_info_lower, layout.info_lower);
     frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
 
-    /* -------- Render popup if visible and has contents -------- */
+    // Finally render the popus if any are visible (on top of everything else)
+    render_popups(frame, state, layout);
+}
+
+/// Render the popups: text box, help.
+fn render_popups(frame: &mut Frame, state: &AppState, layout: &mut WritableLayout) {
+    /* -------- Text popup -------- */
     if layout.popup_visible {
         let contents = &*state.popup_contents.read();
         if !contents.is_empty() {
@@ -579,7 +588,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
         }
     }
 
-    /* -------- Render help popup if visible -------- */
+    /* -------- Help popup -------- */
     if layout.help_visible {
         frame.render_widget(Clear, layout.help);
         frame.render_widget(
