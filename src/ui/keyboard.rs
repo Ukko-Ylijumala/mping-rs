@@ -2,7 +2,10 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{structs::AppState, ui::PopupContents};
+use crate::{
+    structs::AppState,
+    ui::{PopupContents, TuiState},
+};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use std::{io::Result, sync::Arc, time::Duration};
 
@@ -11,10 +14,10 @@ const POLL_WAIT_MS: u64 = 50; // key event poll wait time in milliseconds
 
 /// This key event handler loop is intended to be run in a dedicated thread.
 /// It listens for keyboard events and updates the application state accordingly.
-pub(crate) fn key_event_handler(state: Arc<AppState>) {
+pub(crate) fn key_event_handler(state: Arc<AppState>, tui: Arc<TuiState>) {
     state.logger.debug(crate::strings::KEV_START);
     while !state.is_quitting() {
-        if key_event_poll(POLL_WAIT_MS, &state).is_ok_and(|e| e) {
+        if key_event_poll(POLL_WAIT_MS, &state, &tui).is_ok_and(|e| e) {
             // notify the main loop about the key event for immediate refresh
             state.key_event.notify_one();
         }
@@ -30,7 +33,7 @@ Crossterm key event polling helper
 ### Returns
 - `Ok(bool)` indicating whether a handled key event occurred
 */
-fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
+fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
         if let Event::Key(e) = event::read()? {
             match (e.code, e.modifiers) {
@@ -41,21 +44,21 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => app.quit(),
 
                 // Table navigation: up/down
-                (KeyCode::Up, _) => app.layout.write().tablestate.select_previous(),
-                (KeyCode::Down, _) => app.layout.write().tablestate.select_next(),
+                (KeyCode::Up, _) => tui.layout.write().tablestate.select_previous(),
+                (KeyCode::Down, _) => tui.layout.write().tablestate.select_next(),
 
                 // Table navigation: left/right (columns)
-                (KeyCode::Left, _) => app.layout.write().tablestate.select_previous_column(),
-                (KeyCode::Right, _) => app.layout.write().tablestate.select_next_column(),
+                (KeyCode::Left, _) => tui.layout.write().tablestate.select_previous_column(),
+                (KeyCode::Right, _) => tui.layout.write().tablestate.select_next_column(),
 
                 // Table navigation: home/end
-                (KeyCode::Home, _) => app.layout.write().tablestate.select_first(),
-                (KeyCode::End, _) => app.layout.write().tablestate.select_last(),
+                (KeyCode::Home, _) => tui.layout.write().tablestate.select_first(),
+                (KeyCode::End, _) => tui.layout.write().tablestate.select_last(),
 
                 // Table navigation: page up/down
                 // When popup is visible, scroll the popup content instead.
                 (KeyCode::PageUp, m) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     if lo.popup_visible && m != KeyModifiers::SHIFT {
                         let step: u16 = lo.popup_usable_rows() as u16 * 2 - 1;
                         lo.liststate.scroll_up_by(step);
@@ -68,7 +71,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
                     }
                 }
                 (KeyCode::PageDown, m) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     if lo.popup_visible && m != KeyModifiers::SHIFT {
                         let step: u16 = lo.popup_usable_rows() as u16 * 2 - 1;
                         lo.liststate.scroll_down_by(step);
@@ -83,14 +86,14 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
 
                 // Clear table selections
                 (KeyCode::Backspace, _) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     lo.tablestate.select(None);
                     lo.tablestate.select_column(None);
                 }
 
                 // Pause/resume the selected target if it's not stopped
                 (KeyCode::Char(' '), _) => {
-                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                    if let Some(idx) = tui.layout.read().tablestate.selected() {
                         app.toggle_target_pause(idx);
                     }
                 }
@@ -101,28 +104,28 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
 
                 // Stop (cancel) the selected target's pinging for good
                 (KeyCode::Char('S'), _) => {
-                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                    if let Some(idx) = tui.layout.read().tablestate.selected() {
                         app.stop_target(idx);
                     }
                 }
 
                 // Reset the selected target's statistics
                 (KeyCode::Char('R'), _) => {
-                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                    if let Some(idx) = tui.layout.read().tablestate.selected() {
                         app.reset_target_stats(idx);
                     }
                 }
 
                 // Update information for the selected target
                 (KeyCode::Enter, _) => {
-                    if let Some(idx) = app.layout.read().tablestate.selected() {
+                    if let Some(idx) = tui.layout.read().tablestate.selected() {
                         app.update_target_info(idx);
                     }
                 }
 
                 // Fully remove a target or targets from the list
                 (KeyCode::Delete, m) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     match m {
                         // Stop and remove all unreachable targets from the list
                         KeyModifiers::CONTROL => {
@@ -155,13 +158,13 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
 
                 // Close active popup/help/input overlays
                 (KeyCode::Esc, _) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     if lo.help_visible {
                         lo.help_visible = false;
                     } else if lo.input_visible {
                         lo.input_visible = false;
                     } else if lo.popup_visible {
-                        *app.popup_contents.write() = PopupContents::None;
+                        *tui.popup_contents.write() = PopupContents::None;
                         lo.popup_visible = false;
                         lo.liststate.select(None);
                     }
@@ -169,7 +172,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
 
                 // Show/hide the help popup
                 (KeyCode::F(1), _) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     match lo.help_visible {
                         false => {
                             lo.help_visible = true;
@@ -187,14 +190,14 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>) -> Result<bool> {
 
                 // Show/hide the log message buffer
                 (KeyCode::F(12), _) => {
-                    let mut lo = app.layout.write();
+                    let mut lo = tui.layout.write();
                     match lo.popup_visible {
                         false => {
-                            *app.popup_contents.write() = PopupContents::Buffer(app.logger.clone());
+                            *tui.popup_contents.write() = PopupContents::Buffer(app.logger.clone());
                             lo.popup_visible = true;
                         }
                         true => {
-                            *app.popup_contents.write() = PopupContents::None;
+                            *tui.popup_contents.write() = PopupContents::None;
                             lo.popup_visible = false;
                         }
                     }

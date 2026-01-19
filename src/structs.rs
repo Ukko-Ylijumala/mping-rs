@@ -7,13 +7,11 @@ use crate::{
     logging::{Logger, MessageBuffer},
     pingdata::PingTarget,
     strings::*,
-    ui::{AddTargetDialogState, AppLayout, MutableLine, PopupContents, TableRow},
     utils::nice_permission_error,
 };
 use hickory_resolver::TokioResolver;
-use miniutils::{ProcessInfo, inject, simple_tabulate, templater};
+use miniutils::{ProcessInfo, inject, templater};
 use parking_lot::RwLock;
-use ratatui::{prelude::Stylize, style::Style, text::Line};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -47,25 +45,12 @@ pub(crate) struct AppState {
     pub c_v6: Option<Arc<Client>>,
     pub targets: RwLock<Vec<Arc<PingTarget>>>,
     pub tasks: RwLock<Vec<tokio::task::JoinHandle<()>>>,
-    pub layout: RwLock<AppLayout>,
-    pub title: Line<'static>,
-    /// Table headers
-    pub headers: TableRow,
-    /// UI refresh interval
-    pub ui_interval: Duration,
-    /// Next scheduled UI refresh time
-    pub ui_next_refresh: RwLock<tokio::time::Instant>,
     pub defaults: TargetDefaults,
     pub debug: bool,
     pub quit: Arc<AtomicBool>,
     pub payload: Arc<[u8]>,
     pub internal_tick: Duration,
     pub key_event: Notify,
-    /// Status line is the last line at the bottom left-side of the UI.
-    pub status_line: MutableLine<'static>,
-    pub help_contents: PopupContents,
-    pub popup_contents: RwLock<PopupContents>,
-    pub input_state: RwLock<AddTargetDialogState>,
     pub resolver: Arc<TokioResolver>,
     pub logger: Arc<MessageBuffer>,
     pub distance_stretch_factor: f64,
@@ -78,10 +63,8 @@ pub(crate) struct AppState {
 impl AppState {
     /**
     Initialize base application state from the commandline options. Sets up:
-    - title, headers and styling
-    - initial [AppLayout]
     - [ProcessInfo] tracking
-    - intervals: UI refresh, pinging, internal tick
+    - intervals: pinging, internal tick
     - flags: debug, randomize, perf
     - events: key event notifier, quit flag
     - default payload
@@ -90,26 +73,6 @@ impl AppState {
     */
     #[must_use = "AppState must be built using .build()"]
     pub fn from_conf(conf: &MpConfig) -> Self {
-        // setup app title row with version and styling
-        let mut title = Line::from(APP_TITLE).centered().bold().red().on_green();
-        title.push_span(format!(" v{}", conf.ver));
-
-        // setup header styling and add debug column if needed
-        let mut headers = TableRow::from_iter(HEADERS);
-        headers.set_style_all(Style::new().bold().yellow());
-        if conf.debug {
-            headers.add_item(HDR_SEQ);
-        }
-
-        // update layout info with header widths and column spacing
-        let mut layout: AppLayout = AppLayout::default().widths(headers.widths()).spacing(2);
-        layout.reset_table_widths();
-
-        // prepare help contents and update layout accordingly
-        let help: Vec<String> = simple_tabulate(HELP_KEYS, Some(&HELP_HDRS));
-        let max_width: usize = help.iter().map(|s| s.len()).max().unwrap();
-        layout.setup_help_area(help.len() as u16, max_width as u16);
-
         // gather target defaults from config
         let tgt_defaults = TargetDefaults {
             histsize: conf.histsize as usize,
@@ -126,11 +89,6 @@ impl AppState {
             c_v6: None,
             targets: vec![].into(),
             tasks: vec![].into(),
-            layout: layout.into(),
-            title,
-            headers,
-            ui_interval: Duration::from_millis(conf.refresh),
-            ui_next_refresh: tokio::time::Instant::now().into(),
             defaults: tgt_defaults,
             debug: conf.debug,
             quit: AtomicBool::new(false).into(),
@@ -139,16 +97,12 @@ impl AppState {
             // interval, othwerwise we'd send out fewer pings than intended
             internal_tick: Duration::from_millis(100).min(conf.interval),
             key_event: Notify::new(),
-            status_line: MutableLine::new_from(""),
             resolver: conf.resolver.as_ref().unwrap().clone(),
             logger: conf.buf.clone(),
             distance_stretch_factor: conf.stretch_factor,
             runtime: tokio::runtime::Handle::current(),
             spawned_tasks: AtomicU64::new(0),
             perf: conf.perf.into(),
-            popup_contents: PopupContents::None.into(),
-            help_contents: PopupContents::Multiline(help),
-            input_state: AddTargetDialogState::default().into(),
             resolved: conf.resolved.clone().into(),
         }
     }
@@ -229,25 +183,6 @@ impl AppState {
     /// Set the quit flag to true. This triggers a graceful shutdown in a short order.
     pub fn quit(&self) {
         self.quit.store(true, Ordering::Relaxed);
-    }
-
-    /// Schedule the next UI refresh tick.
-    pub fn ui_schedule_next_refresh(&self) {
-        *self.ui_next_refresh.write() += self.ui_interval;
-    }
-
-    /// Whether it's time for the next UI refresh.
-    pub async fn ui_refresh_elapsed_async(&self) -> bool {
-        tokio::time::Instant::now() >= *self.ui_next_refresh.read()
-    }
-
-    /**
-    Get the current viewport (visibility info) of the target table as a [ViewPort].
-
-    NOTE: locks both `layout` and `targets` for reading.
-    */
-    pub fn viewport(&self) -> ViewPort {
-        ViewPort::new(self)
     }
 
     /**
@@ -410,56 +345,6 @@ impl AppState {
             ));
         }
         num
-    }
-
-    /// Open the add target dialog in the UI.
-    pub fn add_tgt_dialog_open(&self) {
-        let mut state = self.input_state.write();
-        *state = AddTargetDialogState::default();
-        self.layout.write().input_visible = true;
-    }
-
-    /// Close the add target dialog.
-    pub fn add_tgt_dialog_close(&self) {
-        let mut state = self.input_state.write();
-        *state = AddTargetDialogState::default();
-        self.layout.write().input_visible = false;
-    }
-}
-
-/* ---------------------------------- */
-
-/// Viewport information for the target table in the UI.
-pub(crate) struct ViewPort {
-    /// Total number of targets.
-    pub targets: usize,
-    /// Number of visible (usable) rows in the target table.
-    pub rows: usize,
-    /// Current offset (start index) of the visible rows.
-    pub offset: usize,
-    /// Current end position (exclusive) of the visible rows.
-    pub end_pos: usize,
-}
-
-impl ViewPort {
-    #[inline]
-    pub fn new(app: &AppState) -> Self {
-        let targets: usize = app.len();
-        let layout = app.layout.read();
-        let rows = layout.tbl_usable_rows();
-        let offset: usize = layout.tablestate.offset();
-        Self {
-            targets,
-            rows,
-            offset,
-            end_pos: (rows + offset).min(targets),
-        }
-    }
-
-    /// Whether there are more targets than visible rows, i.e., paging is needed.
-    #[inline]
-    pub fn needs_paging(&self) -> bool {
-        self.targets > self.rows
     }
 }
 

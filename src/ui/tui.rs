@@ -2,7 +2,9 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+use super::AddTargetDialogState;
 use crate::{
+    args::MpConfig,
     logging::MessageBuffer,
     macros::{delegate_read, delegate_write},
     strings::*,
@@ -12,6 +14,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use miniutils::simple_tabulate;
 use parking_lot::RwLock;
 use ratatui::{
     Terminal,
@@ -661,6 +664,149 @@ impl PopupContents {
 
     pub fn is_empty(&self) -> bool {
         matches!(self, PopupContents::None)
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/// Text UI (TUI) state for when the application is running in console mode.
+pub(crate) struct TuiState {
+    pub layout: RwLock<AppLayout>,
+    pub title: Line<'static>,
+    /// Table headers
+    pub headers: TableRow,
+    /// UI refresh interval
+    pub ui_interval: Duration,
+    /// Next scheduled UI refresh time
+    pub ui_next_refresh: RwLock<tokio::time::Instant>,
+    /// Status line is the last line at the bottom left-side of the UI.
+    pub status_line: MutableLine<'static>,
+    pub help_contents: PopupContents,
+    pub popup_contents: RwLock<PopupContents>,
+    pub input_state: RwLock<AddTargetDialogState>,
+}
+
+impl TuiState {
+    /**
+    Initialize TUI state from the commandline arguments. Sets up:
+    - title, headers and styling
+    - initial [AppLayout]
+    - intervals: UI refresh
+    - other default fields
+    */
+    #[must_use = "TuiState must be built using .build()"]
+    pub fn from_conf(conf: &MpConfig) -> Self {
+        // setup app title row with version and styling
+        let mut title = Line::from(APP_TITLE).centered().bold().red().on_green();
+        title.push_span(format!(" v{}", conf.ver));
+
+        // setup header styling and add debug column if needed
+        let mut headers = TableRow::from_iter(HEADERS);
+        if conf.debug {
+            headers.add_item(HDR_SEQ);
+        }
+
+        // set up layout with header widths and column spacing
+        let layout: AppLayout = AppLayout::default().widths(headers.widths()).spacing(2);
+
+        Self {
+            layout: layout.into(),
+            title,
+            headers,
+            ui_interval: Duration::from_millis(conf.refresh),
+            ui_next_refresh: tokio::time::Instant::now().into(),
+            status_line: MutableLine::new_from(""),
+            help_contents: PopupContents::None,
+            popup_contents: PopupContents::None.into(),
+            input_state: AddTargetDialogState::default().into(),
+        }
+    }
+
+    /// Build the final TUI state.
+    pub fn build(mut self) -> Arc<Self> {
+        self.headers.set_style_all(Style::new().bold().yellow());
+
+        // prepare help contents and update layout accordingly
+        let help: Vec<String> = simple_tabulate(HELP_KEYS, Some(&HELP_HDRS));
+        let help_rows: u16 = help.len() as u16;
+        let max_width: u16 = help.iter().map(|s| s.len()).max().unwrap() as u16;
+        self.help_contents = PopupContents::Multiline(help);
+
+        // update layout
+        let mut layout = self.layout.write();
+        layout.reset_table_widths();
+        layout.setup_help_area(help_rows, max_width);
+        drop(layout);
+
+        self.into()
+    }
+
+    /**
+    Get the current viewport (visibility info) of the target table as a [ViewPort].
+
+    NOTE: locks `layout` for reading.
+    */
+    pub fn viewport(&self, targets: usize) -> ViewPort {
+        ViewPort::new(self, targets)
+    }
+
+    /// Schedule the next UI refresh tick.
+    pub fn ui_schedule_next_refresh(&self) {
+        *self.ui_next_refresh.write() += self.ui_interval;
+    }
+
+    /// Whether it's time for the next UI refresh.
+    pub async fn ui_refresh_elapsed_async(&self) -> bool {
+        tokio::time::Instant::now() >= *self.ui_next_refresh.read()
+    }
+
+    /// Open the add target dialog in the UI.
+    pub fn add_tgt_dialog_open(&self) {
+        let mut state = self.input_state.write();
+        *state = AddTargetDialogState::default();
+        self.layout.write().input_visible = true;
+    }
+
+    /// Close the add target dialog.
+    pub fn add_tgt_dialog_close(&self) {
+        let mut state = self.input_state.write();
+        *state = AddTargetDialogState::default();
+        self.layout.write().input_visible = false;
+    }
+}
+
+/* ---------------------------------- */
+
+/// Viewport information for the target table in the UI.
+pub(crate) struct ViewPort {
+    /// Total number of targets.
+    pub targets: usize,
+    /// Number of visible (usable) rows in the target table.
+    pub rows: usize,
+    /// Current offset (start index) of the visible rows.
+    pub offset: usize,
+    /// Current end position (exclusive) of the visible rows.
+    pub end_pos: usize,
+}
+
+impl ViewPort {
+    #[inline]
+    pub fn new(tui: &TuiState, targets: usize) -> Self {
+        let layout = tui.layout.read();
+        let rows = layout.tbl_usable_rows();
+        let offset: usize = layout.tablestate.offset();
+        Self {
+            targets,
+            rows,
+            offset,
+            end_pos: (rows + offset).min(targets),
+        }
+    }
+
+    /// Whether there are more targets than visible rows, i.e., paging is needed.
+    #[inline]
+    pub fn needs_paging(&self) -> bool {
+        self.targets > self.rows
     }
 }
 

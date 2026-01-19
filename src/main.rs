@@ -20,7 +20,7 @@ use crate::{
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
     structs::{AppState, TargetDefaults},
-    ui::{PopupContents, TableRow, TerminalGuard, keyboard::key_event_handler},
+    ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
 
@@ -46,7 +46,7 @@ const PAYLOAD_RND_BYTES: usize = 32;
 const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 
 type WritableLayout<'a> =
-    parking_lot::lock_api::RwLockWriteGuard<'a, parking_lot::RawRwLock, ui::AppLayout>;
+    parking_lot::lock_api::RwLockWriteGuard<'a, parking_lot::RawRwLock, ui::tui::AppLayout>;
 
 /* -------------------------------------------------------------------------- */
 
@@ -264,9 +264,9 @@ For large target lists, gathering data for all can be slow, hence
 it makes sense to only gather data for the currently visible targets
 in the TUI table. This function supports both modes via the `all` param.
 */
-async fn gather_target_data(state: &AppState, all: bool) -> Vec<TableRow> {
-    let vp = state.viewport();
+async fn gather_target_data(state: &AppState, tui: &TuiState, all: bool) -> Vec<TableRow> {
     let tgts = state.targets.read();
+    let vp = tui.viewport(tgts.len());
 
     // Full list requested, or we have fewer targets than rows
     if all || !vp.needs_paging() {
@@ -353,8 +353,8 @@ Render the current frame. Display will be updated as soon as this function compl
 NOTE: the order of statements inside the function body is arranged such that
 the time of holding the targets lock is minimized to reduce contention.
 */
-fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
-    let layout = &mut state.layout.write();
+fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[TableRow]) {
+    let layout = &mut tui.layout.write();
     layout.maybe_update(frame.area(), &data);
     let tgts = state.targets.read();
     let num_tgts: usize = tgts.len();
@@ -477,7 +477,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
     .alignment(Alignment::Right);
 
     /* -------- Status line - bottom line, left side -------- */
-    state.status_line.replace(match state.debug {
+    tui.status_line.replace(match state.debug {
         true => templater!(
             INFO_DEBUG,
             data.len(),
@@ -501,7 +501,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
             data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
             &layout.tbl_constraints,
         )
-        .header((&state.headers).into())
+        .header((&tui.headers).into())
         .column_spacing(layout.tbl_colspacing)
         .block(b_tbl)
         .row_highlight_style(ST_REV)
@@ -532,31 +532,31 @@ fn render_frame(frame: &mut Frame, state: &AppState, data: &[TableRow]) {
 
     // Render all components. Order matters for layering; later ones overwrite earlier ones,
     // faking z-index behavior even though we're not working with "real" windows.
-    frame.render_widget(&state.title, layout.title);
+    frame.render_widget(&tui.title, layout.title);
     frame.render_widget(w_procinfo, layout.status_r);
     // NOTE: we're writing to `info_upper` instead of `i_upper_text` to get the border around it all.
     frame.render_widget(w_info_upper, layout.info_upper);
     frame.render_widget(w_info_lower, layout.info_lower);
-    frame.render_widget(state.status_line.clone().bold().as_line(), layout.status_l);
+    frame.render_widget(tui.status_line.clone().bold().as_line(), layout.status_l);
 
     // Finally render the popus if any are visible (on top of everything else)
-    render_popups(frame, state, layout);
+    render_popups(frame, tui, layout);
 }
 
 /// Render the popups: text box, help.
-fn render_popups(frame: &mut Frame, state: &AppState, layout: &mut WritableLayout) {
+fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout) {
     /* -------- Text popup -------- */
     if layout.popup_visible {
-        let contents = &*state.popup_contents.read();
+        let contents = &*tui.popup_contents.read();
         if !contents.is_empty() {
             frame.render_widget(Clear, layout.popup);
 
             match contents {
-                PopupContents::Buffer(_) => {
-                    let num = state.logger.len();
+                PopupContents::Buffer(buf) => {
+                    let num = buf.len();
                     let b_popup = BLK_POPUP.clone().title(templater!(INFO_LOG, num));
 
-                    if !(num > layout.popup_usable_rows()) {
+                    if num <= layout.popup_usable_rows() {
                         // no statefulness needed here
                         frame.render_widget(contents.to_list().block(b_popup), layout.popup)
                     } else {
@@ -592,7 +592,7 @@ fn render_popups(frame: &mut Frame, state: &AppState, layout: &mut WritableLayou
     if layout.help_visible {
         frame.render_widget(Clear, layout.help);
         frame.render_widget(
-            state.help_contents.to_para().block(BLK_HELP.clone()),
+            tui.help_contents.to_para().block(BLK_HELP.clone()),
             layout.help,
         );
     }
@@ -606,6 +606,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app: AppState = AppState::from_conf(&conf);
     let tgts: Vec<PingTarget> = make_targets(&conf.addrs, &app.defaults);
     let app: Arc<AppState> = app.build(tgts)?;
+    let tui: Arc<TuiState> = TuiState::from_conf(&conf).build();
 
     // Spawn ping tasks
     {
@@ -618,28 +619,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(app.quit.clone());
-    let mut guard: TerminalGuard = TerminalGuard::new(app.ui_interval, app.logger.clone())?;
+    let mut guard: TerminalGuard = TerminalGuard::new(tui.ui_interval, app.logger.clone())?;
     let mut tick: Interval = time::interval(app.internal_tick);
 
     // Start the key event handling thread
     let app_clone: Arc<AppState> = app.clone();
-    let kev_handle = thread::spawn(move || key_event_handler(app_clone));
+    let tui_clone: Arc<TuiState> = tui.clone();
+    let kev_handle = thread::spawn(move || key_event_handler(app_clone, tui_clone));
 
     // Main display loop
     loop {
         tokio::select! {
             biased; // preferentially handle quit condition first, then rest in order
             true = app.is_quitting_async() => break,
-            true = app.ui_refresh_elapsed_async() => {
+            true = tui.ui_refresh_elapsed_async() => {
                 // Gather data for display and render the frame
-                let data = gather_target_data(&app, false).await;
-                guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
-                app.ui_schedule_next_refresh();
+                let data = gather_target_data(&app, &tui, false).await;
+                guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &tui, &data))?;
+                tui.ui_schedule_next_refresh();
             },
             _ = app.key_event.notified() => {
                 // Immediate refresh on key event. NOTE: don't reschedule next refresh!
-                let data = gather_target_data(&app, false).await;
-                guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &data))?;
+                let data = gather_target_data(&app, &tui, false).await;
+                guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &tui, &data))?;
                 // sleep a little to avoid busy looping during key event bursts
                 tokio::time::sleep(Duration::from_millis(5)).await;
             },
@@ -657,10 +659,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     join_all(tasks.iter_mut()).await;
 
     // Print final stats
-    let data: Vec<TableRow> = gather_target_data(&app, true).await;
+    let data: Vec<TableRow> = gather_target_data(&app, &tui, true).await;
     // Display the same rows as were visible in the TUI
-    let vp = app.viewport();
-    simple_tabulate(&data[vp.offset..vp.end_pos], Some(&app.headers.strings()))
+    let vp = tui.viewport(app.len());
+    simple_tabulate(&data[vp.offset..vp.end_pos], Some(&tui.headers.strings()))
         .iter()
         .for_each(|line| println!("{line}"));
     Ok(())
