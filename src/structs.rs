@@ -15,6 +15,7 @@ use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
+    future::Future,
     net::IpAddr,
     sync::{
         Arc,
@@ -23,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 use surge_ping::{Client, Config, ICMP};
-use tokio::sync::Notify;
+use tokio::{sync::Notify, task::JoinHandle};
 
 pub(crate) const DEFAULT_PAYLOAD_SIZE: usize = 48;
 pub(crate) const DEFAULT_HISTSIZE: usize = 3600; // one hour of per-second history
@@ -144,6 +145,42 @@ impl AppState {
         self.targets.read().len()
     }
 
+    /// Execute/dispatch a [Command] sent from the UI.
+    pub fn execute(&self, cmd: Command) -> CmdResult {
+        match cmd {
+            Command::Quit => self.quit(),
+            Command::PauseAll => self.pause_all_targets(),
+            Command::ResumeAll => self.resume_all_targets(),
+            Command::TogglePause(idx) => self.toggle_target_pause(idx),
+            Command::StopTarget(idx) => self.stop_target(idx),
+            Command::RemoveTarget(idx) => self.remove_target(idx),
+            Command::UpdateTgtInfo(idx) => self.update_target_info(idx),
+            Command::ResetTgtStats(idx) => self.reset_target_stats(idx),
+            Command::TogglePerf => self.toggle_perf(),
+            Command::RemoveAllUnreach => self.remove_all_unreachables(),
+        }
+    }
+
+    /// Passthrough method to [tokio::runtime::Handle::spawn].
+    pub fn spawn<F>(&self, fut: F) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.inc_spawned_tasks();
+        self.runtime.spawn(fut)
+    }
+
+    /// Passthrough method to [tokio::runtime::Handle::spawn_blocking].
+    pub fn spawn_blocking<F, R>(&self, func: F) -> JoinHandle<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        self.inc_spawned_tasks();
+        self.runtime.spawn_blocking(func)
+    }
+
     /// The number of spawned ping tasks so far.
     pub fn spawned_tasks(&self) -> u64 {
         self.spawned_tasks.load(Ordering::Relaxed)
@@ -151,7 +188,7 @@ impl AppState {
 
     /// Increment the spawned tasks counter by one.
     #[inline]
-    pub fn inc_spawned_tasks(&self) {
+    fn inc_spawned_tasks(&self) {
         self.spawned_tasks.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -162,12 +199,13 @@ impl AppState {
     }
 
     /// Toggle perf mode on/off.
-    pub fn toggle_perf(&self) {
+    fn toggle_perf(&self) -> CmdResult {
         self.perf.fetch_xor(true, Ordering::SeqCst);
         self.logger.debug(templater!(
             INFO_PERF,
             if self.perf() { ENABLED } else { DISABLED }
         ));
+        CmdResult::Done
     }
 
     /// Whether the quit flag has been toggled.
@@ -181,8 +219,9 @@ impl AppState {
     }
 
     /// Set the quit flag to true. This triggers a graceful shutdown in a short order.
-    pub fn quit(&self) {
+    fn quit(&self) -> CmdResult {
         self.quit.store(true, Ordering::Relaxed);
+        CmdResult::ByeBye
     }
 
     /**
@@ -190,7 +229,7 @@ impl AppState {
 
     NOTE: locks `targets` for writing and `resolved` for reading.
     */
-    pub fn add_targets<I: IntoIterator<Item = PingTarget>>(&self, targets: I) {
+    pub fn add_targets<I: IntoIterator<Item = PingTarget>>(&self, targets: I) -> usize {
         let orig_len: usize = self.len();
         let names = self.resolved.read();
         self.targets.write().extend(targets.into_iter().map(|t| {
@@ -201,18 +240,16 @@ impl AppState {
             Arc::new(t)
         }));
         let new_len: usize = self.len();
-        if new_len > orig_len {
-            self.logger.log(templater!(
-                INFO_NEW,
-                new_len.saturating_sub(orig_len),
-                orig_len,
-                new_len
-            ));
+        let added: usize = new_len.saturating_sub(orig_len);
+        if added > 0 {
+            self.logger
+                .log(templater!(INFO_NEW, added, orig_len, new_len));
         }
+        added
     }
 
     /// Pause pinging for the target at the specified index.
-    pub fn toggle_target_pause(&self, index: usize) {
+    fn toggle_target_pause(&self, index: usize) -> CmdResult {
         if let Some(tgt) = self.targets.read().get(index) {
             tgt.toggle_pause();
             self.logger.debug(templater!(
@@ -220,27 +257,27 @@ impl AppState {
                 tgt,
                 if tgt.is_paused() { PAUSED } else { RESUMED }
             ));
+            return CmdResult::Done;
         }
+        CmdResult::NotFound
     }
 
     /// Pause pinging for all targets.
-    pub fn pause_all_targets(&self) {
+    fn pause_all_targets(&self) -> CmdResult {
         self.logger.log(INFO_P_ALL);
-        for tgt in self.targets.read().iter() {
-            tgt.pause();
-        }
+        self.targets.read().iter().for_each(|tgt| tgt.pause());
+        CmdResult::Done
     }
 
     /// Resume pinging for all targets.
-    pub fn resume_all_targets(&self) {
+    fn resume_all_targets(&self) -> CmdResult {
         self.logger.log(INFO_R_ALL);
-        for tgt in self.targets.read().iter() {
-            tgt.resume();
-        }
+        self.targets.read().iter().for_each(|tgt| tgt.resume());
+        CmdResult::Done
     }
 
     /// Update information for the target at the specified index. Nonblocking.
-    pub fn update_target_info(&self, index: usize) {
+    fn update_target_info(&self, index: usize) -> CmdResult {
         if let Some(tgt) = self.targets.read().get(index) {
             self.logger.log(templater!(INFO_UPD, tgt));
             let tgt_ptr1 = tgt.clone();
@@ -255,7 +292,7 @@ impl AppState {
             scheduled in the same runtime thread.
             */
             let logger = self.logger.clone();
-            self.runtime.spawn_blocking(move || {
+            self.spawn_blocking(move || {
                 let now: Instant = Instant::now();
                 tgt_ptr1.determine_hops(UPDATE_TASK_TIMEOUT);
                 logger.debug(templater!(
@@ -264,7 +301,6 @@ impl AppState {
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
                 ));
             });
-            self.inc_spawned_tasks();
 
             /*
             Because this function can be called from the keyboard event handler thread
@@ -272,7 +308,7 @@ impl AppState {
             runtime handle to spawn the task, or we will panic that thread.
             */
             let logger = self.logger.clone();
-            self.runtime.spawn(async move {
+            self.spawn(async move {
                 let now: Instant = Instant::now();
                 tgt_ptr2.resolve_ptr(&resolver).await;
                 logger.debug(templater!(
@@ -281,16 +317,19 @@ impl AppState {
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
                 ));
             });
-            self.inc_spawned_tasks();
+            return CmdResult::Done;
         }
+        CmdResult::NotFound
     }
 
     /// Reset statistics for the target at the specified index.
-    pub fn reset_target_stats(&self, index: usize) {
+    fn reset_target_stats(&self, index: usize) -> CmdResult {
         if let Some(tgt) = self.targets.read().get(index) {
             self.logger.log(templater!(INFO_RESET, tgt));
             tgt.reset_stats();
+            return CmdResult::Done;
         }
+        CmdResult::NotFound
     }
 
     /// Whether pinging is permanently stopped for the target at the specified index.
@@ -303,27 +342,31 @@ impl AppState {
     }
 
     /// Stop pinging the target at the specified index. The ping task will abort permanently.
-    pub fn stop_target(&self, index: usize) {
+    fn stop_target(&self, index: usize) -> CmdResult {
         if let Some(tgt) = self.targets.read().get(index) {
             if !tgt.is_stopped() {
                 self.logger.notice(templater!(INFO_STOP, tgt));
             }
             tgt.stop();
+            return CmdResult::Done;
         }
+        CmdResult::NotFound
     }
 
     /// Stop pinging the target at the specified index and remove it from the target list.
-    pub fn remove_target(&self, index: usize) {
+    fn remove_target(&self, index: usize) -> CmdResult {
         let mut targets = self.targets.write();
         if let Some(tgt) = targets.get(index) {
             self.logger.notice(templater!(INFO_REMOVE, tgt));
             tgt.stop();
             targets.remove(index);
+            return CmdResult::Done;
         }
+        CmdResult::NotFound
     }
 
     /// Remove all unreachable targets and return the count if any were nuked.
-    pub fn remove_all_unreachables(&self) -> usize {
+    fn remove_all_unreachables(&self) -> CmdResult {
         let mut targets = self.targets.write();
         let orig_len: usize = targets.len();
         let now: Instant = Instant::now();
@@ -343,8 +386,9 @@ impl AppState {
                 orig_len,
                 orig_len - num
             ));
+            return CmdResult::Count(num);
         }
-        num
+        CmdResult::None
     }
 }
 
@@ -501,4 +545,40 @@ impl Display for QueryResponse {
             ),
         }
     }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/// Commands sent from the UI to the main application logic.
+pub(crate) enum Command {
+    Quit,
+    /// Pause pinging for all targets.
+    PauseAll,
+    /// Resume pinging for all targets.
+    ResumeAll,
+    /// Toggle pinging for the given target.
+    TogglePause(usize),
+    /// Permanently stop pinging the given target.
+    StopTarget(usize),
+    /// Permanently remove the given target.
+    RemoveTarget(usize),
+    /// Update information for the given target (hops, DNS query etc.).
+    UpdateTgtInfo(usize),
+    /// Reset statistics for the given target.
+    ResetTgtStats(usize),
+    /// Toggle performance mode on/off.
+    TogglePerf,
+    /// Remove all unreachable targets.
+    RemoveAllUnreach,
+}
+
+/// Result of a [Command] execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CmdResult {
+    None,
+    Done,
+    Count(usize),
+    NotFound,
+    Error,
+    ByeBye,
 }

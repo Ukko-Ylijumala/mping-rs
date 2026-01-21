@@ -58,7 +58,6 @@ static CON_NFO_T: Constraint = Constraint::Length(7);
 static CON_NFO_G: Constraint = Constraint::Length(20);
 static CON_NFO_H: Constraint = Constraint::Length(11);
 
-#[derive(Debug, Default)]
 /**
 Layout structure for Ratatui frames.
 
@@ -109,6 +108,7 @@ We also define the following modal areas:
 - `popup`: centered text box (for multiline text)
 - `input`: centered input area (for modal text input)
 */
+#[derive(Debug, Default)]
 pub(crate) struct AppLayout {
     /// Full frame area
     pub frame: Rect,

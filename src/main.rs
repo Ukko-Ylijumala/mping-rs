@@ -137,8 +137,7 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
     let pl: Arc<[u8]> = build_payload(&app);
     let seq: u16 = mark_sent_and_next_seq(&tgt);
 
-    app.inc_spawned_tasks();
-    tokio::spawn(async move {
+    app.spawn(async move {
         let rec: PacketRecord = PacketRecord::new(seq);
         let res = pinger.ping(PingSequence(seq), &pl).await;
         tgt.update_stats(res, rec).await;
@@ -612,8 +611,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let mut tasks = app.tasks.write();
         for tgt in app.targets.read().iter() {
-            tasks.push(tokio::spawn(ping_loop(tgt.clone(), app.clone())));
-            app.inc_spawned_tasks();
+            tasks.push(app.spawn(ping_loop(tgt.clone(), app.clone())));
         }
     }
 

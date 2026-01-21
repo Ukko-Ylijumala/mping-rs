@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
-    structs::AppState,
+    structs::{AppState, Command, CmdResult},
     ui::{PopupContents, TuiState},
 };
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -38,10 +38,10 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
         if let Event::Key(e) = event::read()? {
             match (e.code, e.modifiers) {
                 // Quit the application
-                (KeyCode::Char('q'), _) => app.quit(),
+                (KeyCode::Char('q'), _) => { app.execute(Command::Quit); },
 
                 // terminal in raw mode -> ctrl-c has to be processed manually
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => app.quit(),
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
 
                 // Table navigation: up/down
                 (KeyCode::Up, _) => tui.layout.write().tablestate.select_previous(),
@@ -94,32 +94,32 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 // Pause/resume the selected target if it's not stopped
                 (KeyCode::Char(' '), _) => {
                     if let Some(idx) = tui.layout.read().tablestate.selected() {
-                        app.toggle_target_pause(idx);
+                        app.execute(Command::TogglePause(idx));
                     }
                 }
 
                 // Pause/resume all targets
-                (KeyCode::Char('p'), _) => app.pause_all_targets(),
-                (KeyCode::Char('P'), _) => app.resume_all_targets(),
+                (KeyCode::Char('p'), _) => { app.execute(Command::PauseAll); },
+                (KeyCode::Char('P'), _) => { app.execute(Command::ResumeAll); },
 
                 // Stop (cancel) the selected target's pinging for good
                 (KeyCode::Char('S'), _) => {
                     if let Some(idx) = tui.layout.read().tablestate.selected() {
-                        app.stop_target(idx);
+                        app.execute(Command::StopTarget(idx));
                     }
                 }
 
                 // Reset the selected target's statistics
                 (KeyCode::Char('R'), _) => {
                     if let Some(idx) = tui.layout.read().tablestate.selected() {
-                        app.reset_target_stats(idx);
+                        app.execute(Command::ResetTgtStats(idx));
                     }
                 }
 
                 // Update information for the selected target
                 (KeyCode::Enter, _) => {
                     if let Some(idx) = tui.layout.read().tablestate.selected() {
-                        app.update_target_info(idx);
+                        app.execute(Command::UpdateTgtInfo(idx));
                     }
                 }
 
@@ -129,17 +129,20 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                     match m {
                         // Stop and remove all unreachable targets from the list
                         KeyModifiers::CONTROL => {
-                            if app.remove_all_unreachables() > 0 {
-                                // clear row selection after removal
-                                lo.tablestate.select(None);
-                                // reset table width since it could be compressed
-                                lo.reset_table_widths();
+                            match app.execute(Command::RemoveAllUnreach) {
+                                CmdResult::Count(_) => {
+                                    // clear row selection after removal
+                                    lo.tablestate.select(None);
+                                    // reset table width since it could be compressed
+                                    lo.reset_table_widths();
+                                }
+                                _ => { /* nothing was removed */ }
                             }
                         }
                         // Stop and remove the selected target
                         KeyModifiers::NONE => {
                             if let Some(idx) = lo.tablestate.selected() {
-                                app.remove_target(idx);
+                                app.execute(Command::RemoveTarget(idx));
 
                                 // fix row selection after removal
                                 let len: usize = app.len();
@@ -184,9 +187,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 }
 
                 // Toggle "performance" mode
-                (KeyCode::F(10), _) => {
-                    app.toggle_perf();
-                }
+                (KeyCode::F(10), _) => { app.execute(Command::TogglePerf); }
 
                 // Show/hide the log message buffer
                 (KeyCode::F(12), _) => {
