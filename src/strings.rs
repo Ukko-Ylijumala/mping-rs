@@ -176,7 +176,7 @@ pub static ADD_TGT_DIA_PAUSE: &str = "Add as paused";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 23] = [
+pub static HELP_KEYS: [[&str; 2]; 24] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["PageUp, PageDn", "Page target list up/down (with shift: 10 lines)"],
@@ -189,6 +189,7 @@ pub static HELP_KEYS: [[&str; 2]; 23] = [
     ["R",              "Reset ping statistics for selected target"],
     ["p",              "Pause pinging for all targets"],
     ["P",              "Resume pinging for all targets"],
+    ["a",              "Open the add target dialog"],
     ["",                ""],
     ["S",              "Stop pinging the selected target permanently"],
     ["Delete",         "Stop pinging the selected target and remove it"],

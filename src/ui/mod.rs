@@ -4,11 +4,11 @@
 
 //! User interface module containing TUI components and input handling.
 
-mod input;
+pub(crate) mod input;
 pub(crate) mod keyboard;
 pub(crate) mod tui;
 
-pub(crate) use input::AddTargetDialogState;
+pub(crate) use input::{AddTargetDialogState, DialogAction};
 pub(crate) use tui::{PopupContents, TuiState, eprintln_safe};
 
 pub use tui::TerminalGuard;

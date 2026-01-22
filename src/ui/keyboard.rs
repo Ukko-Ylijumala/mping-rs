@@ -4,9 +4,9 @@
 
 use crate::{
     structs::{AppState, Command, CmdResult},
-    ui::{PopupContents, TuiState},
+    ui::{DialogAction, PopupContents, TuiState},
 };
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::{io::Result, sync::Arc, time::Duration};
 
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
@@ -36,6 +36,11 @@ Crossterm key event polling helper
 fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
         if let Event::Key(e) = event::read()? {
+            if tui.layout.read().input_visible {
+                // route key event to input dialog handler
+                return handle_input_dialog(app, tui, e);
+            }
+
             match (e.code, e.modifiers) {
                 // Quit the application
                 (KeyCode::Char('q'), _) => { app.execute(Command::Quit); },
@@ -159,6 +164,9 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                     }
                 }
 
+                // Open the add target input dialog
+                (KeyCode::Char('a'), _) => { tui.add_tgt_dialog_open(); }
+
                 // Close active popup/help/input overlays
                 (KeyCode::Esc, _) => {
                     let mut lo = tui.layout.write();
@@ -213,11 +221,54 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 let _ = event::read()?;
             }
 
+            // since we're here, a key event was handled
             Ok(true)
         } else {
+            // wasn't a key event
             Ok(false)
         }
     } else {
+        // nothing was polled during the wait time
         Ok(false)
+    }
+}
+
+/// Input dialog key event handler
+#[allow(unused_variables)]
+fn handle_input_dialog(app: &Arc<AppState>, tui: &Arc<TuiState>, e: KeyEvent) -> Result<bool> {
+    let state = &mut tui.input_state.write();
+    match state.on_key(e) {
+        DialogAction::None => return Ok(false),
+        DialogAction::Redraw => return Ok(true),
+
+        DialogAction::Cancel => {
+            // help dialog could be open on top of input dialog
+            if tui.layout.read().help_visible {
+                tui.layout.write().help_visible = false;
+            } else {
+                tui.add_tgt_dialog_close()
+            };
+            return Ok(true);
+        }
+
+        DialogAction::Submit { addrs, excls, paused } => {
+            state.error = Some("Test submission".into());
+            return Ok(true);
+            /*
+            match app.execute(Command::AddTarget {
+                addresses: addrs,
+                exclusions: excls,
+                paused,
+            }) {
+                CmdResult::Ok => {
+                    tui.layout.write().input_visible = false;
+                }
+                CmdResult::Err(msg) => {
+                    state.error = Some(msg);
+                }
+                _ => { /* unexpected result */ }
+            }
+            */
+        }
     }
 }

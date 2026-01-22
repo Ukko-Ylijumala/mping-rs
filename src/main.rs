@@ -20,7 +20,7 @@ use crate::{
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
     structs::{AppState, TargetDefaults},
-    ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow},
+    ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow, AddTargetDialogState, input::ActiveField},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
 
@@ -587,6 +587,12 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
         }
     }
 
+    /* -------- Input dialog -------- */
+    if layout.input_visible {
+        let st = &tui.input_state.read();
+        render_add_target_dialog(frame, layout.input, st);
+    }
+
     /* -------- Help popup -------- */
     if layout.help_visible {
         frame.render_widget(Clear, layout.help);
@@ -594,6 +600,92 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
             tui.help_contents.to_para().block(BLK_HELP.clone()),
             layout.help,
         );
+    }
+}
+
+fn render_add_target_dialog(frame: &mut Frame, area: Rect, st: &AddTargetDialogState) {
+    frame.render_widget(Clear, area);
+    let block = BORDERS.clone().title(" Add target(s) - WIP ").padding(Padding::horizontal(1));
+    frame.render_widget(block.clone(), area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // addrs
+            Constraint::Length(3), // excls
+            Constraint::Length(3), // paused
+            Constraint::Length(3), // buttons
+            Constraint::Min(0),    // error/help
+        ])
+        .split(block.inner(area));
+
+    // addresses input
+    let b_addrs = BORDERS.clone().title(" Addresses ")
+        .border_type(if matches!(st.active, ActiveField::Addresses) { BorderType::Double } else { BorderType::Plain });
+    frame.render_widget(&b_addrs, rows[0]);
+    let addrs_inner = b_addrs.inner(rows[0]);
+    frame.render_widget(
+        Paragraph::new(st.addrs.value()).wrap(Wrap { trim: false }),
+        addrs_inner,
+    );
+
+    // exclusions input
+    let b_excl = BORDERS.clone().title(" Exclusions ")
+        .border_type(if matches!(st.active, ActiveField::Exclusions) { BorderType::Double } else { BorderType::Plain });
+    frame.render_widget(&b_excl, rows[1]);
+    let excls_inner = b_excl.inner(rows[1]);
+    frame.render_widget(
+        Paragraph::new(st.excls.value()).wrap(Wrap { trim: false }),
+        excls_inner,
+    );
+
+    // checkbox row (ugly but functional, revise later)
+    let b_paused = BORDERS.clone().title(" Paused ")
+        .border_type(if matches!(st.active, ActiveField::Paused) { BorderType::Double } else { BorderType::Plain });
+    frame.render_widget(&b_paused, rows[2]);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::raw(if st.paused { CHECK_OK } else { CHECK_EMPTY }),
+            Span::raw(" Add as paused"),
+        ])),
+        b_paused.inner(rows[2]),
+    );
+
+    // buttons
+    let buttons = {
+        let submit = if matches!(st.active, ActiveField::Submit) {
+            Span::styled(" Submit ", ST_REV.green())
+        } else {
+            Span::raw(" Submit ").green()
+        };
+        let cancel = if matches!(st.active, ActiveField::Cancel) {
+            Span::styled(" Cancel ", ST_REV.red())
+        } else {
+            Span::raw(" Cancel ").red()
+        };
+        Line::from(vec![submit, Span::raw("  "), cancel])
+    };
+    frame.render_widget(Paragraph::new(buttons).block(BORDERS.clone()), rows[3]);
+
+    // error/help
+    if let Some(err) = &st.error {
+        frame.render_widget(Paragraph::new(err.as_str()), rows[4]);
+    }
+
+    // cursor placement: only when editing a text field
+    match st.active {
+        ActiveField::Addresses => {
+            // cursor x: left border + 1 + cursor position within input
+            let x = addrs_inner.x + st.addrs.cursor() as u16;
+            let y = addrs_inner.y; // single-line in a 1-row inner area
+            frame.set_cursor_position((x, y));
+        }
+        ActiveField::Exclusions => {
+            let x = excls_inner.x + st.excls.cursor() as u16;
+            let y = excls_inner.y;
+            frame.set_cursor_position((x, y));
+        }
+        _ => { /* do nothing; cursor stays hidden */ }
     }
 }
 

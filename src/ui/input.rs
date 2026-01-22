@@ -20,6 +20,7 @@ pub(crate) enum ActiveField {
 pub(crate) enum DialogAction {
     None,
     Cancel,
+    Redraw,
     #[rustfmt::skip]
     Submit { addrs: String, excls: String, paused: bool },
 }
@@ -40,11 +41,11 @@ impl AddTargetDialogState {
             KeyCode::Esc => return DialogAction::Cancel,
             KeyCode::Tab => {
                 self.focus_next();
-                return DialogAction::None;
+                return DialogAction::Redraw;
             }
             KeyCode::BackTab => {
                 self.focus_prev();
-                return DialogAction::None;
+                return DialogAction::Redraw;
             }
 
             KeyCode::Enter => {
@@ -57,7 +58,7 @@ impl AddTargetDialogState {
                     ActiveField::Cancel => DialogAction::Cancel,
                     ActiveField::Paused => {
                         self.paused = !self.paused;
-                        DialogAction::None
+                        DialogAction::Redraw
                     }
                     // enter in a text field could be treated as submit or ignored
                     ActiveField::Addresses | ActiveField::Exclusions => DialogAction::None,
@@ -67,9 +68,10 @@ impl AddTargetDialogState {
             KeyCode::Char(' ') => {
                 if matches!(self.active, ActiveField::Paused) {
                     self.paused = !self.paused;
+                    return DialogAction::Redraw;
                 }
-                return DialogAction::None;
             }
+
             _ => {}
         }
 
@@ -77,18 +79,23 @@ impl AddTargetDialogState {
         match self.active {
             ActiveField::Addresses => {
                 // map crossterm KeyEvent -> tui-input editing ops (arrows, backspace, char insert...)
-                self.addrs.handle_event(&Event::Key(key));
+                if self.addrs.handle_event(&Event::Key(key)).is_some() {
+                    return DialogAction::Redraw;
+                }
             }
             ActiveField::Exclusions => {
-                self.excls.handle_event(&Event::Key(key));
+                if self.excls.handle_event(&Event::Key(key)).is_some() {
+                    return DialogAction::Redraw;
+                }
             }
             _ => {}
         }
 
+        // no state change
         DialogAction::None
     }
 
-    pub fn focus_next(&mut self) {
+    fn focus_next(&mut self) {
         self.active = match self.active {
             ActiveField::Addresses => ActiveField::Exclusions,
             ActiveField::Exclusions => ActiveField::Paused,
@@ -98,7 +105,7 @@ impl AddTargetDialogState {
         };
     }
 
-    pub fn focus_prev(&mut self) {
+    fn focus_prev(&mut self) {
         self.active = match self.active {
             ActiveField::Addresses => ActiveField::Cancel,
             ActiveField::Exclusions => ActiveField::Addresses,
