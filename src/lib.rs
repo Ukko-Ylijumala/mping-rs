@@ -6,7 +6,7 @@
 
 mod args;
 mod hopcount;
-mod latencywin;
+pub mod latencywin;
 mod logging;
 mod macros;
 mod pingdata;
