@@ -12,3 +12,11 @@ pub(crate) use input::AddTargetDialogState;
 pub(crate) use tui::{PopupContents, TuiState, eprintln_safe};
 
 pub use tui::TerminalGuard;
+
+use crate::pingdata::{PingTarget, StatsSnapshot};
+
+pub trait Presenter {
+    type Row;
+    fn format_target(&self, target: &PingTarget, debug: bool) -> Self::Row;
+    fn format_stats(&self, snap: &StatsSnapshot) -> Self::Row;
+}
