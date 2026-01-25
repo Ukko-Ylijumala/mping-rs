@@ -22,13 +22,14 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Cell, List, ListState, Paragraph, Row, TableState},
+    widgets::*,
 };
 use std::{
     fmt,
     io::{Result, Stdout, stdout},
     ops::Index,
     panic,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -46,12 +47,15 @@ static ALT_SCREEN_ACTIVE: AtomicBool = AtomicBool::new(false);
 // Define static constraints here for convenience
 static CON_FILL: Constraint = Constraint::Fill(1);
 static CON_LEN_1: Constraint = Constraint::Length(1);
+static CON_LEN_3: Constraint = Constraint::Length(3);
+static CON_LEN_10: Constraint = Constraint::Length(10);
 static CON_MIN_1: Constraint = Constraint::Min(1);
 
 static CON_75_P: Constraint = Constraint::Ratio(3, 4);
 static CON_PROC_W: Constraint = Constraint::Min(43);
 static CON_INPUT_W: Constraint = Constraint::Ratio(1, 2);
 static CON_INPUT_H: Constraint = Constraint::Length(15);
+static CON_PAUSED_XBOX: Constraint = Constraint::Length(18);
 
 static CON_NFO_L: Constraint = Constraint::Length(5);
 static CON_NFO_T: Constraint = Constraint::Length(7);
@@ -135,7 +139,7 @@ pub(crate) struct AppLayout {
     /// Popup area for multiline text etc
     pub popup: Rect,
     /// Input area for text input etc
-    pub input: Rect,
+    pub input: AddTgtDialog,
     /// Spacing between table columns
     pub tbl_colspacing: u16,
     /// Current column width [Constraint]s
@@ -279,8 +283,8 @@ impl AppLayout {
         // centered popup area (75% width/height)
         self.popup = self.frame.centered(CON_75_P, CON_75_P);
 
-        // centered input area (30% width, 5 lines height)
-        self.input = self.frame.centered(CON_INPUT_W, CON_INPUT_H);
+        // centered input area
+        self.input.update(self.frame.centered(CON_INPUT_W, CON_INPUT_H));
     }
 
     /// Recalculate the layout areas regardless of if it's needed or not.
@@ -325,6 +329,73 @@ impl AppLayout {
         let (constraints, sum_widths) = calc_constraints_and_width(&widths);
         self.tbl_constraints = constraints;
         sum_widths
+    }
+}
+
+/// Layout for the add target input dialog.
+#[derive(Debug)]
+pub(crate) struct AddTgtDialog {
+    pub area: Rect,
+    pub block: Block<'static>,
+    pub addrs: Rect,
+    pub excls: Rect,
+    pub paused: Rect,
+    pub btn_submit: Rect,
+    pub btn_cancel: Rect,
+    pub error_help: Rect,
+}
+
+impl AddTgtDialog {
+    fn calc_layout(area: Rect, block: &Block) -> (Rc<[Rect]>, Rc<[Rect]>) {
+        // split into rows
+        let rows = Layout::vertical(
+            [
+                CON_LEN_3, // addrs
+                CON_LEN_3, // excls
+                CON_LEN_3, // paused + buttons
+                CON_LEN_1, // error/help
+            ],
+        )
+        .split(block.inner(area));
+
+        // split button row into parts
+        let btn_row = Layout::horizontal(
+            [
+                CON_PAUSED_XBOX, // paused checkbox
+                CON_LEN_10,       // submit
+                CON_LEN_10,       // cancel
+            ],
+        )
+        .spacing(1)
+        .split(rows[2]);
+        (rows, btn_row)
+    }
+
+    /// Update the layout based on the given input area.
+    pub fn update(&mut self, area: Rect) {
+        let (rows, btn_row) = Self::calc_layout(area, &self.block);
+        self.area = area;
+        self.addrs = rows[0];
+        self.excls = rows[1];
+        self.paused = btn_row[0];
+        self.btn_submit = btn_row[1];
+        self.btn_cancel = btn_row[2];
+        self.error_help = rows[3];
+    }
+}
+
+impl Default for AddTgtDialog {
+    fn default() -> Self {
+        Self {
+            block: Block::bordered().border_type(BorderType::QuadrantOutside).padding(Padding::proportional(1)).title(" Add target(s) "),
+            area: Rect::default(),
+            addrs: Rect::default(),
+            excls: Rect::default(),
+            paused: Rect::default(),
+            btn_submit: Rect::default(),
+            btn_cancel: Rect::default(),
+            error_help: Rect::default(),
+        }
     }
 }
 
