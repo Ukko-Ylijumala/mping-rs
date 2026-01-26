@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -55,6 +55,12 @@ pub static INFO_CPU: &str = "CPU: {} | mem: {} | pid: {} ";
 pub static INFO_DEBUG: &str = " Data: {}, offset: {}, idx: {}";
 pub static INFO_LOG: &str = " Log messages: {} ";
 pub static INFO_HELP: &str = " Help ";
+pub static INPUT_TITLE: &str = " Add target(s) - WIP - no worky yet ";
+pub static INPUT_ADDRS: &str = " Addresses ";
+pub static INPUT_EXCLS: &str = " Exclusions (optional) ";
+pub static INPUT_PAUSED: &str = " Start paused";
+pub static INPUT_SUBMIT: &str = " Submit ";
+pub static INPUT_CANCEL: &str = " Cancel ";
 
 // tui.rs
 pub static TUI_INIT: &str = "TerminalGuard: initializing terminal UI. Display refresh rate";

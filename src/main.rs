@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -20,7 +20,7 @@ use crate::{
     pingdata::{PacketRecord, PingStatus, PingTarget, StatsSnapshot},
     strings::*,
     structs::{AppState, TargetDefaults},
-    ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::{AddTgtDialog, TableRow}, AddTargetDialogState, input::ActiveField},
+    ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow},
     utils::{make_histogram_buckets, setup_signal_handler},
 };
 
@@ -589,8 +589,11 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
 
     /* -------- Input dialog -------- */
     if layout.input_visible {
-        let st = &tui.input_state.read();
-        render_add_target_dialog(frame, &layout.input, st);
+        let state = &mut *tui.input_state.write();
+        frame.render_stateful_widget(&layout.input, layout.input.area, state);
+        if let Some(pos) = layout.input.cursor_position(state) {
+            frame.set_cursor_position(pos);
+        }
     }
 
     /* -------- Help popup -------- */
@@ -600,82 +603,6 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
             tui.help_contents.to_para().block(BLK_HELP.clone()),
             layout.help,
         );
-    }
-}
-
-fn render_add_target_dialog(frame: &mut Frame, atd: &AddTgtDialog, st: &AddTargetDialogState) {
-    frame.render_widget(Clear, atd.area);
-    frame.render_widget(&atd.block, atd.area);
-
-    // blocks
-    let b_addrs = BORDERS.clone().title(" Addresses ")
-        .border_type(if matches!(st.active, ActiveField::Addresses) { BorderType::Double } else { BorderType::Plain });
-    let b_excl = BORDERS.clone().title(" Exclusions (optional) ")
-        .border_type(if matches!(st.active, ActiveField::Exclusions) { BorderType::Double } else { BorderType::Plain });
-    let b_paused = BORDERS.clone()
-        .border_type(if matches!(st.active, ActiveField::Paused) { BorderType::Double } else { BorderType::Plain });
-
-    // render blocks
-    frame.render_widget(&b_addrs, atd.addrs);
-    frame.render_widget(&b_excl, atd.excls);
-    frame.render_widget(&b_paused, atd.paused);
-
-    // addresses input
-    let addrs_inner = b_addrs.inner(atd.addrs);
-    frame.render_widget(
-        Paragraph::new(st.addrs.value()).wrap(Wrap { trim: false }),
-        addrs_inner,
-    );
-
-    // exclusions input
-    let excls_inner = b_excl.inner(atd.excls);
-    frame.render_widget(
-        Paragraph::new(st.excls.value()).wrap(Wrap { trim: false }),
-        excls_inner,
-    );
-
-    // checkbox row (ugly but functional, revise later)
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw(if st.paused { CHECK_OK } else { CHECK_EMPTY }),
-            Span::raw(" Start paused"),
-        ])),
-        b_paused.inner(atd.paused),
-    );
-
-    // buttons
-    let submit = if matches!(st.active, ActiveField::Submit) {
-        Span::styled(" Submit ", ST_REV.green())
-    } else {
-        Span::raw(" Submit ").green()
-    };
-    let cancel = if matches!(st.active, ActiveField::Cancel) {
-        Span::styled(" Cancel ", ST_REV.red())
-    } else {
-        Span::raw(" Cancel ").red()
-    };
-    frame.render_widget(Paragraph::new(submit).block(BORDERS.clone().border_type(BorderType::Rounded).green()), atd.btn_submit);
-    frame.render_widget(Paragraph::new(cancel).block(BORDERS.clone().border_type(BorderType::Rounded).red()), atd.btn_cancel);
-
-    // error/help
-    if let Some(err) = &st.error {
-        frame.render_widget(Paragraph::new(err.as_str()), atd.error_help);
-    }
-
-    // cursor placement: only when editing a text field
-    match st.active {
-        ActiveField::Addresses => {
-            // cursor x: left border + 1 + cursor position within input
-            let x = addrs_inner.x + st.addrs.cursor() as u16;
-            let y = addrs_inner.y; // single-line in a 1-row inner area
-            frame.set_cursor_position((x, y));
-        }
-        ActiveField::Exclusions => {
-            let x = excls_inner.x + st.excls.cursor() as u16;
-            let y = excls_inner.y;
-            frame.set_cursor_position((x, y));
-        }
-        _ => { /* do nothing; cursor stays hidden */ }
     }
 }
 

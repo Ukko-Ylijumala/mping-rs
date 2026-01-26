@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -8,7 +8,7 @@ pub(crate) mod input;
 pub(crate) mod keyboard;
 pub(crate) mod tui;
 
-pub(crate) use input::{AddTargetDialogState, DialogAction};
+pub(crate) use input::{AddTargetDialogState, AddTgtDialog, DialogAction};
 pub(crate) use tui::{PopupContents, TuiState, eprintln_safe};
 
 pub use tui::TerminalGuard;
