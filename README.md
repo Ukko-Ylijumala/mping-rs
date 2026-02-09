@@ -3,9 +3,9 @@
 mping is a small concurrent multi-pinger TUI app that displays live RTT stats, graphs and histograms for multiple IPv4/IPv6 targets.
 
 ### Quick features
-- Concurrent async pings per target using Tokio and [`surge-ping`](Cargo.toml).
+- Concurrent async pings per target using [`Tokio`](https://crates.io/crates/tokio) and [`surge-ping`](https://crates.io/crates/surge-ping).
 - Live TUI showing Sent, Recv, Latest, Mean, Min, Max and Status.
-- Uses Ratatui for display and Crossterm for low-level terminal control.
+- Uses [`Ratatui`](https://crates.io/crates/ratatui) for display and [`Crossterm`](https://crates.io/crates/crossterm) for low-level terminal control.
 - IPv4 and IPv6 support.
 - Graceful signal handling (see [`setup_signal_handler`](src/utils.rs)).
 - Configurable interval, timeout and ICMP payload size/randomization.
@@ -16,10 +16,12 @@ mping is a small concurrent multi-pinger TUI app that displays live RTT stats, g
 - Targets are represented by [`PingTarget`](src/pingdata.rs) struct.
 - Per-target ping loop: [`ping_loop`](src/main.rs) which spawns async pinger tasks (or inlined futures with `--perf`).
 - CLI IP address parsing uses [`parse_ip_addresses`](src/utils.rs).
-- DNS resolution uses [`hickory_resolver::TokioResolver`]
+- DNS resolution uses [`hickory_resolver`](https://crates.io/crates/hickory-resolver)
 - Panics and SIGINT/SIGTERM/SIGQUIT are handled such that previous console state is restored.
 
 See the manifest file for dependencies: [Cargo.toml](Cargo.toml)
+
+Currently only Linux is supported, but MacOS and Windows support is planned at some point.
 
 ### Install Rust toolchain
 ```sh
