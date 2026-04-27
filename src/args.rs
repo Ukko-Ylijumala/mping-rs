@@ -6,7 +6,7 @@ use crate::{
     logging::{LogLevel, MessageBuffer},
     strings::*,
     structs::{DEFAULT_DETAILED, DEFAULT_HISTSIZE, DEFAULT_PAYLOAD_SIZE, Resolved},
-    utils::{parse_float_into_duration, parse_ip_addresses, resolve_names},
+    utils::{collect_targets, parse_float_into_duration},
 };
 use clap::{Parser, crate_authors, crate_description, crate_name, crate_version, value_parser};
 use hickory_resolver::{
@@ -256,41 +256,38 @@ impl MpConfig {
                 .into(),
         );
 
-        // Parse the addresses which are straight up IPs/ranges first.
-        let (mut addrs, mut seen, _excl, failed) =
-            parse_ip_addresses(&config.targets, Some(&config.exclude), &*config.buf);
+        // Parse straight IP/range/CIDR entries, then try to resolve the leftovers as DNS names.
+        let collected = collect_targets(
+            &config.targets,
+            Some(&config.exclude),
+            config.resolver.as_ref().unwrap(),
+            &*config.buf,
+        )
+        .await;
 
-        // Now try to resolve any entries that failed to parse as IPs.
-        for (name, ips) in
-            resolve_names(failed, &*config.resolver.as_ref().unwrap(), &*config.buf).await
-        {
-            config.resolved.add(name, &ips);
+        // Fold resolved name->IP pairs into the master Resolved map for later display.
+        for (name, ips) in &collected.resolved {
+            config.resolved.add(name, ips);
         }
-
-        // Did we resolve any new addresses?
         if !config.resolved.is_empty() {
-            let mut resolved: Vec<IpAddr> = config.resolved.addrs_by_name();
-            // Remove duplicates by comparing against already parsed addresses.
-            resolved.retain(|ip: &IpAddr| seen.insert(*ip));
             config
                 .buf
-                .notice(format!("{INFO_RESOLVED}: {}", resolved.len()));
-            addrs.append(&mut resolved);
+                .notice(format!("{INFO_RESOLVED}: {}", config.resolved.len()));
         }
 
         // Yes, I, the mighty programmer, am aware that I could sometimes be INCORRECT!
         #[cfg(debug_assertions)]
         {
             assert_eq!(
-                HashSet::from_iter(addrs.iter().cloned()),
-                &seen - &_excl,
+                HashSet::from_iter(collected.addrs.iter().cloned()),
+                &collected.seen - &collected.excluded,
                 "\"seen\" set does not match parsed addresses! Fix da code, ya dumbass!"
             );
         }
 
         // Present the Vec and HashSet of addresses to the main code for consumption.
-        config.addrs = addrs;
-        config.seen = seen;
+        config.addrs = collected.addrs;
+        config.seen = collected.seen;
         if config.addrs.is_empty() {
             config.buf.notice(format!("{WARN_NO_VALID_IPS}"));
         } else {
