@@ -216,34 +216,105 @@ pub fn reverse_name(addr: &IpAddr) -> String {
 /**
 Asynchronously resolve a set of DNS names into IP addresses.
 
-### Returns:
-- a Vec of tuples ([String], [Vec] of [IpAddr]) for successfully resolved names
+### Returns a tuple of:
+- Vec of ([String], [Vec] of [IpAddr]) pairs for successfully resolved names
+  (FQDN trailing dot stripped). Names that resolved to zero addresses are not
+  included here — they go into the unresolved set instead.
+- Set of input names that either errored out or resolved to no addresses
+  (with their original spelling, including any trailing dot).
 */
 pub(crate) async fn resolve_names<T>(
     failed: HashSet<String>,
     res: &TokioResolver,
     logger: &T,
-) -> Vec<(String, Vec<IpAddr>)>
+) -> (Vec<(String, Vec<IpAddr>)>, HashSet<String>)
 where
     T: Logger,
 {
     let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(failed.len());
-    for name in &failed {
-        match res.lookup_ip(name).await {
+    let mut unresolved: HashSet<String> = HashSet::new();
+    for name in failed {
+        match res.lookup_ip(&name).await {
             Ok(lookup) => {
                 let ips: Vec<IpAddr> = lookup.iter().collect();
-                if !ips.is_empty() {
+                if ips.is_empty() {
+                    unresolved.insert(name);
+                } else {
                     logger.info(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
+                    // if this was a fully qualified domain name, strip the trailing dot
+                    resolved.push((name.trim_end_matches('.').to_string(), ips));
                 }
-                // if this was a fully qualified domain name, strip the trailing dot
-                resolved.push((name.trim_end_matches(".").to_string(), ips));
             }
             Err(e) => {
                 logger.error(format!("{ERR_RESOLVE} '{name}': {e}"));
+                unresolved.insert(name);
             }
         }
     }
-    resolved
+    (resolved, unresolved)
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+Result of parsing+resolving a batch of target strings via [collect_targets].
+
+`addrs` and `seen` describe the same set; the [Vec] preserves first-seen order
+(useful for the TUI table), the [HashSet] is there so callers don't have to
+re-derive it.
+*/
+#[derive(Debug, Default)]
+pub(crate) struct CollectedTargets {
+    /// All unique target IPs (parsed + resolved-from-DNS), in first-seen order.
+    /// Exclusions have already been applied to the parsed-IP portion.
+    pub addrs: Vec<IpAddr>,
+    /// Set form of `addrs`; mirrors its membership.
+    pub seen: HashSet<IpAddr>,
+    /// IPs that the exclusion list filtered out (parsed-IP portion only — DNS
+    /// resolutions are not subjected to exclusions, matching prior behavior).
+    pub excluded: HashSet<IpAddr>,
+    /**
+    Successfully resolved DNS names paired with their IPs (trailing dot
+    stripped). Caller folds these into a [crate::structs::Resolved] map if
+    it wants name display.
+    */
+    pub resolved: Vec<(String, Vec<IpAddr>)>,
+    /// Strings that were neither valid IP/range/CIDR nor a resolvable DNS name.
+    pub unresolved: HashSet<String>,
+}
+
+/**
+Parse a batch of target strings, then try to resolve any leftovers as DNS names.
+
+Combines [parse_ip_addresses] and [resolve_names] into the single pipeline used
+by both initial CLI parsing ([crate::args::MpConfig::parse]) and the runtime
+"add target" dialog. Resolved IPs are deduplicated against the parsed-IP set,
+so the final `addrs` Vec contains each address at most once.
+*/
+#[rustfmt::skip]
+pub(crate) async fn collect_targets<T>(
+    targets: &[String],
+    exclude: Option<&[String]>,
+    resolver: &TokioResolver,
+    logger: &T,
+) -> CollectedTargets
+where
+    T: Logger,
+{
+    let (mut addrs, mut seen, excluded, failed) = parse_ip_addresses(targets, exclude, logger);
+    let (resolved, unresolved) = resolve_names(failed, resolver, logger).await;
+
+    // Append resolved IPs, skipping any already covered by parsed entries
+    // (and skipping duplicates between resolved names too).
+    for (_, ips) in &resolved {
+        for ip in ips {
+            if seen.insert(*ip) {
+                addrs.push(*ip);
+            }
+        }
+    }
+
+    CollectedTargets { addrs, seen, excluded, resolved, unresolved }
 }
 
 /* -------------------------------------------------------------------------- */
