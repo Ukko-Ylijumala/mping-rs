@@ -10,6 +10,7 @@ pub mod latencywin;
 mod logging;
 mod macros;
 mod pingdata;
+mod pinger;
 mod strings;
 mod structs;
 mod ui;

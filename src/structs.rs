@@ -55,10 +55,10 @@ pub(crate) struct AppState {
     pub resolver: Arc<TokioResolver>,
     pub logger: Arc<MessageBuffer>,
     pub distance_stretch_factor: f64,
+    pub resolved: RwLock<Resolved>,
     runtime: tokio::runtime::Handle,
     spawned_tasks: AtomicU64,
     perf: AtomicBool,
-    resolved: RwLock<Resolved>,
 }
 
 impl AppState {
@@ -101,10 +101,10 @@ impl AppState {
             resolver: conf.resolver.as_ref().unwrap().clone(),
             logger: conf.buf.clone(),
             distance_stretch_factor: conf.stretch_factor,
+            resolved: conf.resolved.clone().into(),
             runtime: tokio::runtime::Handle::current(),
             spawned_tasks: AtomicU64::new(0),
             perf: conf.perf.into(),
-            resolved: conf.resolved.clone().into(),
         }
     }
 
@@ -225,25 +225,48 @@ impl AppState {
     }
 
     /**
-    Add new ping targets to the application state. Will also set their names if resolved.
+    Add new ping targets to the application state. Skips any whose IP is already
+    being pinged. Sets hostnames from [Self::resolved] for the ones that survive.
+
+    Returns the [Arc]'d handles to the newly-added targets so the caller can spawn
+    ping loops for them (see [crate::pinger::spawn_ping_loops]).
 
     NOTE: locks `targets` for writing and `resolved` for reading.
     */
-    pub fn add_targets<I: IntoIterator<Item = PingTarget>>(&self, targets: I) -> usize {
-        let orig_len: usize = self.len();
+    pub fn add_targets<I: IntoIterator<Item = PingTarget>>(
+        &self,
+        targets: I,
+    ) -> Vec<Arc<PingTarget>> {
+        let mut tgts = self.targets.write();
+        let existing: HashSet<IpAddr> = tgts.iter().map(|t| t.addr).collect();
         let names = self.resolved.read();
-        self.targets.write().extend(targets.into_iter().map(|t| {
-            // set the hostname if we have one for this IP
-            if let Some(name) = names.get_name(&t.addr) {
-                t.set_name(name);
+        let orig_len: usize = tgts.len();
+
+        let mut added: Vec<Arc<PingTarget>> = Vec::new();
+        let mut skipped: usize = 0;
+        for t in targets {
+            if !existing.contains(&t.addr) && added.iter().all(|a| a.addr != t.addr) {
+                if let Some(name) = names.get_name(&t.addr) {
+                    t.set_name(name);
+                }
+                let arc = Arc::new(t);
+                tgts.push(arc.clone());
+                added.push(arc);
+            } else {
+                skipped += 1;
             }
-            Arc::new(t)
-        }));
-        let new_len: usize = self.len();
-        let added: usize = new_len.saturating_sub(orig_len);
-        if added > 0 {
+        }
+        let new_len: usize = tgts.len();
+        drop(names);
+        drop(tgts);
+
+        if !added.is_empty() {
             self.logger
-                .log(templater!(INFO_NEW, added, orig_len, new_len));
+                .log(templater!(INFO_NEW, added.len(), orig_len, new_len));
+        }
+        if skipped > 0 {
+            self.logger
+                .notice(format!("skipped {skipped} duplicate target(s)"));
         }
         added
     }
