@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
+    pinger,
     structs::{AppState, Command, CmdResult},
     ui::{DialogAction, PopupContents, TuiState},
 };
@@ -234,12 +235,11 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
 }
 
 /// Input dialog key event handler
-#[allow(unused_variables)]
 fn handle_input_dialog(app: &Arc<AppState>, tui: &Arc<TuiState>, e: KeyEvent) -> Result<bool> {
-    let state = &mut tui.input_state.write();
-    match state.on_key(e) {
-        DialogAction::None => return Ok(false),
-        DialogAction::Redraw => return Ok(true),
+    let action = tui.input_state.write().on_key(e);
+    match action {
+        DialogAction::None => Ok(false),
+        DialogAction::Redraw => Ok(true),
 
         DialogAction::Cancel => {
             // help dialog could be open on top of input dialog
@@ -248,27 +248,41 @@ fn handle_input_dialog(app: &Arc<AppState>, tui: &Arc<TuiState>, e: KeyEvent) ->
             } else {
                 tui.add_tgt_dialog_close()
             };
-            return Ok(true);
+            Ok(true)
         }
 
         DialogAction::Submit { addrs, excls, paused } => {
-            state.error = Some("Test submission".into());
-            return Ok(true);
-            /*
-            match app.execute(Command::AddTarget {
-                addresses: addrs,
-                exclusions: excls,
-                paused,
-            }) {
-                CmdResult::Ok => {
-                    tui.layout.write().input_visible = false;
-                }
-                CmdResult::Err(msg) => {
-                    state.error = Some(msg);
-                }
-                _ => { /* unexpected result */ }
+            let addr_strs = split_dialog_input(&addrs);
+            if addr_strs.is_empty() {
+                tui.input_state.write().error =
+                    Some("Enter at least one address (IP, range, CIDR or DNS name).".into());
+                return Ok(true);
             }
-            */
+            let excl_strs = split_dialog_input(&excls);
+            let app_clone = app.clone();
+            // Parsing + DNS resolution happens off-thread on the Tokio runtime;
+            // we close the dialog right away. Per-target progress goes to the log.
+            app.spawn(async move {
+                pinger::collect_and_spawn(
+                    &app_clone,
+                    &addr_strs,
+                    if excl_strs.is_empty() { None } else { Some(&excl_strs) },
+                    paused,
+                )
+                .await;
+            });
+            tui.add_tgt_dialog_close();
+            Ok(true)
         }
     }
+}
+
+/// Split a free-form dialog input field into individual target/exclusion strings.
+/// Accepts whitespace and/or commas as separators (matches the CLI conventions).
+fn split_dialog_input(s: &str) -> Vec<String> {
+    s.split([' ', ',', '\t', '\n', '\r'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
 }
