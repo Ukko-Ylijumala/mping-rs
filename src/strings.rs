@@ -55,12 +55,22 @@ pub static INFO_CPU: &str = "CPU: {} | mem: {} | pid: {} ";
 pub static INFO_DEBUG: &str = " Data: {}, offset: {}, idx: {}";
 pub static INFO_LOG: &str = " Log messages: {} ";
 pub static INFO_HELP: &str = " Help ";
-pub static INPUT_TITLE: &str = " Add target(s) - WIP - no worky yet ";
+pub static INPUT_TITLE: &str = " Add target(s) ";
 pub static INPUT_ADDRS: &str = " Addresses ";
 pub static INPUT_EXCLS: &str = " Exclusions (optional) ";
 pub static INPUT_PAUSED: &str = " Start paused";
 pub static INPUT_SUBMIT: &str = " Submit ";
 pub static INPUT_CANCEL: &str = " Cancel ";
+pub static INPUT_WORKING: &str = "Resolving — please wait...";
+pub static INPUT_HINT_CLOSE: &str =
+    "[Esc to close, or type more addresses to add another batch. F12 for full log.]";
+pub static INPUT_NOTHING: &str = "Nothing actionable in this submission.";
+pub static SUMMARY_ADDED: &str = "added";
+pub static SUMMARY_SKIPPED: &str = "skipped (already pinged)";
+pub static SUMMARY_RESOLVED: &str = "resolved";
+pub static SUMMARY_UNRESOLVED: &str = "unresolved";
+pub static SUMMARY_EXCLUDED: &str = "excluded";
+pub static SUMMARY_AND_MORE: &str = "…and {} more";
 
 // tui.rs
 pub static TUI_INIT: &str = "TerminalGuard: initializing terminal UI. Display refresh rate";
