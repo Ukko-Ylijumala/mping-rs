@@ -2,17 +2,21 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::strings::*;
+use crate::{pinger::AddOutcome, strings::*};
 use crossterm::event::{Event, KeyCode, KeyEvent};
+use miniutils::{inject, templater};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Stylize},
-    text::{Line, Span},
+    style::{Color, Style, Stylize},
+    text::{Line, Span, Text},
     widgets::*,
 };
-use std::{rc::Rc, sync::LazyLock};
+use std::{fmt::Display, net::IpAddr, rc::Rc, sync::LazyLock};
 use tui_input::{Input, backend::crossterm::EventHandler};
+
+/// Per-section cap for the post-submit summary in the dialog feedback area.
+const SUMMARY_SECTION_CAP: usize = 12;
 
 /// Currently active field in the add target dialog.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -34,6 +38,34 @@ pub(crate) enum DialogAction {
     Submit { addrs: String, excls: String, paused: bool },
 }
 
+/**
+What's currently showing in the dialog's feedback area below the input fields.
+
+The dialog stays open across submissions; this enum drives what - if anything -
+is rendered between the field rows and the bottom of the dialog. The variants
+are mutually exclusive: a validation error replaces any earlier summary, a
+new submission replaces the prior error or summary, etc.
+*/
+#[derive(Debug, Default, Clone)]
+pub(crate) enum DialogFeedback {
+    #[default]
+    None,
+    /// Pre-submit validation error (e.g. empty addresses field).
+    Error(String),
+    /// A submission is currently being parsed / DNS-resolved off-thread.
+    Working,
+    /// Submission complete; rendered as styled multi-line text.
+    Summary(Text<'static>),
+}
+
+impl DialogFeedback {
+    /// Is a submission currently in flight? Used to block re-submits.
+    #[inline]
+    pub fn is_working(&self) -> bool {
+        matches!(self, Self::Working)
+    }
+}
+
 /// State for the add target dialog input overlay.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct AddTargetDialogState {
@@ -41,7 +73,7 @@ pub(crate) struct AddTargetDialogState {
     pub excls: Input,          // Text input for exclusions
     pub paused: bool,          // Checkbox for paused status
     pub active: ActiveField,   // Currently active field
-    pub error: Option<String>, // Optional error display
+    pub feedback: DialogFeedback, // Validation error / Working / Summary
 }
 
 impl AddTargetDialogState {
@@ -59,11 +91,18 @@ impl AddTargetDialogState {
 
             KeyCode::Enter => {
                 return match self.active {
-                    ActiveField::Submit => DialogAction::Submit {
-                        addrs: self.addrs.value().to_string(),
-                        excls: self.excls.value().to_string(),
-                        paused: self.paused,
-                    },
+                    ActiveField::Submit => {
+                        // Block re-submit while a previous one is still resolving.
+                        if self.feedback.is_working() {
+                            DialogAction::None
+                        } else {
+                            DialogAction::Submit {
+                                addrs: self.addrs.value().to_string(),
+                                excls: self.excls.value().to_string(),
+                                paused: self.paused,
+                            }
+                        }
+                    }
                     ActiveField::Cancel => DialogAction::Cancel,
                     ActiveField::Paused => {
                         self.paused = !self.paused;
@@ -159,17 +198,18 @@ pub(crate) struct AddTgtDialog {
     b_excls: Block<'static>,
     btn_submit: Rect,
     btn_cancel: Rect,
-    error_help: Rect,
+    feedback: Rect,
 }
 
 impl AddTgtDialog {
     fn calc_layout(area: Rect, block: &Block) -> (Rc<[Rect]>, Rc<[Rect]>) {
-        // split into rows
+        // split into rows: three fixed-height input rows then everything left
+        // over goes to the feedback area (errors or post-submit summary).
         let rows = Layout::vertical([
             CON_LEN_3, // addrs
             CON_LEN_3, // excls
             CON_LEN_3, // paused + buttons
-            CON_LEN_1, // error/help
+            CON_FILL,  // feedback (error / Working / Summary)
         ])
         .split(block.inner(area));
 
@@ -194,7 +234,7 @@ impl AddTgtDialog {
         self.paused = btn_row[0];
         self.btn_submit = btn_row[2];
         self.btn_cancel = btn_row[3];
-        self.error_help = rows[3];
+        self.feedback = rows[3];
     }
 
     /// Cursor placement: only when editing a text field.
@@ -232,7 +272,7 @@ impl Default for AddTgtDialog {
             paused: Rect::default(),
             btn_submit: Rect::default(),
             btn_cancel: Rect::default(),
-            error_help: Rect::default(),
+            feedback: Rect::default(),
         }
     }
 }
@@ -289,9 +329,150 @@ impl StatefulWidget for &AddTgtDialog {
             (&*CANCEL).render(cancel_inner, buf)
         };
 
-        // error/help
-        if let Some(err) = &state.error {
-            Paragraph::new(err.as_str()).wrap(NO_TRIM).render(self.error_help, buf);
+        // feedback area: validation error / "Working..." / post-submit summary
+        match &state.feedback {
+            DialogFeedback::None => {}
+            DialogFeedback::Error(msg) => {
+                Paragraph::new(msg.as_str())
+                    .wrap(NO_TRIM)
+                    .style(Style::new().light_red().bold())
+                    .render(self.feedback, buf);
+            }
+            DialogFeedback::Working => {
+                Paragraph::new(INPUT_WORKING)
+                    .wrap(NO_TRIM)
+                    .style(Style::new().yellow().italic())
+                    .render(self.feedback, buf);
+            }
+            DialogFeedback::Summary(text) => {
+                Paragraph::new(text.clone())
+                    .wrap(NO_TRIM)
+                    .render(self.feedback, buf);
+            }
         }
     }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+Build the dialog's post-submit feedback text from a completed [AddOutcome].
+
+Output: one status header line, an optional `(start paused)` annotation
+when applicable, then up to four single-line per-category breakdowns
+(added, skipped, resolved-names, unresolved), a blank line, and the
+"press Esc to close..." hint. Each per-category list is truncated to
+[SUMMARY_SECTION_CAP] entries with a "…and N more" tail.
+*/
+pub(crate) fn format_add_summary(outcome: &AddOutcome, paused: bool) -> Text<'static> {
+    let added = outcome.added.len();
+    let skipped = outcome.skipped;
+    let resolved = outcome.collected.resolved.len();
+    let unresolved = outcome.collected.unresolved.len();
+    let excluded = outcome.collected.excluded.len();
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+
+    // Header line: a comma-joined run of "<label>: <count>" segments,
+    // each segment coloured by category.
+    let mut header: Vec<Span<'static>> = Vec::new();
+    push_count(&mut header, SUMMARY_ADDED, added, Color::Green);
+    push_count(&mut header, SUMMARY_SKIPPED, skipped, Color::Yellow);
+    push_count(&mut header, SUMMARY_RESOLVED, resolved, Color::Cyan);
+    push_count(&mut header, SUMMARY_UNRESOLVED, unresolved, Color::LightRed);
+    push_count(&mut header, SUMMARY_EXCLUDED, excluded, Color::DarkGray);
+    if header.is_empty() {
+        lines.push(Line::from(Span::styled(
+            INPUT_NOTHING,
+            Style::new().yellow().italic(),
+        )));
+    } else {
+        lines.push(Line::from(header));
+        if paused && added > 0 {
+            lines.push(Line::from(Span::styled(
+                "  (started paused)",
+                Style::new().dim().italic(),
+            )));
+        }
+    }
+
+    // Per-category one-liners. Only emit when the category is non-empty.
+    if added > 0 {
+        let entries: Vec<String> = outcome
+            .added
+            .iter()
+            .map(|tgt| match tgt.name() {
+                Some(n) => format!("{} ({n})", tgt.addr),
+                None => tgt.addr.to_string(),
+            })
+            .collect();
+        lines.push(section_line(SUMMARY_ADDED, &entries, Color::Green));
+    }
+    if skipped > 0 {
+        // Reconstruct the duplicates list from collected.addrs minus added.
+        let added_set: std::collections::HashSet<IpAddr> =
+            outcome.added.iter().map(|t| t.addr).collect();
+        let dupes: Vec<String> = outcome
+            .collected
+            .addrs
+            .iter()
+            .filter(|ip| !added_set.contains(*ip))
+            .map(IpAddr::to_string)
+            .collect();
+        if !dupes.is_empty() {
+            lines.push(section_line(SUMMARY_SKIPPED, &dupes, Color::Yellow));
+        }
+    }
+    if resolved > 0 {
+        let entries: Vec<String> = outcome
+            .collected
+            .resolved
+            .iter()
+            .map(|(name, ips)| format!("{name} → {} addr", ips.len()))
+            .collect();
+        lines.push(section_line(SUMMARY_RESOLVED, &entries, Color::Cyan));
+    }
+    if unresolved > 0 {
+        let entries: Vec<String> = outcome.collected.unresolved.iter().cloned().collect();
+        lines.push(section_line(SUMMARY_UNRESOLVED, &entries, Color::LightRed));
+    }
+
+    // Trailing blank + close hint.
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        INPUT_HINT_CLOSE,
+        Style::new().dim(),
+    )));
+
+    Text::from(lines)
+}
+
+/// Push `"<label>: <count>"` to `out` when `count > 0`, comma-separating
+/// from any previous entry.
+fn push_count(out: &mut Vec<Span<'static>>, label: &'static str, count: usize, colour: Color) {
+    if count == 0 {
+        return;
+    }
+    if !out.is_empty() {
+        out.push(Span::raw(", "));
+    }
+    out.push(Span::styled(
+        format!("{label}: {count}"),
+        Style::new().fg(colour).bold(),
+    ));
+}
+
+/// Build one summary section line: `"  <label>: a, b, c, …and N more"`.
+fn section_line(label: &'static str, entries: &[String], colour: Color) -> Line<'static> {
+    let visible: usize = entries.len().min(SUMMARY_SECTION_CAP);
+    let mut body = entries[..visible].join(", ");
+    let remainder: usize = entries.len().saturating_sub(visible);
+    if remainder > 0 {
+        body.push_str(", ");
+        body.push_str(&templater!(SUMMARY_AND_MORE, remainder));
+    }
+    Line::from(vec![
+        Span::styled(format!("  {label}: "), Style::new().fg(colour)),
+        Span::raw(body),
+    ])
 }

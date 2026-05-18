@@ -228,15 +228,17 @@ impl AppState {
     Add new ping targets to the application state. Skips any whose IP is already
     being pinged. Sets hostnames from [Self::resolved] for the ones that survive.
 
-    Returns the [Arc]'d handles to the newly-added targets so the caller can spawn
-    ping loops for them (see [crate::pinger::spawn_ping_loops]).
+    Returns a tuple of:
+    - the [Arc]'d handles to the newly-added targets (caller spawns their ping
+      loops, see [crate::pinger::spawn_ping_loops]),
+    - the number of duplicate targets that were skipped.
 
     NOTE: locks `targets` for writing and `resolved` for reading.
     */
     pub fn add_targets<I: IntoIterator<Item = PingTarget>>(
         &self,
         targets: I,
-    ) -> Vec<Arc<PingTarget>> {
+    ) -> (Vec<Arc<PingTarget>>, usize) {
         let mut tgts = self.targets.write();
         let existing: HashSet<IpAddr> = tgts.iter().map(|t| t.addr).collect();
         let names = self.resolved.read();
@@ -268,7 +270,7 @@ impl AppState {
             self.logger
                 .notice(format!("skipped {skipped} duplicate target(s)"));
         }
-        added
+        (added, skipped)
     }
 
     /// Pause pinging for the target at the specified index.
