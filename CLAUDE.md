@@ -34,9 +34,9 @@ update the doc in the same change.
 - Run the hopcount helper binary: `./target/release/hopcount <ip>` (defined as a second `[[bin]]` in `Cargo.toml`).
 - Tests: there is no test suite yet — `cargo test` exercises only the unit tests inside `src/latencywin.rs`. The doc-comment in `latencywin.rs` shows the public API surface intended for future doctests.
 - Lint: `cargo clippy --all-targets`. Format: `cargo fmt`.
-- Raw ICMP sockets are required. Either run as root or grant `cap_net_raw` to the binary (`sudo setcap cap_net_raw=eip target/release/mping`); `nice_permission_error` in `utils.rs` rewrites the EPERM message to point at this.
+- Raw ICMP sockets are required. On Linux, either run as root or grant `cap_net_raw` to the binary (`sudo setcap cap_net_raw=eip target/release/mping`). On macOS, run as root. `nice_permission_error` in `utils.rs` rewrites the EPERM message to point at this.
 - Rust edition is 2024 — code can use 2024-edition features (let-chains, `gen` keyword, etc.).
-- Linux-only at present (`#[cfg(target_os = "linux")]` branches in `structs.rs` for things like `SYSTEM_TTL`). macOS and Windows support is on the wishlist but not started.
+- Linux and macOS are supported (`#[cfg(target_os = "...")]` branches in `structs.rs`/`utils.rs` cover platform-specific bits like `SYSTEM_TTL` and the permission-error advice). Windows support is on the wishlist but not started.
 - Two dependencies are pulled directly from GitHub (`miniutils`, `timesince` under `Ukko-Ylijumala`). A network-restricted build env will fail to fetch them.
 
 ## Module layout (quick reference)

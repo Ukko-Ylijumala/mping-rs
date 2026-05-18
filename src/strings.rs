@@ -164,11 +164,12 @@ pub static HELP_VERBOSE: &str = "Increase output verbosity";
 pub static HELP_DEBUG: &str = "Print debug information where applicable";
 
 // capabilities error messages
-pub static ERR_CAPS: &str = "This program requires raw sockets (CAP_NET_RAW on Linux) to send ICMP packets.";
-pub static ERR_CAPS_LINUX: &str = "Either run it with sudo, or grant the capability to the binary:
+pub static ERR_CAPS: &str = "This program requires raw sockets to send ICMP packets.";
+pub static ERR_CAPS_LINUX: &str = "Either run it with sudo, or grant the CAP_NET_RAW capability to the binary:
     sudo setcap cap_net_raw+ep";
 pub static ERR_CAPS_V4: &str = "\nFor IPv4 only you can also allow group IDs system-wide (less secure):
     sudo sysctl -w net.ipv4.ping_group_range=\"<start> <end>\"\n";
+pub static ERR_CAPS_MACOS: &str = "Run it with sudo - raw ICMP sockets on macOS require root.";
 
 // structs.rs
 pub static INFO_STATE_INIT: &str = "application state initialized";

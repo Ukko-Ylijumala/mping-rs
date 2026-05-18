@@ -12,19 +12,22 @@ use signal_hook::{
 };
 use std::{
     collections::HashSet,
-    env,
     io::{
         Error,
         ErrorKind::{Other, PermissionDenied},
     },
     net::IpAddr,
-    path::{MAIN_SEPARATOR, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,
     vec,
+};
+#[cfg(target_os = "linux")]
+use std::{
+    env,
+    path::{MAIN_SEPARATOR, PathBuf},
 };
 
 static PERMS_STR: [&str; 2] = ["permission", "permitted"];
@@ -65,20 +68,21 @@ pub(crate) fn nice_permission_error(err: &Error, ip_ver: usize) -> Box<dyn std::
     let msg: String = err.to_string().to_lowercase();
 
     if msg.contains(PERMS_STR[0]) || msg.contains(PERMS_STR[1]) {
-        let name: String = env::args()
-            .next()
-            .and_then(|p| p.split(MAIN_SEPARATOR).last().map(|s| s.to_string()))
-            .unwrap_or_else(|| APP_NAME.to_string());
-        let bin_path: PathBuf = env::current_exe().unwrap_or_else(|_| PathBuf::from(&name));
-
         eprintln!("{ERR_CAPS}");
         #[cfg(target_os = "linux")]
         {
+            let name: String = env::args()
+                .next()
+                .and_then(|p| p.split(MAIN_SEPARATOR).last().map(|s| s.to_string()))
+                .unwrap_or_else(|| APP_NAME.to_string());
+            let bin_path: PathBuf = env::current_exe().unwrap_or_else(|_| PathBuf::from(&name));
             eprintln!("{ERR_CAPS_LINUX} {}", bin_path.display());
             if ip_ver == 4 {
                 eprintln!("{ERR_CAPS_V4}");
             }
         }
+        #[cfg(target_os = "macos")]
+        eprintln!("{ERR_CAPS_MACOS}");
         Box::new(Error::new(
             PermissionDenied,
             format!("{ERR_SOCKETS}{ip_ver}"),
