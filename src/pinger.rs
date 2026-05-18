@@ -184,20 +184,34 @@ pub(crate) fn spawn_ping_loops(app: &Arc<AppState>, new_targets: &[Arc<PingTarge
 }
 
 /**
+Outcome of a single "add target(s)" submission: the raw [CollectedTargets] from
+the parse+resolve pipeline plus the actual handles to newly-added targets and
+the count of duplicates that were skipped.
+
+Used by the add-target dialog to populate its post-submit feedback area.
+*/
+#[derive(Default)]
+pub(crate) struct AddOutcome {
+    pub collected: CollectedTargets,
+    pub added: Vec<Arc<PingTarget>>,
+    pub skipped: usize,
+}
+
+/**
 Runtime entry point used by the "add target" dialog: parse and resolve the
 user-supplied `targets`/`exclude` strings, fold any new DNS resolutions into
 [AppState::resolved], then build and spawn [PingTarget]s using the current
 [crate::structs::TargetDefaults].
 
-Returns the raw [CollectedTargets] so the caller can report counts and surface
-any unresolved strings back into the dialog.
+Returns an [AddOutcome] so the caller can report counts and surface any
+unresolved strings back into the dialog.
 */
 pub(crate) async fn collect_and_spawn(
     app: &Arc<AppState>,
     targets: &[String],
     exclude: Option<&[String]>,
     paused: bool,
-) -> CollectedTargets {
+) -> AddOutcome {
     let collected = collect_targets(targets, exclude, &app.resolver, app.logger.as_ref()).await;
 
     /*
@@ -218,8 +232,8 @@ pub(crate) async fn collect_and_spawn(
         .map(|addr| PingTarget::new(*addr, app.defaults.histsize, app.defaults.detailed, paused))
         .collect();
 
-    let added = app.add_targets(new_targets);
+    let (added, skipped) = app.add_targets(new_targets);
     spawn_ping_loops(app, &added);
 
-    collected
+    AddOutcome { collected, added, skipped }
 }

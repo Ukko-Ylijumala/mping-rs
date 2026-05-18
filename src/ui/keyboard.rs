@@ -5,8 +5,9 @@
 use crate::{
     pinger,
     structs::{AppState, Command, CmdResult},
-    ui::{DialogAction, PopupContents, TuiState},
+    ui::*,
 };
+use tui_input::Input;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::{io::Result, sync::Arc, time::Duration};
 
@@ -254,24 +255,46 @@ fn handle_input_dialog(app: &Arc<AppState>, tui: &Arc<TuiState>, e: KeyEvent) ->
         DialogAction::Submit { addrs, excls, paused } => {
             let addr_strs = split_dialog_input(&addrs);
             if addr_strs.is_empty() {
-                tui.input_state.write().error =
-                    Some("Enter at least one address (IP, range, CIDR or DNS name).".into());
+                tui.input_state.write().feedback = DialogFeedback::Error(
+                    "Enter at least one address (IP, range, CIDR or DNS name).".into(),
+                );
                 return Ok(true);
             }
             let excl_strs = split_dialog_input(&excls);
+            /*
+            The dialog stays open across submissions. Mark it as Working,
+            clear the input fields so the user can start typing the next
+            batch immediately, and refocus the addresses field. The Working
+            state blocks re-submit until the spawned task writes back its
+            summary. Paused checkbox state is intentionally preserved.
+            */
+            {
+                let mut state = tui.input_state.write();
+                state.feedback = DialogFeedback::Working;
+                state.addrs = Input::default();
+                state.excls = Input::default();
+                state.active = ActiveField::Addresses;
+            }
+
             let app_clone = app.clone();
-            // Parsing + DNS resolution happens off-thread on the Tokio runtime;
-            // we close the dialog right away. Per-target progress goes to the log.
+            let tui_clone = tui.clone();
+            /*
+            Parsing + DNS resolution happens off-thread on the Tokio runtime.
+            Per-target progress goes to the log; the summary is written back
+            into the dialog's feedback area when the work completes.
+            */
             app.spawn(async move {
-                pinger::collect_and_spawn(
+                let outcome = pinger::collect_and_spawn(
                     &app_clone,
                     &addr_strs,
                     if excl_strs.is_empty() { None } else { Some(&excl_strs) },
                     paused,
                 )
                 .await;
+                let summary = format_add_summary(&outcome, paused);
+                tui_clone.input_state.write().feedback = DialogFeedback::Summary(summary);
+                app_clone.key_event.notify_one();
             });
-            tui.add_tgt_dialog_close();
             Ok(true)
         }
     }

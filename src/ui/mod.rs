@@ -8,7 +8,7 @@ pub(crate) mod input;
 pub(crate) mod keyboard;
 pub(crate) mod tui;
 
-pub(crate) use input::{AddTargetDialogState, AddTgtDialog, DialogAction};
+pub(crate) use input::*;
 pub(crate) use tui::{PopupContents, TuiState, eprintln_safe};
 
 pub use tui::TerminalGuard;

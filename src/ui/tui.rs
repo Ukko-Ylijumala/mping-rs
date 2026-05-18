@@ -51,7 +51,7 @@ static CON_MIN_1: Constraint = Constraint::Min(1);
 static CON_75_P: Constraint = Constraint::Ratio(3, 4);
 static CON_PROC_W: Constraint = Constraint::Min(43);
 static CON_INPUT_W: Constraint = Constraint::Ratio(1, 2);
-static CON_INPUT_H: Constraint = Constraint::Length(15);
+static CON_INPUT_H: Constraint = Constraint::Length(20);
 
 static CON_NFO_L: Constraint = Constraint::Length(5);
 static CON_NFO_T: Constraint = Constraint::Length(7);
