@@ -23,6 +23,25 @@ See the manifest file for dependencies: [Cargo.toml](Cargo.toml)
 
 Currently only Linux is supported, but MacOS and Windows support is planned at some point.
 
+### Design docs
+
+The architecture is documented in [`doc/design/`](doc/design/) — one file per
+significant feature. Start with [`doc/design/README.md`](doc/design/README.md)
+for the index. Highlights:
+
+- [`concurrency.md`](doc/design/concurrency.md) — the three execution contexts (Tokio runtime, keyboard thread, signal thread), the per-target ping loop, and the runtime-toggleable low-jitter "perf" mode (F10).
+- [`shared-state.md`](doc/design/shared-state.md) — `AppState`, locking conventions, `CancellationToken` per target.
+- [`per-target-data.md`](doc/design/per-target-data.md) — `PingTarget`, status tiers, `PacketHistory`, flappy/lossy/laggy heuristics.
+- [`latency-window.md`](doc/design/latency-window.md) — the O(1)-amortized rolling RTT window with monotonic min/max deques.
+- [`tui-rendering.md`](doc/design/tui-rendering.md) — `AppLayout`, viewport-only row formatting, non-shrinking columns.
+- [`keyboard-and-commands.md`](doc/design/keyboard-and-commands.md) — `Command` dispatch and how to wire a new key binding.
+- [`signal-and-terminal.md`](doc/design/signal-and-terminal.md) — `TerminalGuard`, signal handling, panic hook.
+- [`target-parsing.md`](doc/design/target-parsing.md) — IP / CIDR / range / DNS pipeline.
+- [`add-target-dialog.md`](doc/design/add-target-dialog.md) — runtime add-target modal.
+- [`logging.md`](doc/design/logging.md) — `MessageBuffer` and the F12 log popup.
+- [`hopcount.md`](doc/design/hopcount.md) — ICMP TTL inference (library + standalone binary).
+- [`distance-estimation.md`](doc/design/distance-estimation.md) — RTT-to-distance heuristic.
+
 ### Install Rust toolchain
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
