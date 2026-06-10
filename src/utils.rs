@@ -95,11 +95,13 @@ pub(crate) fn nice_permission_error(err: &Error, ip_ver: usize) -> Box<dyn std::
     }
 }
 
-/// Parse a floating point number into a Duration.
+/// Parse a floating point number into a Duration. Result is at least 1 ms —
+/// a sub-millisecond input must not round down to [Duration::ZERO], which
+/// breaks socket read timeouts and tokio interval tickers.
 pub fn parse_float_into_duration(arg: &str) -> Result<Duration, String> {
     match arg.parse::<f64>() {
         Ok(secs) if secs > 0.0 => {
-            let millis = (secs * 1e3).round() as u64;
+            let millis = ((secs * 1e3).round() as u64).max(1);
             Ok(Duration::from_millis(millis))
         }
         _ => Err(format!("{ERR_TIMEVAL}: {arg}")),

@@ -215,6 +215,10 @@ pub struct MessageBuffer {
     /// Total number of messages ever added to the buffer.
     total: AtomicU32,
     to_stderr: LogLevel,
+    /// Styled [Line]s for `to_list`, cached with the `total` count they were
+    /// built at. Rendering the log popup calls `to_list` on every frame;
+    /// without this every frame would re-format and re-style the full buffer.
+    line_cache: RwLock<(u32, Vec<Line<'static>>)>,
 }
 
 impl MessageBuffer {
@@ -224,6 +228,7 @@ impl MessageBuffer {
             cap: capacity,
             total: AtomicU32::new(0),
             to_stderr,
+            line_cache: RwLock::new((0, Vec::new())),
         }
     }
 
@@ -302,8 +307,25 @@ impl MessageBuffer {
 
     /// Convert all messages (with timestamps) to a [List] for displaying with Ratatui.
     /// Each message is styled according to its log level.
+    ///
+    /// The styled lines are cached and only rebuilt when `total` has changed
+    /// since the last call; an unchanged buffer costs just the [Line] clones.
+    /// (A push between the `total` load and the buffer read can serve one
+    /// frame of slightly stale lines — the next frame rebuilds. Fine for
+    /// display purposes.)
     pub fn to_list(&self) -> List<'_> {
-        List::new(self.with(|msgs| msgs.iter().map(|m| m.as_line()).collect::<Vec<Line>>()))
+        let total: u32 = self.total.load(Ordering::Relaxed);
+        {
+            let cache = self.line_cache.read();
+            if cache.0 == total && !cache.1.is_empty() {
+                return List::new(cache.1.clone());
+            }
+        }
+
+        let lines: Vec<Line<'static>> =
+            self.with(|msgs| msgs.iter().map(|m| m.as_line()).collect());
+        *self.line_cache.write() = (total, lines.clone());
+        List::new(lines)
     }
 }
 
@@ -314,6 +336,8 @@ impl Clone for MessageBuffer {
             cap: self.cap,
             total: AtomicU32::new(self.total.load(Ordering::Relaxed)),
             to_stderr: self.to_stderr.clone(),
+            // start cold; the clone rebuilds its own cache on first to_list
+            line_cache: RwLock::new((0, Vec::new())),
         }
     }
 }
