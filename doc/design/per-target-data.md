@@ -25,7 +25,9 @@ PingTarget (immutable shape)
         ├── recent: PacketHistory  ── short detailed history (default 100 packets)
         ├── raw_status: PingStatus ── only Ok / Timeout / Error(_) live here
         ├── last_seq: u16          ── most recent sent sequence number
-        └── last_sent: Option<Instant>
+        ├── last_sent: Option<Instant>
+        └── tracker: EventTracker  ── outage accounting + event timeline
+                                      (see outage-tracking.md)
 ```
 
 Splitting `paused` and `cancel` out of the inner `data` lock is intentional —

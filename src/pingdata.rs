@@ -7,11 +7,15 @@ use crate::{
     latencywin::LatencyWindow,
     strings::*,
     structs::QueryResponse,
-    utils::{HistogramBucket, make_histogram_buckets, reverse_name},
+    utils::{HistogramBucket, human_duration, make_histogram_buckets, reverse_name},
 };
 use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use itertools::Itertools;
 use parking_lot::RwLock;
+use ratatui::{
+    style::Stylize,
+    text::{Line, Span},
+};
 use std::{
     collections::VecDeque,
     fmt,
@@ -24,6 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 use surge_ping::{IcmpPacket, SurgeError};
+use timesince::TimeSinceEpoch;
 use tokio_util::sync::CancellationToken;
 
 const MICROS_PER_MILLI: f64 = 1e3;
@@ -38,6 +43,8 @@ const BAND_SIZE_KM: f64 = 100.0; // Quantize to nearest 100km
 
 /// Global creation counter behind [PingTarget::added_order].
 static ADD_ORDER: AtomicU64 = AtomicU64::new(0);
+const OUTAGE_THRESH: u32 = 3; // consecutive misses before an outage is declared
+const EVENT_CAP: usize = 100; // per-target event ring capacity
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) enum PingStatus {
@@ -103,6 +110,8 @@ pub(crate) struct PingTargetInner {
     as an identical request.
     */
     pub next_seq: u16,
+    /// Outage accounting and the per-target event timeline.
+    pub tracker: EventTracker,
 }
 
 impl PingTargetInner {
@@ -222,6 +231,7 @@ impl PingTarget {
         let mut data = PingTargetInner {
             rtts: LatencyWindow::new(histsize),
             recent: PacketHistory::new(detailed),
+            tracker: EventTracker::new(paused),
             ..Default::default()
         };
         if paused {
@@ -257,10 +267,14 @@ impl PingTarget {
                 inner.recv += 1;
                 inner.rtts.push(dur.as_micros() as u32);
                 rec.set_rtt(dur);
+                inner.tracker.record_success(rec.sent);
                 PingStatus::Ok
             }
             Err(e) => match e {
-                SurgeError::Timeout { .. } => PingStatus::Timeout,
+                SurgeError::Timeout { .. } => {
+                    inner.tracker.record_miss(rec.sent);
+                    PingStatus::Timeout
+                }
                 _ => {
                     // Don't count errors, as the packet was never sent. Saturating,
                     // because a stats reset may race with an in-flight ping.
@@ -384,6 +398,7 @@ impl PingTarget {
     NOTE: locks the inner `data` for writing.
     */
     pub fn reset_stats(&self) {
+        let paused: bool = self.is_paused();
         let mut data = self.data.write();
         data.sent = 0;
         data.recv = 0;
@@ -393,6 +408,7 @@ impl PingTarget {
         data.last_seq = 0;
         data.last_sent = None;
         data.next_seq = 0;
+        data.tracker.clear(paused);
     }
 
     /// Whether pinging currently paused for this target is.
@@ -409,7 +425,9 @@ impl PingTarget {
     pub fn pause(&self) {
         if !self.is_stopped() && !self.is_paused() {
             self.paused.store(true, Ordering::Relaxed);
-            self.data.write().raw_status = PingStatus::Paused;
+            let mut data = self.data.write();
+            data.raw_status = PingStatus::Paused;
+            data.tracker.pause();
         }
     }
 
@@ -421,7 +439,9 @@ impl PingTarget {
     pub fn resume(&self) {
         if !self.is_stopped() && self.is_paused() {
             self.paused.store(false, Ordering::Relaxed);
-            self.data.write().raw_status = PingStatus::Resuming;
+            let mut data = self.data.write();
+            data.raw_status = PingStatus::Resuming;
+            data.tracker.resume();
         }
     }
 
@@ -433,10 +453,13 @@ impl PingTarget {
     pub fn toggle_pause(&self) {
         if !self.is_stopped() {
             let was_paused: bool = self.paused.fetch_xor(true, Ordering::Relaxed);
+            let mut data = self.data.write();
             if was_paused {
-                self.data.write().raw_status = PingStatus::Resuming;
+                data.raw_status = PingStatus::Resuming;
+                data.tracker.resume();
             } else {
-                self.data.write().raw_status = PingStatus::Paused;
+                data.raw_status = PingStatus::Paused;
+                data.tracker.pause();
             }
         }
     }
@@ -459,8 +482,13 @@ impl PingTarget {
     NOTE: locks the inner `data` for writing.
     */
     pub fn stop(&self) {
+        let was_stopped: bool = self.is_stopped();
         self.cancel.cancel();
-        self.data.write().raw_status = PingStatus::Stopped;
+        let mut data = self.data.write();
+        data.raw_status = PingStatus::Stopped;
+        if !was_stopped {
+            data.tracker.stop();
+        }
     }
 
     /**
@@ -522,6 +550,24 @@ impl PingTarget {
             return PingStatus::Paused;
         }
         self.data.read().effective_status()
+    }
+
+    /**
+    Get a display snapshot of this target's outage accounting.
+
+    NOTE: locks the inner `data` for reading.
+    */
+    pub fn outage_summary(&self) -> OutageSummary {
+        self.data.read().tracker.summary()
+    }
+
+    /**
+    Get a clone of this target's recorded event timeline, oldest first.
+
+    NOTE: locks the inner `data` for reading.
+    */
+    pub fn recent_events(&self) -> Vec<TargetEvent> {
+        self.data.read().tracker.events().cloned().collect()
     }
 
     /**
@@ -928,6 +974,288 @@ impl Index<usize> for PacketHistory {
 
 /* -------------------------------------------------------------------------- */
 
+/// A single entry in a target's event timeline.
+#[derive(Debug, Clone)]
+pub(crate) enum EventKind {
+    /// Outage confirmed after [OUTAGE_THRESH] consecutive misses.
+    /// The event timestamp is backdated to the first missed probe.
+    Down,
+    /// Replies resumed; the outage lasted this long.
+    Up(Duration),
+    Paused,
+    Resumed,
+    Stopped,
+    StatsReset,
+}
+
+/// A timestamped target event for the per-target timeline.
+#[derive(Debug, Clone)]
+pub(crate) struct TargetEvent {
+    pub when: TimeSinceEpoch,
+    pub kind: EventKind,
+}
+
+impl TargetEvent {
+    /// Render the event as a styled [Line] for the event popup.
+    pub fn as_line(&self) -> Line<'static> {
+        let ts = Span::raw(format!("{} ", self.when));
+        let body: Span<'static> = match &self.kind {
+            EventKind::Down => Span::raw(EVT_DOWN).light_red().bold(),
+            EventKind::Up(dur) => {
+                Span::raw(format!("{EVT_UP} {}", human_duration(*dur))).light_green()
+            }
+            EventKind::Paused => Span::raw(EVT_PAUSED).dim(),
+            EventKind::Resumed => Span::raw(EVT_RESUMED).cyan(),
+            EventKind::Stopped => Span::raw(EVT_STOPPED).dim().italic(),
+            EventKind::StatsReset => Span::raw(EVT_RESET).dim(),
+        };
+        Line::from_iter([ts, body])
+    }
+}
+
+/* ---------------------------------- */
+
+/**
+Per-target outage accounting plus a bounded event timeline.
+
+Lives inside [PingTargetInner], so all mutations happen under the
+target's `data` write lock which [PingTarget::update_stats] (and the
+pause/resume/stop paths) already hold.
+
+### Outage semantics
+- An *outage* starts after [OUTAGE_THRESH] consecutive missed probes and
+  is backdated to the **send time of the first missed probe**. Shorter
+  blips never become outages - per-packet loss already covers those.
+- Any successful reply ends the outage; its duration is measured between
+  probe *send* times (first missed -> first answered), so the configured
+  timeout doesn't inflate it.
+- Pausing or stopping a target closes an ongoing outage at that moment;
+  paused/stopped time is excluded from the monitored time used for the
+  availability estimate.
+
+NOTE: in perf mode, ping results can complete out of order, so the
+consecutive-miss counting (and thus outage edges) is approximate to
+within the inflight window.
+*/
+#[derive(Debug)]
+pub(crate) struct EventTracker {
+    events: VecDeque<TargetEvent>,
+    /// Send time of the first missed probe in the current loss run.
+    miss_started: Option<Instant>,
+    consec_misses: u32,
+    in_outage: bool,
+    /// Number of confirmed outages (including an ongoing one).
+    outages: u32,
+    /// Longest completed outage.
+    longest: Duration,
+    /// Total downtime over completed outages.
+    total_down: Duration,
+    /// When monitoring started (creation or last stats reset).
+    started: Instant,
+    /// Accumulated paused/stopped time (excluded from monitored time).
+    paused_total: Duration,
+    /// Set while paused or stopped.
+    pause_since: Option<Instant>,
+}
+
+impl EventTracker {
+    pub fn new(paused: bool) -> Self {
+        let now: Instant = Instant::now();
+        Self {
+            events: VecDeque::with_capacity(16),
+            miss_started: None,
+            consec_misses: 0,
+            in_outage: false,
+            outages: 0,
+            longest: Duration::ZERO,
+            total_down: Duration::ZERO,
+            started: now,
+            paused_total: Duration::ZERO,
+            pause_since: paused.then_some(now),
+        }
+    }
+
+    /// Append an event with the current wall-clock timestamp.
+    fn push(&mut self, kind: EventKind) {
+        self.push_at(TimeSinceEpoch::new(), kind);
+    }
+
+    /// Append an event with an explicit (possibly backdated) timestamp.
+    fn push_at(&mut self, when: TimeSinceEpoch, kind: EventKind) {
+        if self.events.len() >= EVENT_CAP {
+            self.events.pop_front();
+        }
+        self.events.push_back(TargetEvent { when, kind });
+    }
+
+    /// A reply was received for the probe sent at `sent`.
+    pub fn record_success(&mut self, sent: Instant) {
+        if self.in_outage {
+            self.close_outage(sent);
+        }
+        self.miss_started = None;
+        self.consec_misses = 0;
+    }
+
+    /// The probe sent at `sent` timed out.
+    pub fn record_miss(&mut self, sent: Instant) {
+        if self.miss_started.is_none() {
+            self.miss_started = Some(sent);
+        }
+        self.consec_misses += 1;
+        if !self.in_outage && self.consec_misses >= OUTAGE_THRESH {
+            self.in_outage = true;
+            self.outages += 1;
+            // backdate the event to the first missed probe
+            let ago: Duration = self.miss_started.map_or(Duration::ZERO, |t| t.elapsed());
+            self.push_at(TimeSinceEpoch::new() - ago, EventKind::Down);
+        }
+    }
+
+    /// Close an ongoing outage as of `end` and account its duration.
+    fn close_outage(&mut self, end: Instant) {
+        let dur: Duration = self
+            .miss_started
+            .map_or(Duration::ZERO, |t| end.saturating_duration_since(t));
+        self.longest = self.longest.max(dur);
+        self.total_down += dur;
+        self.in_outage = false;
+        self.miss_started = None;
+        self.consec_misses = 0;
+        self.push(EventKind::Up(dur));
+    }
+
+    /// Target was paused: close any ongoing outage, freeze monitored time.
+    pub fn pause(&mut self) {
+        if self.in_outage {
+            self.close_outage(Instant::now());
+        }
+        self.miss_started = None;
+        self.consec_misses = 0;
+        if self.pause_since.is_none() {
+            self.pause_since = Some(Instant::now());
+        }
+        self.push(EventKind::Paused);
+    }
+
+    /// Target was resumed: paused time goes to the excluded-time tally.
+    pub fn resume(&mut self) {
+        if let Some(p) = self.pause_since.take() {
+            self.paused_total += p.elapsed();
+        }
+        self.push(EventKind::Resumed);
+    }
+
+    /// Target was permanently stopped. Accounted like an indefinite pause.
+    pub fn stop(&mut self) {
+        if self.in_outage {
+            self.close_outage(Instant::now());
+        }
+        if self.pause_since.is_none() {
+            self.pause_since = Some(Instant::now());
+        }
+        self.push(EventKind::Stopped);
+    }
+
+    /// Reset all accounting and the timeline (leaves a reset marker event).
+    pub fn clear(&mut self, paused: bool) {
+        let now: Instant = Instant::now();
+        self.events.clear();
+        self.miss_started = None;
+        self.consec_misses = 0;
+        self.in_outage = false;
+        self.outages = 0;
+        self.longest = Duration::ZERO;
+        self.total_down = Duration::ZERO;
+        self.started = now;
+        self.paused_total = Duration::ZERO;
+        self.pause_since = paused.then_some(now);
+        self.push(EventKind::StatsReset);
+    }
+
+    /// Iterate over the recorded events, oldest first.
+    pub fn events(&self) -> impl Iterator<Item = &TargetEvent> {
+        self.events.iter()
+    }
+
+    /// Produce an [OutageSummary] snapshot for display.
+    pub fn summary(&self) -> OutageSummary {
+        let now: Instant = Instant::now();
+        let current: Option<Duration> = match (self.in_outage, self.miss_started) {
+            (true, Some(t)) => Some(now.saturating_duration_since(t)),
+            _ => None,
+        };
+        let paused: Duration = self.paused_total
+            + self
+                .pause_since
+                .map_or(Duration::ZERO, |p| now.saturating_duration_since(p));
+        let monitored: Duration = now
+            .saturating_duration_since(self.started)
+            .saturating_sub(paused);
+        let down: Duration = self.total_down + current.unwrap_or(Duration::ZERO);
+
+        // require a minimal observation period before estimating availability
+        let availability: Option<f64> = (monitored > Duration::from_millis(500))
+            .then(|| (1.0 - down.as_secs_f64() / monitored.as_secs_f64()).clamp(0.0, 1.0));
+
+        OutageSummary {
+            outages: self.outages,
+            longest: self.longest,
+            total_down: down,
+            current,
+            availability,
+        }
+    }
+}
+
+impl Default for EventTracker {
+    fn default() -> Self {
+        Self::new(false)
+    }
+}
+
+/* ---------------------------------- */
+
+/// Display-oriented snapshot of a target's outage accounting.
+#[derive(Debug)]
+pub(crate) struct OutageSummary {
+    pub outages: u32,
+    /// Longest completed outage.
+    pub longest: Duration,
+    /// Total downtime, including an ongoing outage.
+    pub total_down: Duration,
+    /// Duration of the ongoing outage, if any.
+    pub current: Option<Duration>,
+    /// Time-based availability estimate `[0.0 .. 1.0]` over the monitored
+    /// (non-paused) period. `None` until enough time has been observed.
+    pub availability: Option<f64>,
+}
+
+impl OutageSummary {
+    /// Outage counts as a compact display string.
+    pub fn counts_str(&self) -> String {
+        match (self.outages, self.current) {
+            (0, _) => "0".to_string(),
+            (n, Some(cur)) => format!("{n} - DOWN for {}!", human_duration(cur)),
+            (n, None) => format!(
+                "{n} (max {}, sum {})",
+                human_duration(self.longest),
+                human_duration(self.total_down)
+            ),
+        }
+    }
+
+    /// Availability percentage as a display string.
+    pub fn availability_str(&self) -> String {
+        match self.availability {
+            Some(a) => format!("{:.3}%", a * 1e2),
+            None => MISSING.to_string(),
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
 /// Snapshot of recent detailed packet history statistics.
 #[derive(Debug)]
 pub(crate) struct HistorySnapshot {
@@ -1151,5 +1479,76 @@ impl StatsSnapshot {
             Some(v) => format!("{:.2}", v / MICROS_PER_MILLI),
             None => MISSING.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tracker_tests {
+    use super::*;
+
+    #[test]
+    fn outage_lifecycle() {
+        let mut t = EventTracker::new(false);
+        let start: Instant = Instant::now();
+
+        // two misses: below threshold, no outage yet
+        t.record_miss(start);
+        t.record_miss(start + Duration::from_secs(1));
+        assert_eq!(t.summary().outages, 0);
+        assert!(t.summary().current.is_none());
+
+        // third miss confirms the outage, backdated to the first miss
+        t.record_miss(start + Duration::from_secs(2));
+        let s = t.summary();
+        assert_eq!(s.outages, 1);
+        assert!(s.current.is_some(), "outage should be ongoing");
+        assert!(matches!(t.events().last().unwrap().kind, EventKind::Down));
+
+        // a reply ends it; duration = first missed send -> answered send
+        t.record_success(start + Duration::from_secs(5));
+        let s = t.summary();
+        assert_eq!(s.outages, 1);
+        assert!(s.current.is_none());
+        assert_eq!(s.longest, Duration::from_secs(5));
+        assert!(matches!(
+            t.events().last().unwrap().kind,
+            EventKind::Up(d) if d == Duration::from_secs(5)
+        ));
+
+        // a single new miss is not an outage
+        t.record_miss(start + Duration::from_secs(6));
+        assert_eq!(t.summary().outages, 1);
+    }
+
+    #[test]
+    fn pause_closes_outage_and_reset_clears() {
+        let mut t = EventTracker::new(false);
+        let start: Instant = Instant::now();
+        for i in 0..3 {
+            t.record_miss(start + Duration::from_secs(i));
+        }
+        assert_eq!(t.summary().outages, 1);
+
+        t.pause();
+        let s = t.summary();
+        assert!(s.current.is_none(), "pause should close the outage");
+        assert_eq!(s.outages, 1);
+        assert!(matches!(t.events().last().unwrap().kind, EventKind::Paused));
+
+        t.resume();
+        assert!(matches!(
+            t.events().last().unwrap().kind,
+            EventKind::Resumed
+        ));
+
+        t.clear(false);
+        let s = t.summary();
+        assert_eq!((s.outages, s.total_down), (0, Duration::ZERO));
+        // the reset marker is the only remaining event
+        assert_eq!(t.events().count(), 1);
+        assert!(matches!(
+            t.events().last().unwrap().kind,
+            EventKind::StatsReset
+        ));
     }
 }

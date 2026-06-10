@@ -92,6 +92,7 @@ It is synchronous — anything async-y inside individual handlers happens via
 | `S` | Stop selected target |
 | `R` | Reset selected target's stats |
 | Enter | Update info (hops + PTR) for selected target |
+| `E` | Event timeline popup for selected target (pure UI, no `Command` — see [outage-tracking](outage-tracking.md)) |
 | Delete | Remove selected target |
 | Ctrl-Delete | Remove all unreachable targets |
 | `a` | Open add-target dialog |

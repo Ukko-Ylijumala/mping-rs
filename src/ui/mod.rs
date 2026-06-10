@@ -9,7 +9,7 @@ pub(crate) mod keyboard;
 pub(crate) mod tui;
 
 pub(crate) use input::*;
-pub(crate) use tui::{PopupContents, TuiState, eprintln_safe};
+pub(crate) use tui::{PopupContents, TuiState, eprintln_safe, events_popup};
 
 pub use tui::TerminalGuard;
 

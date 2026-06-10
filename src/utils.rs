@@ -344,6 +344,25 @@ where
 
 /* -------------------------------------------------------------------------- */
 
+/// Format a [Duration] compactly: "350ms", "12.3s", "4m05s", "2h07m", "3d11h".
+pub fn human_duration(d: Duration) -> String {
+    let secs_f: f64 = d.as_secs_f64();
+    if secs_f < 1.0 {
+        return format!("{:.0}ms", secs_f * 1e3);
+    } else if secs_f < 100.0 {
+        return format!("{secs_f:.1}s");
+    }
+    let secs: u64 = d.as_secs();
+    let (days, hours, mins) = (secs / 86_400, (secs % 86_400) / 3_600, (secs % 3_600) / 60);
+    if days > 0 {
+        format!("{days}d{hours:02}h")
+    } else if hours > 0 {
+        format!("{hours}h{mins:02}m")
+    } else {
+        format!("{mins}m{:02}s", secs % 60)
+    }
+}
+
 /// Format a byte rate as a human-readable string (B/s, kB/s or MB/s).
 /// Uses decimal (SI) units, as is the convention for network data rates.
 pub fn human_rate(bytes_per_sec: f64) -> String {

@@ -13,6 +13,7 @@ code.
 | [concurrency.md](concurrency.md) | Three execution contexts (Tokio runtime, keyboard thread, signal thread), the per-target `ping_loop`, the `FuturesUnordered`-based perf/jitter mode and its runtime F10 toggle |
 | [shared-state.md](shared-state.md) | `AppState`, two-phase construction, `parking_lot::RwLock` discipline, atomic ordering conventions, the `CancellationToken` per target |
 | [per-target-data.md](per-target-data.md) | `PingTarget` / `PingTargetInner`, three-tier status derivation, `PacketHistory`, the flappy/lossy/laggy/unreachable heuristics |
+| [outage-tracking.md](outage-tracking.md) | `EventTracker`: per-target outage accounting (declare/backdate/close semantics), time-based availability, the event timeline and its `E`-key popup |
 | [latency-window.md](latency-window.md) | `LatencyWindow`: O(1) amortized rolling stats with monotonic min/max deques and computational-formula variance |
 | [tui-rendering.md](tui-rendering.md) | The render loop, `AppLayout` and `maybe_update`, viewport-only formatting, non-shrinking columns, `LazyLock` widget statics |
 | [keyboard-and-commands.md](keyboard-and-commands.md) | Keyboard thread vs Tokio split, the `Command` enum, `AppState::execute`, the `Notify`-driven immediate redraw, and how to add a new command |

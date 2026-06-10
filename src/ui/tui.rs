@@ -7,6 +7,7 @@ use crate::{
     args::MpConfig,
     logging::MessageBuffer,
     macros::{delegate_read, delegate_write},
+    pingdata::TargetEvent,
     strings::*,
 };
 use crossterm::{
@@ -14,18 +15,18 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use miniutils::simple_tabulate;
+use miniutils::{inject, simple_tabulate, templater};
 use parking_lot::RwLock;
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::*,
 };
 use std::{
-    fmt,
+    fmt::{self, Display},
     io::{Result, Stdout, stdout},
     ops::Index,
     panic,
@@ -54,7 +55,7 @@ static CON_INPUT_W: Constraint = Constraint::Ratio(1, 2);
 static CON_INPUT_H: Constraint = Constraint::Length(20);
 
 static CON_NFO_L: Constraint = Constraint::Length(7);
-static CON_NFO_T: Constraint = Constraint::Length(7);
+static CON_NFO_T: Constraint = Constraint::Length(9);
 static CON_NFO_G: Constraint = Constraint::Length(20);
 static CON_NFO_H: Constraint = Constraint::Length(11);
 
@@ -641,6 +642,8 @@ pub(crate) enum PopupContents {
     Multiline(Vec<String>),
     Paragraph(String),
     Line(String),
+    /// Pre-styled lines (e.g. the per-target event timeline).
+    Lines(Vec<Line<'static>>),
     Buffer(Arc<MessageBuffer>),
     #[default]
     None,
@@ -651,6 +654,7 @@ impl PopupContents {
         match self {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
             PopupContents::Multiline(s) => Paragraph::new(s.join("\n")),
+            PopupContents::Lines(lines) => Paragraph::new(Text::from(lines.clone())),
             PopupContents::Buffer(buf) => buf.to_paragraph(),
             PopupContents::None => Paragraph::default(),
         }
@@ -661,14 +665,40 @@ impl PopupContents {
             PopupContents::Paragraph(s) => List::new(s.split("\n")),
             PopupContents::Line(s) => List::new(vec![s.clone()]),
             PopupContents::Multiline(s) => List::new(s.clone()),
+            PopupContents::Lines(lines) => List::new(lines.clone()),
             PopupContents::Buffer(buf) => buf.to_list(),
             PopupContents::None => List::default(),
+        }
+    }
+
+    /// Number of content lines, where applicable (for scroll decisions).
+    pub fn len(&self) -> usize {
+        match self {
+            PopupContents::Paragraph(s) => s.lines().count(),
+            PopupContents::Line(_) => 1,
+            PopupContents::Multiline(s) => s.len(),
+            PopupContents::Lines(lines) => lines.len(),
+            PopupContents::Buffer(buf) => buf.len(),
+            PopupContents::None => 0,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         matches!(self, PopupContents::None)
     }
+}
+
+/// Build the per-target event timeline popup contents.
+pub(crate) fn events_popup(name: String, events: &[TargetEvent]) -> PopupContents {
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(events.len() + 2);
+    lines.push(Line::from(templater!(EVT_TITLE, name)).bold());
+    lines.push(Line::default());
+    if events.is_empty() {
+        lines.push(Line::from(EVT_NONE).dim());
+    } else {
+        lines.extend(events.iter().map(|e| e.as_line()));
+    }
+    PopupContents::Lines(lines)
 }
 
 /* -------------------------------------------------------------------------- */

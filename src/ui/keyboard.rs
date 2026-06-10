@@ -50,10 +50,12 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 // terminal in raw mode -> ctrl-c has to be processed manually
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
 
-                // Sort by the selected column: Shift+Up ascending, Shift+Down
-                // descending; the same direction again resets to original order.
-                // NOTE: must come before the plain Up/Down arms, which match
-                // any modifier.
+                /*
+                Sort by the selected column: Shift+Up ascending, Shift+Down
+                descending; the same direction again resets to original order.
+                NOTE: must come before the plain Up/Down arms, which match
+                any modifier.
+                */
                 (KeyCode::Up, KeyModifiers::SHIFT) => handle_sort(app, tui, false),
                 (KeyCode::Down, KeyModifiers::SHIFT) => handle_sort(app, tui, true),
 
@@ -152,6 +154,24 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                     let selected = tui.layout.read().tablestate.selected();
                     if let Some(idx) = selected {
                         app.execute(Command::UpdateTgtInfo(idx));
+                    }
+                }
+
+                // Show the selected target's event timeline (outages etc.) in a popup.
+                // Pure UI: reads target data and fills the popup, no Command needed.
+                (KeyCode::Char('E'), _) => {
+                    let selected = tui.layout.read().tablestate.selected();
+                    let info = selected.and_then(|idx| {
+                        app.targets
+                            .read()
+                            .get(idx)
+                            .map(|t| (t.to_string(), t.recent_events()))
+                    });
+                    if let Some((name, events)) = info {
+                        *tui.popup_contents.write() = events_popup(name, &events);
+                        let mut lo = tui.layout.write();
+                        lo.popup_visible = true;
+                        lo.liststate.select(None);
                     }
                 }
 

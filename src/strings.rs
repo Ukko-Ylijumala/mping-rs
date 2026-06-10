@@ -56,7 +56,7 @@ pub static INFO_INFO: &str = " Info ";
 pub static INFO_TGTS: &str = " Targets: {} ";
 pub static INFO_TGTS_SORTED: &str = " Targets: {} | sort: {} {} ";
 pub static INFO_NO_TGTS: &str = " No targets";
-pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}";
+pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}\n Outages : {}\n Uptime  : {}";
 pub static INFO_SELECT: &str = " Select a target to see detailed info.";
 pub static INFO_RTT_G: &str = " Round-Trip Time graph ";
 pub static INFO_RTT_H: &str = " RTT Histogram (ms) ";
@@ -107,6 +107,16 @@ pub static ERR_LARGE_WIN: &str = "Window size exceeds data length";
 pub static INFO_LOCAL: &str = "local (a few km max)";
 pub static INFO_NEARBY: &str = "same city (< 30 km)";
 pub static INFO_INTERPLANETARY: &str = "outside of atmosphere";
+
+// pingdata.rs - target event timeline
+pub static EVT_TITLE: &str = "Events for {}";
+pub static EVT_NONE: &str = "no events recorded (yet)";
+pub static EVT_DOWN: &str = "DOWN - replies stopped";
+pub static EVT_UP: &str = "UP - outage lasted";
+pub static EVT_PAUSED: &str = "pinging paused";
+pub static EVT_RESUMED: &str = "pinging resumed";
+pub static EVT_STOPPED: &str = "pinging stopped permanently";
+pub static EVT_RESET: &str = "statistics reset";
 
 // utils.rs
 pub static ERR_SOCKETS: &str = "cannot create raw sockets for ICMPv";
@@ -211,7 +221,7 @@ pub static ADD_TGT_DIA_PAUSE: &str = "Add as paused";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 25] = [
+pub static HELP_KEYS: [[&str; 2]; 26] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["Shift+Up/Down",  "Sort by selected column (same direction again: reset)"],
@@ -222,6 +232,7 @@ pub static HELP_KEYS: [[&str; 2]; 25] = [
     ["",                ""],
     ["<space>",        "Toggle pause/resume pinging for selected target"],
     ["Enter",          "Update the selected target's details in the info panel"],
+    ["E",              "Show event log (outages etc.) for selected target"],
     ["R",              "Reset ping statistics for selected target"],
     ["p",              "Pause pinging for all targets"],
     ["P",              "Resume pinging for all targets"],

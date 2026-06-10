@@ -14,6 +14,7 @@ covering the area you're touching:
 | Concurrency, async ping loop, perf/F10 toggle | [concurrency.md](doc/design/concurrency.md) |
 | Locking conventions, `AppState`, `CancellationToken` | [shared-state.md](doc/design/shared-state.md) |
 | `PingTarget` data model & status derivation | [per-target-data.md](doc/design/per-target-data.md) |
+| Outage tracking & per-target event timeline | [outage-tracking.md](doc/design/outage-tracking.md) |
 | `LatencyWindow` rolling stats | [latency-window.md](doc/design/latency-window.md) |
 | TUI render loop & `AppLayout` | [tui-rendering.md](doc/design/tui-rendering.md) |
 | Keyboard handling, `Command` dispatch, how to add commands | [keyboard-and-commands.md](doc/design/keyboard-and-commands.md) |

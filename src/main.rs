@@ -222,6 +222,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
 
     /* -------- Info areas -------- */
     let w_info_upper = if let Some(t) = selected {
+        let outages = t.outage_summary();
         Paragraph::new(templater!(
             INFO_TARGET,
             t.to_string(),
@@ -230,6 +231,8 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
             t.rev_ptr().to_string(),
             t.est_distance_str(state.distance_stretch_factor),
             t.hops().to_string(),
+            outages.counts_str(),
+            outages.availability_str(),
         ))
     } else {
         PARA_NFO_SEL.clone()
@@ -452,6 +455,29 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
 
                 PopupContents::Multiline(_) => {
                     frame.render_widget(contents.to_list().block(BLK_POPUP.clone()), layout.popup)
+                }
+
+                // Pre-styled lines (event timeline): stateful so PageUp/Down scroll works
+                PopupContents::Lines(_) => {
+                    let num = contents.len();
+                    if num <= layout.popup_usable_rows() {
+                        frame.render_widget(contents.to_list().block(BLK_POPUP.clone()), layout.popup)
+                    } else {
+                        frame.render_stateful_widget(
+                            contents.to_list().block(BLK_POPUP.clone()),
+                            layout.popup,
+                            &mut layout.liststate,
+                        );
+                        let bar_pos = layout
+                            .liststate
+                            .selected()
+                            .unwrap_or_else(|| layout.liststate.offset());
+                        frame.render_stateful_widget(
+                            SCROLLBAR.clone(),
+                            layout.popup,
+                            &mut ScrollbarState::new(num).position(bar_pos),
+                        );
+                    }
                 }
 
                 _ => frame.render_widget(contents.to_para().block(BLK_POPUP.clone()), layout.popup),
