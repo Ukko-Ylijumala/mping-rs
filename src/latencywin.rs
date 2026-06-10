@@ -5,8 +5,9 @@
 //! Efficient rolling window statistics for latency monitoring.
 //!
 //! The [`LatencyWindow`] provides O(1) amortized operations for tracking
-//! mean, min, max, variance, and standard deviation over a sliding window
-//! of samples. Should work for usual kinds of latency measurements.
+//! mean, min, max, variance, standard deviation and smoothed jitter over
+//! a sliding window of samples. Should work for usual kinds of latency
+//! measurements.
 
 use std::{cmp::max, collections::VecDeque};
 
@@ -54,6 +55,7 @@ pub struct LatencyWindow {
     maxq: VecDeque<(u32, usize)>,   // monotonic decreasing (value, index)
     index: usize,                   // monotonically increasing sample index
     min_ever: Option<u32>,          // all-time minimum, survives window eviction
+    jitter: f64,                    // RFC 3550 -style smoothed jitter (stream-based)
 }
 
 impl LatencyWindow {
@@ -73,6 +75,7 @@ impl LatencyWindow {
             maxq: VecDeque::new(),
             index: 0,
             min_ever: None,
+            jitter: 0.0,
         }
     }
 
@@ -85,6 +88,18 @@ impl LatencyWindow {
         // Track the all-time minimum separately - the windowed min expires
         // with eviction, but f.ex. distance estimation wants the best ever.
         self.min_ever = Some(self.min_ever.map_or(val, |m| m.min(val)));
+
+        /*
+        Smoothed inter-arrival jitter in the RFC 3550 §6.4.1 style:
+        J += (|D| - J) / 16, where D is the difference between consecutive
+        samples. Stream-based (not windowed): eviction doesn't subtract,
+        the 1/16 gain ages old contributions out on its own. Must read the
+        previous sample before the buffer write below overwrites it.
+        */
+        if let Ok(prev) = self.last() {
+            let delta: f64 = (val_f - prev as f64).abs();
+            self.jitter += (delta - self.jitter) / 16.0;
+        }
 
         if self.len < self.cap {
             // Growing
@@ -190,6 +205,7 @@ impl LatencyWindow {
         self.maxq.clear();
         self.index = 0;
         self.min_ever = None;
+        self.jitter = 0.0;
     }
 
     #[inline]
@@ -241,14 +257,30 @@ impl LatencyWindow {
         Ok(self.maxq.front().map(|(v, _)| *v).unwrap_or_default())
     }
 
-    /// All-time minimum RTT value. Unlike [Self::min], this never expires
-    /// from the rolling window (only [Self::clear] resets it), so it's the
-    /// right statistic for baseline latency and distance estimates.
+    /**
+    All-time minimum RTT value. Unlike [Self::min], this never expires
+    from the rolling window (only [Self::clear] resets it), so it's the
+    right statistic for baseline latency and distance estimates.
+    */
     pub fn min_ever(&self) -> Result<u32, String> {
         match self.min_ever {
             Some(v) => Ok(v),
             None => Err("no samples".into()),
         }
+    }
+
+    /**
+    Smoothed inter-arrival jitter (RFC 3550 §6.4.1 style, gain 1/16).
+    Needs at least two samples to be meaningful. NOTE: only received
+    replies contribute - deltas are taken across loss gaps as if the
+    samples were consecutive, same as RTP receivers do.
+    */
+    pub fn jitter(&self) -> Result<f64, String> {
+        if self.len < 2 {
+            return Err("not enough samples".into());
+        }
+        self.float_val_check(self.jitter)?;
+        Ok(self.jitter)
     }
 
     /// Mean value (aka. average).
@@ -366,6 +398,7 @@ mod tests {
         assert!(lw.stdev().is_err());
         assert!(lw.mean_min_max().is_err());
         assert!(lw.min_ever().is_err());
+        assert!(lw.jitter().is_err());
 
         lw.push(10);
         assert!(! lw.is_empty());
@@ -375,6 +408,7 @@ mod tests {
         assert_eq!(lw.variance().unwrap(), 0.0);
         assert_eq!(lw.stdev().unwrap(), 0.0);
         assert_eq!(lw.min_ever().unwrap(), 10);
+        assert!(lw.jitter().is_err(), "jitter needs at least 2 samples");
     }
 
     #[test]
@@ -395,6 +429,9 @@ mod tests {
         let exp_var: f64 = sum_of_squares(&data[..=1], true);
         assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after 2 pushes");
 
+        // smoothed jitter: J += (|D| - J) / 16, deterministic arithmetic
+        assert_eq!(lw.jitter().unwrap(), 10.0 / 16.0, "Wrong jitter after 2 pushes");
+
         /////// 3 pushes ////////
         lw.push(30);
         assert_eq!(lw.last().unwrap(), 30, "Wrong last() after 3 pushes");
@@ -408,6 +445,9 @@ mod tests {
         assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after 3 pushes");
         let exp_var: f64 = sum_of_squares(&data[..=2], true);
         assert_eq!(lw.stdev_n(3).unwrap(), exp_var.sqrt(), "Wrong sample stdev(3) after 3 pushes");
+
+        let exp_jitter: f64 = 0.625 + (10.0 - 0.625) / 16.0;
+        assert_eq!(lw.jitter().unwrap(), exp_jitter, "Wrong jitter after 3 pushes");
 
         //////// 4 pushes ////////
         lw.push(40);
@@ -479,5 +519,6 @@ mod tests {
         assert!(lw.stdev().is_err());
         assert!(lw.mean_min_max().is_err());
         assert!(lw.min_ever().is_err(), "min_ever should reset on clear()");
+        assert!(lw.jitter().is_err(), "jitter should reset on clear()");
     }
 }

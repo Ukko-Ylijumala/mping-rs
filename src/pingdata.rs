@@ -553,6 +553,19 @@ impl PingTarget {
     }
 
     /**
+    Smoothed inter-arrival jitter (RFC 3550 style) as a formatted string
+    in milliseconds.
+
+    NOTE: locks the inner `data` for reading.
+    */
+    pub fn jitter_str(&self) -> String {
+        match self.data.read().rtts.jitter() {
+            Ok(j) => format!("{:.2} ms", j / MICROS_PER_MILLI),
+            Err(_) => MISSING.to_string(),
+        }
+    }
+
+    /**
     Get a display snapshot of this target's outage accounting.
 
     NOTE: locks the inner `data` for reading.

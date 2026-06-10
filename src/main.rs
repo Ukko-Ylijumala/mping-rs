@@ -158,6 +158,7 @@ static ST_REV: Style = Style::new().reversed();
 static ST_COL: Style = Style::new().bg(Color::Indexed(240));
 static ST_CYAN: Style = Style::new().fg(Color::Cyan);
 static ST_GREEN: Style = Style::new().fg(Color::Green);
+static ST_YELLOW: Style = Style::new().fg(Color::Yellow);
 static BORDERS: Block = Block::bordered();
 static BLK_PAD_L1: Block = Block::new().padding(Padding::left(1));
 static BLK_NFO_INNER: Block = Block::new()
@@ -189,6 +190,13 @@ static DATASET_BASE: LazyLock<Dataset> = LazyLock::new(|| {
         .name(INFO_RTT)
         .marker(symbols::Marker::Braille)
         .style(ST_CYAN)
+        .graph_type(GraphType::Line)
+});
+static DATASET_DELTA: LazyLock<Dataset> = LazyLock::new(|| {
+    Dataset::default()
+        .name(INFO_RTT_D)
+        .marker(symbols::Marker::Braille)
+        .style(ST_YELLOW)
         .graph_type(GraphType::Line)
 });
 static HISTOGRAM_BASE: LazyLock<BarChart> = LazyLock::new(|| {
@@ -231,6 +239,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
             t.rev_ptr().to_string(),
             t.est_distance_str(state.distance_stretch_factor),
             t.hops().to_string(),
+            t.jitter_str(),
             outages.counts_str(),
             outages.availability_str(),
         ))
@@ -276,8 +285,29 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
                 min_rtt = (min_rtt * 10.0).floor() / 10.0;
             };
 
-            // RTT line graph widget
-            let w_rtt_chart = Chart::new(vec![DATASET_BASE.clone().data(&rtt_data)])
+            /*
+            Jitter overlay: |ΔRTT| between consecutive samples, hung from the
+            chart ceiling growing downward (inverted). The y-axis usually
+            starts at min RTT where raw deltas would be off-scale, and the
+            RTT line itself wanders near its minimum - the top of the chart
+            is the emptiest real estate. Calm = flat line along the ceiling;
+            jitter events drip down from it at true ms scale (clamped to the
+            floor).
+            */
+            let delta_data: Vec<(f64, f64)> = rtt_data
+                .windows(2)
+                .enumerate()
+                .map(|(i, w)| {
+                    (i as f64 + 1.0, (max_rtt - (w[1].1 - w[0].1).abs()).max(min_rtt))
+                })
+                .collect();
+
+            // RTT line graph widget (with the jitter band overlaid)
+            let mut datasets: Vec<Dataset> = vec![DATASET_BASE.clone().data(&rtt_data)];
+            if delta_data.len() > 1 {
+                datasets.push(DATASET_DELTA.clone().data(&delta_data));
+            }
+            let w_rtt_chart = Chart::new(datasets)
                 .block(b_graph)
                 .x_axis(
                     Axis::default()

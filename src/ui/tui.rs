@@ -55,7 +55,7 @@ static CON_INPUT_W: Constraint = Constraint::Ratio(1, 2);
 static CON_INPUT_H: Constraint = Constraint::Length(20);
 
 static CON_NFO_L: Constraint = Constraint::Length(7);
-static CON_NFO_T: Constraint = Constraint::Length(9);
+static CON_NFO_T: Constraint = Constraint::Length(10);
 static CON_NFO_G: Constraint = Constraint::Length(20);
 static CON_NFO_H: Constraint = Constraint::Length(11);
 

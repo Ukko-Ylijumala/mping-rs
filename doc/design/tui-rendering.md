@@ -47,6 +47,20 @@ Formatting itself happens in `format_row` (`main.rs:57`), which takes
 then does all the string work outside the lock — see the lock-discipline
 note in [shared-state](shared-state.md).
 
+## The RTT graph and its jitter overlay
+
+The selected-target chart plots two datasets: the recent RTT samples
+(cyan) and a |ΔRTT| jitter band (yellow). The y-axis usually starts at
+the rounded-down minimum RTT, where raw millisecond-scale deltas would
+sit off-scale below the floor — and the RTT line itself wanders near its
+minimum, so the bottom is crowded too. The jitter band is therefore
+**inverted and hung from the chart ceiling**: each point is
+`max_axis − |ΔRTT|` (clamped to the floor). Calm links draw a flat line
+along the top edge; jitter events drip downward from it at true ms
+scale. The band is raw per-sample deltas, deliberately unsmoothed — the
+smoothed RFC 3550 jitter *number* lives in the info text above (see
+[latency-window](latency-window.md)).
+
 ## `AppLayout` and `maybe_update`
 
 `AppLayout` (`src/ui/tui.rs:111-331`) owns every `Rect` the renderer

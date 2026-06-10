@@ -22,6 +22,7 @@ LatencyWindow {
     maxq:   VecDeque<(u32, usize)>  // monotonic decreasing  (value, sample idx)
     index:  usize          // monotonically-increasing global sample index
     min_ever: Option<u32>  // all-time minimum — survives window eviction
+    jitter: f64            // RFC 3550 -style smoothed jitter (stream-based)
 }
 ```
 
@@ -67,6 +68,14 @@ pushed and popped from each deque at most once.
   bound — letting it expire with the window would make the distance
   estimate drift upwards. The table's Min column stays windowed on purpose:
   it answers "how is the link lately", not "where is this".
+- `jitter()` — smoothed inter-arrival jitter in the RFC 3550 §6.4.1 style:
+  `J += (|D| − J) / 16` on each push, where `D` is the delta between
+  consecutive samples. Stream-based, not windowed — eviction doesn't
+  subtract; the 1/16 gain ages old contributions out on its own. Only
+  received replies contribute (deltas span loss gaps as if consecutive,
+  same as RTP receivers). Errors until two samples exist; reset by
+  `clear()`. Distinct from `stdev()`: a slow drift has high stdev but low
+  jitter; rapid sample-to-sample variation is what jitter measures.
 - `mean_min_max()` — single-call helper used by `StatsSnapshot`.
 - `variance()` / `stdev_pop()` — return the cached value.
 - `stdev_n(window)` — a Bessel-corrected (sample) stdev over the last
