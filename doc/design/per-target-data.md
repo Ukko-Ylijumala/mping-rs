@@ -34,16 +34,22 @@ own cheap atomic/token rather than fighting for `data`.
 
 ## `sent` is incremented before the network call
 
-`mark_sent_and_next_seq` (`pinger.rs:28-46`) increments `data.sent` *before*
+`mark_sent_and_next_seq` (`pinger.rs:28-50`) increments `data.sent` *before*
 calling `pinger.ping(...)`. This way the sent counter stays accurate even if
 the ping returns an error or the response arrives out of order. The one
 exception: if `surge_ping` returns a non-timeout error, `update_stats`
-decrements `sent` again (`pingdata.rs:250`) because in that case no packet
-ever made it onto the wire.
+decrements `sent` again (saturating, since a stats reset can race an
+in-flight ping) because in that case no packet ever made it onto the wire.
 
-The 16-bit sequence wraps at 65 536 (`pinger.rs:40`), which is the protocol
-limit for ICMP Echo. The wrap is handled with `sent % 65_536` so a long-lived
-target keeps producing valid sequence numbers indefinitely.
+Sequence numbers come from a dedicated `next_seq: u16` wrapping counter in
+`PingTargetInner`, **not** from `sent`. Because `sent` is decremented on
+errors, deriving the seq from it could hand out a sequence number that is
+still in flight on another concurrent ping — surge-ping keys pending
+replies by `(host, ident, seq)` and rejects such a duplicate as an
+`IdenticalRequests` error, which would itself decrement `sent` and repeat
+the collision. The 16-bit counter wraps at 65 536 (the protocol limit for
+ICMP Echo) via `wrapping_add`, so a long-lived target keeps producing valid
+sequence numbers indefinitely. `reset_stats` resets it to zero.
 
 ## Three tiers of status
 

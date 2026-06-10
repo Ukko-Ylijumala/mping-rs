@@ -202,6 +202,7 @@ impl AppLayout {
 
         if frame != self.frame {
             // must recalculate all if frame size has changed
+            self.tbl_width = tbl_width;
             self.update(frame);
         } else if tbl_width != self.tbl_width {
             // Ensure the table area does not shrink from its previous size.
@@ -751,9 +752,11 @@ impl TuiState {
         ViewPort::new(self, targets)
     }
 
-    /// Schedule the next UI refresh tick.
+    /// Schedule the next UI refresh tick. Clamped to now so that a stall
+    /// (blocked terminal, SIGSTOP, ...) doesn't build up a render backlog.
     pub fn ui_schedule_next_refresh(&self) {
-        *self.ui_next_refresh.write() += self.ui_interval;
+        let mut next = self.ui_next_refresh.write();
+        *next = (*next + self.ui_interval).max(tokio::time::Instant::now());
     }
 
     /// Whether it's time for the next UI refresh.

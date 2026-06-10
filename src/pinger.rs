@@ -32,12 +32,13 @@ fn mark_sent_and_next_seq(tgt: &PingTarget) -> u16 {
     sending so that the main sent count stays accurate even if
     ping fails or we get out of order replies etc
     */
-    let sent: u64 = stats.sent;
     stats.sent += 1;
 
-    // calculate the 16-bit sequence number from sent count,
-    // since 2^16 is the max for ICMP sequence numbers
-    let seq: u16 = (sent % 65_536) as u16;
+    // Sequence numbers come from a dedicated wrapping counter, NOT from `sent`:
+    // send errors decrement `sent`, and reusing a seq that is still in flight
+    // makes surge-ping reject the ping as an identical request.
+    let seq: u16 = stats.next_seq;
+    stats.next_seq = seq.wrapping_add(1);
 
     // store last sent seq and timestamp for master reference
     stats.last_seq = seq;

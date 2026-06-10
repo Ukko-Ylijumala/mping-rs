@@ -56,9 +56,29 @@ contend with display work. The comment at `main.rs:64` ("Do all the
 documentation comment on `render_frame` (`main.rs:202`) call this out
 explicitly — preserve that ordering when editing.
 
-The same discipline applies in `gather_target_data`: it takes a single read
-guard, decides which rows are visible, formats those rows, and releases the
-guard.
+The same discipline applies in `gather_target_data`: it clones the
+`Arc<PingTarget>` handles under a short-lived read guard and formats rows
+only after the guard is dropped. This also means it never holds `targets`
+while acquiring any other lock — see below.
+
+## Lock-ordering invariant: `layout` before `targets`, or no nesting at all
+
+Two threads take both the TUI `layout` lock and the `targets` lock: the
+render path (`render_frame`: `layout` write → `targets` read) and the
+keyboard thread. To keep that cycle-free:
+
+- **Never hold `targets` while acquiring `layout`.** `gather_target_data`
+  snapshots the target Arcs and drops the guard before it reads the
+  viewport (which locks `layout`).
+- **Never call `AppState::execute` while holding a `layout` guard.** Most
+  command variants lock `targets`. The keyboard handlers read the selected
+  index into a local first (dropping the guard at the end of the
+  statement), dispatch the command, and only then re-acquire `layout` if
+  they need to fix up selection state (see the Delete branch in
+  `ui/keyboard.rs`).
+
+Violating either rule re-creates a cross-thread ABBA deadlock that hangs
+the UI permanently (the quit flag is checked under these same locks).
 
 ## CancellationToken per target
 

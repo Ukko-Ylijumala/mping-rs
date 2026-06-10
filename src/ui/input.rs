@@ -242,19 +242,32 @@ impl AddTgtDialog {
         match state.active {
             ActiveField::Addresses => {
                 let inner = self.b_addrs.inner(self.addrs);
-                // cursor: left border + cursor position within input
-                Some((
-                    inner.x + state.addrs.cursor() as u16,
-                    inner.y, // single-line in a 1-row inner area
-                ))
+                Some(field_cursor_pos(&state.addrs, inner))
             }
             ActiveField::Exclusions => {
                 let inner = self.b_excls.inner(self.excls);
-                Some((inner.x + state.excls.cursor() as u16, inner.y))
+                Some(field_cursor_pos(&state.excls, inner))
             }
             _ => None, /* not in an input field -> cursor stays hidden */
         }
     }
+}
+
+/// Usable width of a single-line input field (one column is reserved for the cursor).
+#[inline]
+fn field_width(inner: Rect) -> usize {
+    inner.width.saturating_sub(1) as usize
+}
+
+/// Cursor position for a (possibly horizontally scrolled) single-line input field.
+/// The input scrolls when the value is wider than the field, so the cursor is
+/// offset by the scroll amount and clamped to stay inside the field.
+#[inline]
+fn field_cursor_pos(input: &Input, inner: Rect) -> (u16, u16) {
+    let width: usize = field_width(inner);
+    let scroll: usize = input.visual_scroll(width);
+    let x: u16 = (input.visual_cursor().saturating_sub(scroll)).min(width) as u16;
+    (inner.x + x, inner.y) // single-line in a 1-row inner area
 }
 
 impl Default for AddTgtDialog {
@@ -304,9 +317,14 @@ impl StatefulWidget for &AddTgtDialog {
         (&*BLK_SUBMIT).render(self.btn_submit, buf);
         (&*BLK_CANCEL).render(self.btn_cancel, buf);
 
-        // addresses/exclusions input
-        Paragraph::new(state.addrs.value()).wrap(NO_TRIM).render((&self.b_addrs).inner(self.addrs), buf);
-        Paragraph::new(state.excls.value()).wrap(NO_TRIM).render((&self.b_excls).inner(self.excls), buf);
+        // addresses/exclusions input: scroll horizontally (in sync with the
+        // cursor math in `field_cursor_pos`) instead of wrapping
+        let addrs_inner = (&self.b_addrs).inner(self.addrs);
+        let addrs_scroll = state.addrs.visual_scroll(field_width(addrs_inner)) as u16;
+        Paragraph::new(state.addrs.value()).scroll((0, addrs_scroll)).render(addrs_inner, buf);
+        let excls_inner = (&self.b_excls).inner(self.excls);
+        let excls_scroll = state.excls.visual_scroll(field_width(excls_inner)) as u16;
+        Paragraph::new(state.excls.value()).scroll((0, excls_scroll)).render(excls_inner, buf);
 
         // checkbox area
         if state.paused {

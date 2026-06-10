@@ -52,9 +52,10 @@ impl<'a> Wrapper<'a> {
     }
 
    // Define the methods to delegate (ie. pass through to the inner Line)
-   delegate_write!(bold);
-   delegate_write!(style, style: Style);
-   delegate_write!(push_span, <T: Into<Span<'a>>>, span: T);
+   delegate_write!(bold);                                  // no args, chainable
+   delegate_write!(style, style: Style);                   // args, chainable
+   delegate_write!(&push_line, line: Line<'a>);            // args, in-place (&self)
+   delegate_write!(push_span, <T: Into<Span<'a>>>, span: T); // generic, in-place
 }
 ```
 */
@@ -79,13 +80,15 @@ macro_rules! delegate_write {
         }
     };
 
-    // With arguments, in-place modification (not consuming), not chainable
-    ($name:ident, $($arg:ident : $ty:ty),+) => {
+    // With arguments, in-place modification (not consuming), not chainable.
+    // The leading `&` (think: `&self`) distinguishes this from the chainable
+    // arm above — macro_rules! takes the first matching arm, so without a
+    // differentiating token this pattern would be silently unreachable.
+    (& $name:ident, $($arg:ident : $ty:ty),+) => {
         pub fn $name(&self, $($arg: $ty),+) {
             self.with_mut(|inner| {
                 inner.$name($($arg),+);
             });
-            //self
         }
     };
 
@@ -115,3 +118,29 @@ macro_rules! eprintln_nomangle {
 pub(crate) use delegate_read;
 pub(crate) use delegate_write;
 pub(crate) use eprintln_nomangle;
+
+/* -------------------------------------------------------------------------- */
+
+// Macro arms are only type-checked when invoked, so exercise the in-place
+// `&`-prefixed delegate_write! arm here to keep it from silently rotting.
+#[cfg(test)]
+mod tests {
+    use parking_lot::RwLock;
+
+    struct Wrapper(RwLock<String>);
+
+    impl Wrapper {
+        fn with_mut<R>(&self, f: impl FnOnce(&mut String) -> R) -> R {
+            f(&mut *self.0.write())
+        }
+
+        delegate_write!(&push_str, s: &str);
+    }
+
+    #[test]
+    fn delegate_write_inplace() {
+        let w = Wrapper(RwLock::new("in".to_string()));
+        w.push_str("-place"); // &self, not consuming, not chainable
+        assert_eq!(&*w.0.read(), "in-place");
+    }
+}

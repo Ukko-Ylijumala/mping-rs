@@ -38,13 +38,24 @@ callers don't have to re-derive it.
 
 ## Exclusions apply to parsed IPs only
 
-The `--exclude` list is intersected with the parsed-IP set
-(`utils.rs:174-188`). DNS-resolved results are **not** filtered through
-exclusions — this matches the behaviour from before runtime add-target
-existed, so the rules are predictable. If you exclude `10.0.0.0/24` and
-then add `myhost.internal` which resolves to `10.0.0.5`, you get
-`10.0.0.5`. If you don't want that, exclude `myhost.internal` by name
-won't do anything either — exclusions are an IP-only filter.
+The `--exclude` list is intersected with the parsed-IP set. DNS-resolved
+results are **not** filtered through exclusions — this matches the
+behaviour from before runtime add-target existed, so the rules are
+predictable. If you exclude `10.0.0.0/24` and then add `myhost.internal`
+which resolves to `10.0.0.5`, you get `10.0.0.5`. If you don't want
+that, exclude `myhost.internal` by name won't do anything either —
+exclusions are an IP-only filter.
+
+Exclusions are honored even when they would remove *everything* (you get
+a warning and an empty target list, not your full input back), and after
+they're applied `seen` is updated so it always mirrors `addrs` membership
+exactly — the `debug_assertions` check in `MpConfig::parse` relies on
+that invariant.
+
+`resolve_names` resolves the leftover non-IP tokens concurrently (up to
+`MAX_CONCURRENT_DNS` in-flight lookups via `buffer_unordered`), so
+startup latency doesn't scale linearly with the number of hostnames. The
+input is a `HashSet`, so the arbitrary completion order changes nothing.
 
 ## Initial startup vs. runtime add
 

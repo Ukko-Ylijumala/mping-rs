@@ -45,7 +45,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
 
             match (e.code, e.modifiers) {
                 // Quit the application
-                (KeyCode::Char('q'), _) => { app.execute(Command::Quit); },
+                (KeyCode::Char('q'), KeyModifiers::NONE) => { app.execute(Command::Quit); },
 
                 // terminal in raw mode -> ctrl-c has to be processed manually
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
@@ -98,9 +98,18 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                     lo.tablestate.select_column(None);
                 }
 
+                /*
+                Lock-order invariant: never call `app.execute` (which may lock
+                `targets`) while holding the `layout` lock — the render path
+                takes the same locks and a cross-thread ABBA deadlock follows.
+                Hence the selected index is read out (dropping the guard at the
+                end of the statement) before dispatching the command.
+                */
+
                 // Pause/resume the selected target if it's not stopped
                 (KeyCode::Char(' '), _) => {
-                    if let Some(idx) = tui.layout.read().tablestate.selected() {
+                    let selected = tui.layout.read().tablestate.selected();
+                    if let Some(idx) = selected {
                         app.execute(Command::TogglePause(idx));
                     }
                 }
@@ -111,33 +120,36 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
 
                 // Stop (cancel) the selected target's pinging for good
                 (KeyCode::Char('S'), _) => {
-                    if let Some(idx) = tui.layout.read().tablestate.selected() {
+                    let selected = tui.layout.read().tablestate.selected();
+                    if let Some(idx) = selected {
                         app.execute(Command::StopTarget(idx));
                     }
                 }
 
                 // Reset the selected target's statistics
                 (KeyCode::Char('R'), _) => {
-                    if let Some(idx) = tui.layout.read().tablestate.selected() {
+                    let selected = tui.layout.read().tablestate.selected();
+                    if let Some(idx) = selected {
                         app.execute(Command::ResetTgtStats(idx));
                     }
                 }
 
                 // Update information for the selected target
                 (KeyCode::Enter, _) => {
-                    if let Some(idx) = tui.layout.read().tablestate.selected() {
+                    let selected = tui.layout.read().tablestate.selected();
+                    if let Some(idx) = selected {
                         app.execute(Command::UpdateTgtInfo(idx));
                     }
                 }
 
                 // Fully remove a target or targets from the list
                 (KeyCode::Delete, m) => {
-                    let mut lo = tui.layout.write();
                     match m {
                         // Stop and remove all unreachable targets from the list
                         KeyModifiers::CONTROL => {
                             match app.execute(Command::RemoveAllUnreach) {
                                 CmdResult::Count(_) => {
+                                    let mut lo = tui.layout.write();
                                     // clear row selection after removal
                                     lo.tablestate.select(None);
                                     // reset table width since it could be compressed
@@ -148,11 +160,13 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                         }
                         // Stop and remove the selected target
                         KeyModifiers::NONE => {
-                            if let Some(idx) = lo.tablestate.selected() {
+                            let selected = tui.layout.read().tablestate.selected();
+                            if let Some(idx) = selected {
                                 app.execute(Command::RemoveTarget(idx));
+                                let len: usize = app.len();
 
                                 // fix row selection after removal
-                                let len: usize = app.len();
+                                let mut lo = tui.layout.write();
                                 if len == 0 {
                                     lo.tablestate.select(None);
                                 } else if idx == len - 1 {

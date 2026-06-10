@@ -93,6 +93,13 @@ pub(crate) struct PingTargetInner {
     /// Authoritative last sent timestamp. Will be slightly before actual send time. The
     /// difference can be calculated from [PacketRecord] (with the same sequence number).
     pub last_sent: Option<Instant>,
+    /**
+    Next ICMP sequence number to use. Deliberately decoupled from `sent`:
+    `sent` is decremented on send errors, so deriving seq from it could hand
+    out a sequence number that is still in flight, which surge-ping rejects
+    as an identical request.
+    */
+    pub next_seq: u16,
 }
 
 impl PingTargetInner {
@@ -247,7 +254,9 @@ impl PingTarget {
             Err(e) => match e {
                 SurgeError::Timeout { .. } => PingStatus::Timeout,
                 _ => {
-                    inner.sent -= 1; // don't count errors, as the packet was never sent
+                    // Don't count errors, as the packet was never sent. Saturating,
+                    // because a stats reset may race with an in-flight ping.
+                    inner.sent = inner.sent.saturating_sub(1);
                     PingStatus::Error(e.to_string())
                 }
             },
@@ -375,6 +384,7 @@ impl PingTarget {
         data.raw_status = PingStatus::None;
         data.last_seq = 0;
         data.last_sent = None;
+        data.next_seq = 0;
     }
 
     /// Whether pinging currently paused for this target is.
@@ -615,7 +625,7 @@ impl PingTarget {
                     _ => {
                         // Quantize to nearest lower band
                         let banded = (dist / BAND_SIZE_KM).floor() * BAND_SIZE_KM;
-                        format!("​​≈ {:.0}+ km", banded)
+                        format!("≈ {:.0}+ km", banded)
                     }
                 }
             }
@@ -1056,7 +1066,8 @@ impl StatsSnapshot {
         if self.sent == 0 {
             0.0
         } else {
-            (self.sent - self.recv) as f64 / self.sent as f64
+            // Saturating: a stats reset racing an in-flight reply can leave recv > sent.
+            self.sent.saturating_sub(self.recv) as f64 / self.sent as f64
         }
     }
 
@@ -1076,7 +1087,7 @@ impl StatsSnapshot {
     pub fn loss_str(&self) -> String {
         if self.sent == 0 {
             MISSING.to_string()
-        } else if ((self.sent - self.recv) == 1) && self.is_latest_inflight() {
+        } else if (self.sent.saturating_sub(self.recv) == 1) && self.is_latest_inflight() {
             // catch the common case of one receive missing (still in transit)
             "0.0%".to_string()
         } else {

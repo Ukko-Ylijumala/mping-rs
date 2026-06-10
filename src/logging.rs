@@ -235,12 +235,16 @@ impl MessageBuffer {
     /// Internal - add a new message to the buffer.
     #[inline]
     fn add(&self, msg: &Message) {
-        let mut buf = self.buf.write();
-        if buf.len() >= self.cap {
-            buf.pop_front();
+        {
+            let mut buf = self.buf.write();
+            if buf.len() >= self.cap {
+                buf.pop_front();
+            }
+            buf.push_back(msg.clone());
         }
-        buf.push_back(msg.clone());
         self.total.fetch_add(1, Ordering::Relaxed);
+        // stderr I/O can block (e.g. a full pipe); do it outside the lock
+        // so it can't stall every other logger caller.
         if msg.lvl <= self.to_stderr {
             eprintln_nomangle!("{}", msg.as_timestamped());
         }

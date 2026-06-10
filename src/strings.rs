@@ -124,9 +124,9 @@ pub static ERR_SEND: &str = "Send failed";
 pub static ERR_RECV: &str = "Receive failed";
 pub static ERR_MALFORMED: &str = "Malformed ICMP packet";
 pub static ERR_UNREACH: &str = "Destination Unreachable";
-pub static ERR_ICMPTYPE: &str = "Wanted Echo Reply (0), got";
-pub static ERR_HDR_IPV4: &str = "Truncated IPv4 header";
-pub static ERR_HDR_IPV6: &str = "Truncated IPv6 header";
+pub static ERR_ICMPTYPE: &str = "Wanted Echo Reply, got";
+pub static ERR_SOCK_OPT: &str = "Failed to set socket option";
+pub static ERR_NO_HOPLIMIT: &str = "No hop limit ancillary data received";
 pub static INFO_SOCKET: &str = "Raw socket created for ICMPv";
 pub static INFO_SEND: &str = "Sending ICMP Echo Request to";
 

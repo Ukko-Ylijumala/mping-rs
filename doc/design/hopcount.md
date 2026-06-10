@@ -13,35 +13,49 @@ binary. The binary is declared as a second `[[bin]]` in `Cargo.toml`.
 ## The algorithm
 
 `determine_hops(target, timeout, debug) -> Result<(hops, received_ttl)>`
-(`src/hopcount/mod.rs:23-143`):
+(`src/hopcount/mod.rs`) dispatches to a per-IP-version implementation —
+the receive side differs fundamentally between the two:
 
-1. Build an ICMP Echo Request packet (id `0xb00b`, seq `1`, 48-byte
-   default payload) with a correct ICMP checksum.
+- **IPv4** raw sockets deliver the full IP header with each packet, so
+  the TTL is read straight out of it (offset 8, honoring the actual IHL
+  field rather than assuming a 20-byte header).
+- **IPv6** raw sockets deliver *only* the ICMPv6 message — no IP header.
+  The hop limit is requested via the `IPV6_RECVHOPLIMIT` socket option
+  and read from `IPV6_HOPLIMIT` ancillary data, using a small
+  libc-`recvmsg` wrapper (`recvmsg_v6`) because socket2 has no portable
+  cmsg parser. The ICMPv6 echo request is built with pnet's `icmpv6`
+  types (Echo Request is type 128, reply 129 — not the IPv4 values) and
+  the checksum is left at zero: it covers an IPv6 pseudo-header, and the
+  kernel always computes it for ICMPv6 raw sockets (RFC 3542).
+
+Common shape of both paths:
+
+1. Build an Echo Request (id `0xb00b`, seq `1`, 48-byte default
+   payload).
 2. Open a raw ICMP socket via `socket2` (`Type::RAW`, `Protocol::ICMPV4`
-   or `ICMPV6`). Requires `CAP_NET_RAW` or root.
-3. Bind to the unspecified address (`0.0.0.0` / `::`) so the OS picks
-   the source IP. Set a receive timeout.
-4. Send the request.
-5. Read the reply into a 1500-byte buffer; convert from
-   `[MaybeUninit<u8>]` via a single `transmute` against the
-   `bytes_read` slice (safe because the kernel has just initialized that
-   range).
-6. Skip the 20-byte IPv4 header (or 40-byte IPv6 header) and verify the
-   ICMP type is `EchoReply`. `DestinationUnreachable` is treated as an
-   error; other types are surfaced verbatim.
-7. Read the TTL byte from the IP header (offset 8 for IPv4, offset 7
-   for IPv6) — `recv_buffer[8]` / `recv_buffer[7]`.
-8. Estimate the original TTL by bucketing the received value:
+   or `ICMPV6`) and bind the unspecified address. Requires `CAP_NET_RAW`
+   or root.
+3. Send the request, then **loop** receiving until the deadline. A raw
+   ICMP socket sees *every* inbound ICMP packet — including replies to
+   mping's own concurrent pinging — so each packet is filtered: only an
+   Echo Reply whose source address is `target` and whose identifier and
+   sequence number match ours is accepted; everything else is skipped.
+   The read timeout is re-armed with the remaining time each iteration.
+4. A `DestinationUnreachable` is only treated as our failure if the
+   original packet embedded in the error message carries our identifier
+   (`embedded_ident_v4` / `embedded_ident_v6`).
+5. Estimate the original TTL by bucketing the received value
+   (`estimate_hops`):
    - `> 128` → original 255 (e.g. some Solaris-flavoured stacks)
    - `> 64`  → original 128 (Windows)
    - else    → original 64  (Linux / macOS / *BSD)
-9. Return `original_TTL - received_TTL` as the hop count, plus the raw
+6. Return `original_TTL - received_TTL` as the hop count, plus the raw
    received TTL so the caller can sanity-check.
 
 ## "AI slop" comment block
 
-The bottom of `mod.rs` (lines 145-196) is a commented-out IPv4-header
-construction block left in place as a cautionary tale. An earlier
+The bottom of `mod.rs` is a commented-out IPv4-header construction block
+left in place as a cautionary tale. An earlier
 AI-suggested implementation wrapped the ICMP packet in a manually-built
 IPv4 header, which produced a malformed packet on the wire (`tcpdump`
 showed `ICMP type-#69, length 76` — the 0x45 being the first IP header
@@ -101,7 +115,8 @@ denied.
 
 ## File map
 
-- `src/hopcount/mod.rs` — `determine_hops` and the AI-slop comment.
+- `src/hopcount/mod.rs` — `determine_hops` (v4/v6 split, filtering
+  receive loops, `recvmsg_v6`) and the AI-slop comment.
 - `src/hopcount/main.rs` — the standalone binary.
 - `src/pingdata.rs:275-288` — `PingTarget::determine_hops` /
   `PingTarget::hops`.

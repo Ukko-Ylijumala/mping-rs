@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{logging::Logger, strings::*};
+use futures::stream::{self, StreamExt};
 use hickory_resolver::TokioResolver;
 use itertools::Itertools;
 use miniutils::iptools::parse_ip_or_range;
@@ -31,6 +32,7 @@ use std::{
 };
 
 static PERMS_STR: [&str; 2] = ["permission", "permitted"];
+const MAX_CONCURRENT_DNS: usize = 16; // concurrent in-flight DNS lookups
 
 /**
 Set up handlers for various termination signals.
@@ -180,14 +182,19 @@ where
             let remainder: HashSet<IpAddr> = &seen - &exclusions;
             if remainder == seen {
                 logger.notice(WARN_NO_MATCHES);
-            } else if remainder.is_empty() {
-                logger.warn(WARN_ALL_EXCLUDED);
             } else {
-                logger.log(format!(
-                    "{INFO_EXCLUDE}: {}",
-                    (seen.len() - remainder.len())
-                ));
+                if remainder.is_empty() {
+                    logger.warn(WARN_ALL_EXCLUDED);
+                } else {
+                    logger.log(format!(
+                        "{INFO_EXCLUDE}: {}",
+                        (seen.len() - remainder.len())
+                    ));
+                }
+                // Exclusions are honored even when they remove everything,
+                // and `seen` must keep mirroring `all_addrs` membership.
                 all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
+                seen = remainder;
             }
         };
     }
@@ -235,19 +242,31 @@ pub(crate) async fn resolve_names<T>(
 where
     T: Logger,
 {
-    let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(failed.len());
+    /*
+    Resolve concurrently — sequential lookups would make startup latency
+    scale linearly with the number of names. The input is a set, so the
+    (arbitrary) completion order of buffer_unordered changes nothing.
+    */
+    let lookups: Vec<(String, Result<Vec<IpAddr>, _>)> = stream::iter(failed)
+        .map(|name| async move {
+            let result = res.lookup_ip(&name).await;
+            (name, result.map(|lookup| lookup.iter().collect::<Vec<IpAddr>>()))
+        })
+        .buffer_unordered(MAX_CONCURRENT_DNS)
+        .collect()
+        .await;
+
+    let mut resolved: Vec<(String, Vec<IpAddr>)> = Vec::with_capacity(lookups.len());
     let mut unresolved: HashSet<String> = HashSet::new();
-    for name in failed {
-        match res.lookup_ip(&name).await {
-            Ok(lookup) => {
-                let ips: Vec<IpAddr> = lookup.iter().collect();
-                if ips.is_empty() {
-                    unresolved.insert(name);
-                } else {
-                    logger.info(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
-                    // if this was a fully qualified domain name, strip the trailing dot
-                    resolved.push((name.trim_end_matches('.').to_string(), ips));
-                }
+    for (name, result) in lookups {
+        match result {
+            Ok(ips) if !ips.is_empty() => {
+                logger.info(format!("{INFO_RESOLVE_ONE} '{name}': {}", ips.len()));
+                // if this was a fully qualified domain name, strip the trailing dot
+                resolved.push((name.trim_end_matches('.').to_string(), ips));
+            }
+            Ok(_) => {
+                unresolved.insert(name);
             }
             Err(e) => {
                 logger.error(format!("{ERR_RESOLVE} '{name}': {e}"));
@@ -338,8 +357,19 @@ pub fn make_histogram_buckets(data: Vec<f64>, bins: usize) -> Vec<HistogramBucke
     }
 
     let min: f64 = data.iter().fold(f64::INFINITY, |a: f64, &b| a.min(b));
-    let max: f64 = data.iter().fold(0.0, |a: f64, &b| a.max(b));
+    let max: f64 = data.iter().fold(f64::NEG_INFINITY, |a: f64, &b| a.max(b));
     let bin_width: f64 = (max - min) / bins as f64;
+
+    // All values identical (or a single sample): zero bin width would make the
+    // bucket math NaN. Collapse to a single bucket instead.
+    if bin_width <= 0.0 {
+        return vec![HistogramBucket {
+            low: min,
+            high: max,
+            count: data.len() as u64,
+        }];
+    }
+
     let mut counts: Vec<u64> = vec![0u64; bins];
 
     for &entry in &data {

@@ -54,7 +54,7 @@ fn make_targets(addrs: &[IpAddr], defaults: &TargetDefaults) -> Vec<PingTarget> 
 }
 
 /// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
-async fn format_row(tgt: &Arc<PingTarget>, debug: bool, timeout: Duration) -> TableRow {
+fn format_row(tgt: &Arc<PingTarget>, debug: bool, timeout: Duration) -> TableRow {
     let snap: StatsSnapshot = StatsSnapshot::new_from(&tgt, timeout);
     let status: String = match &snap.status {
         PingStatus::Error(e) if debug => e.to_string(),
@@ -113,17 +113,22 @@ For large target lists, gathering data for all can be slow, hence
 it makes sense to only gather data for the currently visible targets
 in the TUI table. This function supports both modes via the `all` param.
 */
-async fn gather_target_data(state: &AppState, tui: &TuiState, all: bool) -> Vec<TableRow> {
-    let tgts = state.targets.read();
+fn gather_target_data(state: &AppState, tui: &TuiState, all: bool) -> Vec<TableRow> {
+    /*
+    Snapshot the Arc handles so the `targets` guard is dropped before any
+    other lock is taken. Lock-order invariant: `targets` must never be held
+    while acquiring `layout` (the keyboard thread takes them in the opposite
+    order), or the two threads can deadlock.
+    */
+    let tgts: Vec<Arc<PingTarget>> = state.targets.read().iter().cloned().collect();
     let vp = tui.viewport(tgts.len());
 
     // Full list requested, or we have fewer targets than rows
     if all || !vp.needs_paging() {
-        return join_all(
-            tgts.iter()
-                .map(|t| format_row(t, state.debug, state.defaults.timeout)),
-        )
-        .await;
+        return tgts
+            .iter()
+            .map(|t| format_row(t, state.debug, state.defaults.timeout))
+            .collect();
     }
 
     /*
@@ -139,15 +144,11 @@ async fn gather_target_data(state: &AppState, tui: &TuiState, all: bool) -> Vec<
     // Combine the Vec iterators
     pre.into_iter()
         .chain(
-            join_all(
-                visible
-                    .iter()
-                    .map(|t| format_row(t, state.debug, state.defaults.timeout)),
-            )
-            .await
-            .into_iter(),
+            visible
+                .iter()
+                .map(|t| format_row(t, state.debug, state.defaults.timeout)),
         )
-        .chain(post.into_iter())
+        .chain(post)
         .collect()
 }
 
@@ -477,7 +478,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(app.quit.clone());
     let mut guard: TerminalGuard = TerminalGuard::new(tui.ui_interval, app.logger.clone())?;
-    let mut tick: Interval = time::interval(app.internal_tick);
+    // The tick gates how often the select! loop re-evaluates the refresh
+    // deadline, so it must not be coarser than the UI refresh interval.
+    let mut tick: Interval = time::interval(app.internal_tick.min(tui.ui_interval));
 
     // Start the key event handling thread
     let app_clone: Arc<AppState> = app.clone();
@@ -491,13 +494,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             true = app.is_quitting_async() => break,
             true = tui.ui_refresh_elapsed_async() => {
                 // Gather data for display and render the frame
-                let data = gather_target_data(&app, &tui, false).await;
+                let data = gather_target_data(&app, &tui, false);
                 guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &tui, &data))?;
                 tui.ui_schedule_next_refresh();
             },
             _ = app.key_event.notified() => {
                 // Immediate refresh on key event. NOTE: don't reschedule next refresh!
-                let data = gather_target_data(&app, &tui, false).await;
+                let data = gather_target_data(&app, &tui, false);
                 guard.term.draw(|frame: &mut Frame| render_frame(frame, &app, &tui, &data))?;
                 // sleep a little to avoid busy looping during key event bursts
                 tokio::time::sleep(Duration::from_millis(5)).await;
@@ -512,11 +515,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{INFO_QUITTING}");
     }
     kev_handle.join().expect(ERR_KEV_JOIN);
-    let mut tasks = app.tasks.write();
-    join_all(tasks.iter_mut()).await;
+    // Take the handles out of the lock so the guard isn't held across the await.
+    let tasks: Vec<tokio::task::JoinHandle<()>> = std::mem::take(&mut *app.tasks.write());
+    join_all(tasks).await;
 
     // Print final stats
-    let data: Vec<TableRow> = gather_target_data(&app, &tui, true).await;
+    let data: Vec<TableRow> = gather_target_data(&app, &tui, true);
     // Display the same rows as were visible in the TUI
     let vp = tui.viewport(app.len());
     simple_tabulate(&data[vp.offset..vp.end_pos], Some(&tui.headers.strings()))

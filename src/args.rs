@@ -276,11 +276,13 @@ impl MpConfig {
         }
 
         // Yes, I, the mighty programmer, am aware that I could sometimes be INCORRECT!
+        // NOTE: `seen` mirrors `addrs` exactly: exclusions are already applied to it,
+        // and DNS-resolved IPs (which exclusions deliberately don't touch) are in both.
         #[cfg(debug_assertions)]
         {
             assert_eq!(
                 HashSet::from_iter(collected.addrs.iter().cloned()),
-                &collected.seen - &collected.excluded,
+                collected.seen,
                 "\"seen\" set does not match parsed addresses! Fix da code, ya dumbass!"
             );
         }

@@ -1,6 +1,6 @@
 [package]
 name = "mping"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Mikko Tanner <mikko.tanner@gmail.com>"]
 description = "Multi-pinger utility written in Rust"
 readme = "README.md"
@@ -16,9 +16,7 @@ default-run = "mping"
 surge-ping = "0.8.3"
 rand = "0.9"
 futures = "0.3"
-regex = "1.12"
-lazy_static = "1.5"
-ipnet = "2.11"
+libc = "0.2"
 signal-hook = "0.3"
 crossterm = "0.29"
 ratatui = "0.30"
