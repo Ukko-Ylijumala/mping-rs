@@ -53,6 +53,7 @@ pub struct LatencyWindow {
     minq: VecDeque<(u32, usize)>,   // monotonic increasing (value, index)
     maxq: VecDeque<(u32, usize)>,   // monotonic decreasing (value, index)
     index: usize,                   // monotonically increasing sample index
+    min_ever: Option<u32>,          // all-time minimum, survives window eviction
 }
 
 impl LatencyWindow {
@@ -71,6 +72,7 @@ impl LatencyWindow {
             minq: VecDeque::new(),
             maxq: VecDeque::new(),
             index: 0,
+            min_ever: None,
         }
     }
 
@@ -79,6 +81,10 @@ impl LatencyWindow {
         let idx: usize = self.index;
         self.index = self.index.wrapping_add(1);
         let val_f: f64 = val as f64;
+
+        // Track the all-time minimum separately - the windowed min expires
+        // with eviction, but f.ex. distance estimation wants the best ever.
+        self.min_ever = Some(self.min_ever.map_or(val, |m| m.min(val)));
 
         if self.len < self.cap {
             // Growing
@@ -183,6 +189,7 @@ impl LatencyWindow {
         self.minq.clear();
         self.maxq.clear();
         self.index = 0;
+        self.min_ever = None;
     }
 
     #[inline]
@@ -222,10 +229,20 @@ impl LatencyWindow {
         Ok(self.stdev)
     }
 
-    /// Minimum RTT value. Useful f.ex. for baseline latency and distance estimates.
+    /// Minimum RTT value within the current window.
     pub fn min(&self) -> Result<u32, String> {
         self.no_samples_check()?;
         Ok(self.minq.front().map(|(v, _)| *v).unwrap_or_default())
+    }
+
+    /// All-time minimum RTT value. Unlike [Self::min], this never expires
+    /// from the rolling window (only [Self::clear] resets it), so it's the
+    /// right statistic for baseline latency and distance estimates.
+    pub fn min_ever(&self) -> Result<u32, String> {
+        match self.min_ever {
+            Some(v) => Ok(v),
+            None => Err("no samples".into()),
+        }
     }
 
     /// Mean value (aka. average).
@@ -342,6 +359,7 @@ mod tests {
         assert!(lw.variance().is_err());
         assert!(lw.stdev().is_err());
         assert!(lw.mean_min_max().is_err());
+        assert!(lw.min_ever().is_err());
 
         lw.push(10);
         assert!(! lw.is_empty());
@@ -350,6 +368,7 @@ mod tests {
         assert_eq!(lw.mean_min_max().unwrap(), (10.0, 10, 10));
         assert_eq!(lw.variance().unwrap(), 0.0);
         assert_eq!(lw.stdev().unwrap(), 0.0);
+        assert_eq!(lw.min_ever().unwrap(), 10);
     }
 
     #[test]
@@ -417,6 +436,7 @@ mod tests {
         assert_eq!(lw.len(), 3, "Wrong len() after 4 pushes, should be 3");
         assert_eq!(lw.last().unwrap(), 40, "Wrong last() after 4 pushes");
         assert_eq!(lw.mean_min_max().unwrap(), (30.0, 20, 40), "Wrong mean/min/max, should have evicted 10");
+        assert_eq!(lw.min_ever().unwrap(), 10, "min_ever should survive window eviction");
 
         let exp_var: f64 = sum_of_squares(&data, false);
         assert_eq!(lw.variance().unwrap(), exp_var, "Wrong population variance after eviction");
@@ -426,6 +446,11 @@ mod tests {
         assert_eq!(lw.stdev_n(2).unwrap(), exp_var.sqrt(), "Wrong sample stdev(2) after eviction");
         let exp_var: f64 = sum_of_squares(&data, true);
         assert_eq!(lw.stdev_n(3).unwrap(), exp_var.sqrt(), "Wrong sample stdev(3) after eviction");
+
+        /////// a new lower value should update min_ever too ////////
+        lw.push(5);
+        assert_eq!(lw.min().unwrap(), 5, "Wrong windowed min after pushing 5");
+        assert_eq!(lw.min_ever().unwrap(), 5, "min_ever should track a new all-time low");
     }
 
     #[test]
@@ -447,5 +472,6 @@ mod tests {
         assert!(lw.variance().is_err());
         assert!(lw.stdev().is_err());
         assert!(lw.mean_min_max().is_err());
+        assert!(lw.min_ever().is_err(), "min_ever should reset on clear()");
     }
 }

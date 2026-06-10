@@ -23,7 +23,7 @@ use crate::{
     strings::*,
     structs::{AppState, TargetDefaults},
     ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow},
-    utils::{make_histogram_buckets, setup_signal_handler},
+    utils::{human_rate, make_histogram_buckets, setup_signal_handler},
 };
 
 use futures::future::join_all;
@@ -39,6 +39,7 @@ use std::{
 use tokio::time::{self, Interval};
 
 const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
+const ICMP_HEADER_BYTES: usize = 8; // for send rate estimation (excludes IP overhead)
 
 type WritableLayout<'a> =
     parking_lot::lock_api::RwLockWriteGuard<'a, parking_lot::RawRwLock, ui::tui::AppLayout>;
@@ -208,6 +209,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
     layout.maybe_update(frame.area(), &data);
     let tgts = state.targets.read();
     let num_tgts: usize = tgts.len();
+    // actively pinged targets, for send rate / bandwidth display (cheap atomics)
+    let active: usize = tgts
+        .iter()
+        .filter(|t| !t.is_paused() && !t.is_stopped())
+        .count();
     let selected = layout
         .tablestate
         .selected()
@@ -306,6 +312,11 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
     }
 
     /* -------- Lower info area - bottom right corner -------- */
+    // Nominal ICMP send rate over the actively pinged targets. The actual
+    // rate can be lower (perf-mode inflight cap, scheduling), but so can
+    // the displayed interval/timeout be off - this is an info box.
+    let pps: f64 = active as f64 / state.defaults.interval.as_secs_f64();
+    let bw: String = human_rate(pps * (state.payload.len() + ICMP_HEADER_BYTES) as f64);
     #[rustfmt::skip]
     let w_info_lower = Paragraph::new(templater!(
         INFO_STATE,
@@ -313,7 +324,9 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
         state.defaults.timeout.as_millis(),
         state.payload.len(),
         if state.defaults.randomize { INFO_RAND } else { "" },
-        state.spawned_tasks()
+        state.spawned_tasks(),
+        format!("{pps:.1}"),
+        bw
     ))
     .block(BLK_PAD_L1.clone());
 

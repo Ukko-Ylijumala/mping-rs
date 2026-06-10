@@ -556,7 +556,12 @@ impl PingTarget {
     }
 
     /**
-    Return the (estimated!) distance to this target in kilometers, based on minimum RTT.
+    Return the (estimated!) distance to this target in kilometers, based on the
+    *all-time* minimum RTT. The windowed minimum would expire with eviction and
+    let the estimate drift upwards; physical distance doesn't change, so the
+    best sample ever seen is the right basis. A stats reset (`R`) starts the
+    measurement over - the escape hatch for anycast / network moves.
+
     Returns an error if minimum RTT is not available.
 
     ### Formula:
@@ -580,7 +585,7 @@ impl PingTarget {
     */
     #[inline]
     pub fn est_distance_km(&self, factor: f64) -> Result<f64, String> {
-        self.data.read().rtts.min().map(|micros| {
+        self.data.read().rtts.min_ever().map(|micros| {
             let rtt_min: f64 = (micros as f64 / 1e6).max(LATENCY_FLOOR); // assume at least t0
             let factor: f64 = factor.max(0.1); // avoid div by zero
             let l_geodesic: f64 =

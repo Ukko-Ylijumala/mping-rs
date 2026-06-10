@@ -21,6 +21,7 @@ LatencyWindow {
     minq:   VecDeque<(u32, usize)>  // monotonic increasing  (value, sample idx)
     maxq:   VecDeque<(u32, usize)>  // monotonic decreasing  (value, sample idx)
     index:  usize          // monotonically-increasing global sample index
+    min_ever: Option<u32>  // all-time minimum — survives window eviction
 }
 ```
 
@@ -57,7 +58,15 @@ pushed and popped from each deque at most once.
 
 - `len`, `is_empty`, `maxlen` — trivial.
 - `mean()` — `Σx / n` from cached sums.
-- `min()` / `max()` — front of `minq` / `maxq`. O(1).
+- `min()` / `max()` — front of `minq` / `maxq`. O(1). These are *windowed*:
+  the all-time best sample expires after `cap` further pushes.
+- `min_ever()` — the all-time minimum, updated on every `push` and only
+  reset by `clear()`. This is what distance estimation uses
+  (`est_distance_km`), because RTT noise is one-sided (queueing only adds
+  latency), so the best sample ever seen is the tightest propagation-delay
+  bound — letting it expire with the window would make the distance
+  estimate drift upwards. The table's Min column stays windowed on purpose:
+  it answers "how is the link lately", not "where is this".
 - `mean_min_max()` — single-call helper used by `StatsSnapshot`.
 - `variance()` / `stdev_pop()` — return the cached value.
 - `stdev_n(window)` — a Bessel-corrected (sample) stdev over the last
@@ -83,10 +92,12 @@ wrong.
 
 ## Clear and rebuild
 
-`clear()` zeroes everything in place; the ring buffer is filled with `0u32`
-and both deques are cleared. The `index` resets to 0 — this is fine
-because all in-flight entries in the deques were just dropped.
-`Command::ResetTgtStats` (`structs.rs:349`) is the only place that calls it.
+`clear()` zeroes everything in place; the ring buffer is filled with `0u32`,
+both deques are cleared, and `min_ever` resets to `None`. The `index` resets
+to 0 — this is fine because all in-flight entries in the deques were just
+dropped. `Command::ResetTgtStats` (`structs.rs:349`) is the only place that
+calls it — which doubles as the user's "re-measure from here" gesture when
+`min_ever` has gone stale (anycast POP change, laptop moved networks).
 
 ## Testing
 

@@ -18,7 +18,16 @@ L_geodesic  =  ─────────────────────�
 ```
 
 - `L_geodesic` — estimated one-way distance, in kilometres
-- `RTT_min`   — minimum observed RTT over the rolling window, in seconds
+- `RTT_min`   — *all-time* minimum observed RTT (`LatencyWindow::min_ever`),
+                in seconds. Not the windowed minimum: that expires after
+                `histsize` received replies (minutes at fast intervals) and
+                would let the estimate ratchet upwards, while physical
+                distance doesn't change. RTT noise is one-sided — queueing
+                and routing only ever add latency — so the best sample ever
+                seen is the tightest bound on propagation delay. A stats
+                reset (`R`) restarts the measurement; that's the escape
+                hatch when the estimate is genuinely stale (anycast POP
+                change, machine moved networks).
 - `t0`        — `LATENCY_FLOOR = 200 µs` baseline for non-propagation delays
 - `v`         — `SPEED_KM_S = 204 000 km/s`, signal speed in single-mode fiber
                 (≈ 2/3 of `c` in vacuum)

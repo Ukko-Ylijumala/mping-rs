@@ -344,6 +344,20 @@ where
 
 /* -------------------------------------------------------------------------- */
 
+/// Format a byte rate as a human-readable string (B/s, kB/s or MB/s).
+/// Uses decimal (SI) units, as is the convention for network data rates.
+pub fn human_rate(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1e6 {
+        format!("{:.2} MB/s", bytes_per_sec / 1e6)
+    } else if bytes_per_sec >= 1e3 {
+        format!("{:.1} kB/s", bytes_per_sec / 1e3)
+    } else {
+        format!("{bytes_per_sec:.0} B/s")
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
 /// A single histogram bucket for data distribution.
 #[derive(Debug, Clone)]
 pub struct HistogramBucket {
