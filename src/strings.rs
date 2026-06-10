@@ -7,6 +7,19 @@ pub static APP_TITLE: &str = "mping - Multi-pinger";
 pub static HEADERS: [&str; 10] = ["Address", "Sent", "Recv", "Loss", "Last", "Mean", "Min", "Max", "Stdev", "Status"];
 pub static HDR_SEQ: &str = "Seq";
 
+// Column indices into HEADERS (keep in sync!). COL_SEQ is the debug-only extra.
+pub const COL_ADDRESS: usize = 0;
+pub const COL_SENT: usize = 1;
+pub const COL_RECV: usize = 2;
+pub const COL_LOSS: usize = 3;
+pub const COL_LAST: usize = 4;
+pub const COL_MEAN: usize = 5;
+pub const COL_MIN: usize = 6;
+pub const COL_MAX: usize = 7;
+pub const COL_STDEV: usize = 8;
+pub const COL_STATUS: usize = 9;
+pub const COL_SEQ: usize = 10;
+
 // missing value placeholder for textual output
 pub static MISSING: &str = "-";
 
@@ -41,6 +54,7 @@ pub static APP_RUNNING: &str = " mping initialized. Press 'q' to quit, 'F1' for 
 pub static INFO_QUITTING: &str = "main thread quitting. Waiting for tasks to terminate...";
 pub static INFO_INFO: &str = " Info ";
 pub static INFO_TGTS: &str = " Targets: {} ";
+pub static INFO_TGTS_SORTED: &str = " Targets: {} | sort: {} {} ";
 pub static INFO_NO_TGTS: &str = " No targets";
 pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}";
 pub static INFO_SELECT: &str = " Select a target to see detailed info.";
@@ -185,6 +199,10 @@ pub static INFO_RESET: &str = "resetting statistics for '{}'";
 pub static INFO_STOP: &str = "stopping '{}'";
 pub static INFO_REMOVE: &str = "removing '{}'";
 pub static INFO_UNR_REM: &str = "removed {} unreachable target(s) in {}ms ({} -> {})";
+pub static INFO_SORTED: &str = "targets sorted by {} ({})";
+pub static INFO_SORT_RESET: &str = "target sort order reset to original";
+pub static SORT_ASC: &str = "ascending";
+pub static SORT_DESC: &str = "descending";
 pub static EMPTY_RESP: &str = "empty response";
 pub static ADD_TGT_DIALOG: &str = "Add targets and exclusions (space separated; Esc to cancel)";
 pub static ADD_TGT_DIA_ADDRS: &str = "IP addrs/ranges/CIDRs:";
@@ -193,13 +211,14 @@ pub static ADD_TGT_DIA_PAUSE: &str = "Add as paused";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 24] = [
+pub static HELP_KEYS: [[&str; 2]; 25] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
+    ["Shift+Up/Down",  "Sort by selected column (same direction again: reset)"],
     ["PageUp, PageDn", "Page target list up/down (with shift: 10 lines)"],
     ["",               "(if popup is visible, page its content up/down instead)"],
     ["Home, End",      "Jump to top/bottom of target list"],
-    ["Backspace",      "Clear row and column selections"],
+    ["Backspace",      "Clear row/column selections and sorting"],
     ["",                ""],
     ["<space>",        "Toggle pause/resume pinging for selected target"],
     ["Enter",          "Update the selected target's details in the info panel"],

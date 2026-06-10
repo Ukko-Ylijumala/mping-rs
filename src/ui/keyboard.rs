@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -50,6 +50,13 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 // terminal in raw mode -> ctrl-c has to be processed manually
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
 
+                // Sort by the selected column: Shift+Up ascending, Shift+Down
+                // descending; the same direction again resets to original order.
+                // NOTE: must come before the plain Up/Down arms, which match
+                // any modifier.
+                (KeyCode::Up, KeyModifiers::SHIFT) => handle_sort(app, tui, false),
+                (KeyCode::Down, KeyModifiers::SHIFT) => handle_sort(app, tui, true),
+
                 // Table navigation: up/down
                 (KeyCode::Up, _) => tui.layout.write().tablestate.select_previous(),
                 (KeyCode::Down, _) => tui.layout.write().tablestate.select_next(),
@@ -91,9 +98,15 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                     }
                 }
 
-                // Clear table selections
+                // Clear table selections and sorting
                 (KeyCode::Backspace, _) => {
+                    // restore original target order first, if sorted
+                    // (lock-order: execute before taking the layout lock)
+                    if tui.layout.read().sort_state.is_some() {
+                        app.execute(Command::SortReset);
+                    }
                     let mut lo = tui.layout.write();
+                    lo.sort_state = None;
                     lo.tablestate.select(None);
                     lo.tablestate.select_column(None);
                 }
@@ -246,6 +259,44 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
     } else {
         // nothing was polled during the wait time
         Ok(false)
+    }
+}
+
+/**
+Sort handler for Shift+Up/Down. Sorts by the currently selected column
+(no-op when no column is selected); pressing the same direction again
+restores the original (insertion) order. The row selection follows the
+previously selected target to its new position.
+
+NOTE: lock-order - `layout` is never held while calling [AppState::execute].
+*/
+fn handle_sort(app: &Arc<AppState>, tui: &Arc<TuiState>, descending: bool) {
+    let (col, current) = {
+        let lo = tui.layout.read();
+        (lo.tablestate.selected_column(), lo.sort_state)
+    };
+    let Some(col) = col else { return };
+
+    // same direction on the same column again -> back to original order
+    if current == Some((col, descending)) {
+        if app.execute(Command::SortReset) == CmdResult::Done {
+            tui.layout.write().sort_state = None;
+        }
+        return;
+    }
+
+    // remember the selected target so the selection can follow it post-sort
+    let selected = tui.layout.read().tablestate.selected();
+    let selected_addr = selected.and_then(|i| app.targets.read().get(i).map(|t| t.addr));
+
+    if app.execute(Command::Sort(col, descending)) == CmdResult::Done {
+        let new_idx =
+            selected_addr.and_then(|a| app.targets.read().iter().position(|t| t.addr == a));
+        let mut lo = tui.layout.write();
+        lo.sort_state = Some((col, descending));
+        if new_idx.is_some() {
+            lo.tablestate.select(new_idx);
+        }
     }
 }
 

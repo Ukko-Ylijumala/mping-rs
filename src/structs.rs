@@ -1,11 +1,11 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
     args::MpConfig,
     logging::{Logger, MessageBuffer},
-    pingdata::PingTarget,
+    pingdata::{PingStatus, PingTarget},
     strings::*,
     utils::nice_permission_error,
 };
@@ -158,6 +158,8 @@ impl AppState {
             Command::ResetTgtStats(idx) => self.reset_target_stats(idx),
             Command::TogglePerf => self.toggle_perf(),
             Command::RemoveAllUnreach => self.remove_all_unreachables(),
+            Command::Sort(col, desc) => self.sort_targets(col, desc),
+            Command::SortReset => self.sort_targets_reset(),
         }
     }
 
@@ -415,6 +417,133 @@ impl AppState {
         }
         CmdResult::None
     }
+
+    /**
+    Sort the target list by the given column index (see `COL_*` in
+    [crate::strings]). One-shot: the list keeps the new order until the next
+    sort or [Self::sort_targets_reset] - data changing afterwards does NOT
+    re-sort (rows jumping around under the cursor would be maddening).
+
+    The sort is stable (ties keep their current relative order) and targets
+    with no data for the column always sort last, regardless of direction.
+
+    NOTE: locks `targets` for writing, and each target's inner `data` for reading.
+    */
+    fn sort_targets(&self, col: usize, descending: bool) -> CmdResult {
+        if col > COL_SEQ || (col == COL_SEQ && !self.debug) {
+            return CmdResult::NotFound;
+        }
+
+        // decorate-sort-undecorate so each target's data lock is taken
+        // exactly once instead of O(n log n) times inside the comparator
+        let mut targets = self.targets.write();
+        let mut keyed: Vec<((bool, SortVal), Arc<PingTarget>)> = targets
+            .iter()
+            .map(|t| (sort_key(t, col), t.clone()))
+            .collect();
+        keyed.sort_by(|(a, _), (b, _)| {
+            // missing-data flag first (always ascending), then the value
+            a.0.cmp(&b.0).then_with(|| {
+                let ord = a.1.cmp(&b.1);
+                if descending { ord.reverse() } else { ord }
+            })
+        });
+        *targets = keyed.into_iter().map(|(_, t)| t).collect();
+        drop(targets);
+
+        self.logger.debug(templater!(
+            INFO_SORTED,
+            HEADERS.get(col).copied().unwrap_or(HDR_SEQ),
+            if descending { SORT_DESC } else { SORT_ASC }
+        ));
+        CmdResult::Done
+    }
+
+    /// Restore the original (insertion) order of the target list by sorting
+    /// on [PingTarget::added_order].
+    ///
+    /// NOTE: locks `targets` for writing.
+    fn sort_targets_reset(&self) -> CmdResult {
+        self.targets.write().sort_by_key(|t| t.added_order);
+        self.logger.debug(INFO_SORT_RESET);
+        CmdResult::Done
+    }
+}
+
+/* ---------------------------------- */
+
+/// Comparable per-column sort key. The same column always yields the same
+/// variant, so cross-variant comparisons cannot happen in practice.
+enum SortVal {
+    Ip(IpAddr),
+    Num(f64),
+}
+
+impl SortVal {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (SortVal::Ip(a), SortVal::Ip(b)) => a.cmp(b),
+            (SortVal::Num(a), SortVal::Num(b)) => a.total_cmp(b),
+            _ => std::cmp::Ordering::Equal, // unreachable (see above)
+        }
+    }
+}
+
+/// Rank effective statuses from best (0) to worst for sorting purposes.
+fn status_rank(s: &PingStatus) -> f64 {
+    match s {
+        PingStatus::Ok => 0.0,
+        PingStatus::Resuming => 1.0,
+        PingStatus::Laggy => 2.0,
+        PingStatus::Flappy => 3.0,
+        PingStatus::Lossy => 4.0,
+        PingStatus::Timeout => 5.0,
+        PingStatus::NotReachable => 6.0,
+        PingStatus::Error(_) => 7.0,
+        PingStatus::Paused => 8.0,
+        PingStatus::Stopped => 9.0,
+        PingStatus::None => 10.0,
+    }
+}
+
+/// Extract a `(missing, key)` sort pair from a target for the given column.
+/// `missing` entries are sorted last by [AppState::sort_targets].
+///
+/// NOTE: may lock the target's inner `data` for reading.
+fn sort_key(tgt: &Arc<PingTarget>, col: usize) -> (bool, SortVal) {
+    use SortVal::*;
+
+    /// Helper for the Option-valued RTT columns.
+    fn opt(v: Option<f64>) -> (bool, SortVal) {
+        match v {
+            Some(v) => (false, Num(v)),
+            None => (true, Num(0.0)),
+        }
+    }
+
+    // these two don't need the data lock
+    match col {
+        COL_ADDRESS => return (false, Ip(tgt.addr)),
+        COL_STATUS => return (false, Num(status_rank(&tgt.effective_status()))),
+        _ => {}
+    }
+
+    let data = tgt.data.read();
+    match col {
+        COL_SENT => (false, Num(data.sent as f64)),
+        COL_RECV => (false, Num(data.recv as f64)),
+        COL_LOSS => match data.sent {
+            0 => (true, Num(0.0)),
+            s => (false, Num(s.saturating_sub(data.recv) as f64 / s as f64)),
+        },
+        COL_LAST => opt(data.rtts.last().ok().map(|v| v as f64)),
+        COL_MEAN => opt(data.rtts.mean().ok()),
+        COL_MIN => opt(data.rtts.min().ok().map(|v| v as f64)),
+        COL_MAX => opt(data.rtts.max().ok().map(|v| v as f64)),
+        COL_STDEV => opt(data.rtts.stdev().ok()),
+        COL_SEQ => (false, Num(data.last_seq as f64)),
+        _ => (true, Num(0.0)), // out of range - sorts last, caller filtered already
+    }
 }
 
 /* ---------------------------------- */
@@ -595,6 +724,10 @@ pub(crate) enum Command {
     TogglePerf,
     /// Remove all unreachable targets.
     RemoveAllUnreach,
+    /// Sort the target list by column index (`true` = descending). One-shot.
+    Sort(usize, bool),
+    /// Restore the original (insertion) order of the target list.
+    SortReset,
 }
 
 /// Result of a [Command] execution.

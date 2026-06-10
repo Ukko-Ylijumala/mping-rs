@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -19,7 +19,7 @@ use std::{
     ops::Index,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -35,6 +35,9 @@ const SPEED_KM_S: f64 = 204e3; // Approx speed of light in fiber (204 000 km/s)
 const STRETCH_FACTOR: f64 = 1.3; // Inflation factor to account for non-direct paths etc
 const LATENCY_FLOOR: f64 = 2e-4; // 0.2 ms baseline latency floor (non-propagation)
 const BAND_SIZE_KM: f64 = 100.0; // Quantize to nearest 100km
+
+/// Global creation counter behind [PingTarget::added_order].
+static ADD_ORDER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) enum PingStatus {
@@ -187,11 +190,15 @@ abort the (spawned) ping task, which currently is irreversible.
 - `ptr`: Last known PTR record query response (protected by a [RwLock]).
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
 - `hostname`: The host or DNS name this target was resolved from, if any.
+- `added_order`: Monotonic creation stamp. The target list can be re-sorted
+physically (column sorting in the UI); sorting by this restores the original
+insertion order at any point, surviving runtime adds and removals.
 */
 #[derive(Debug)]
 pub(crate) struct PingTarget {
     pub addr: IpAddr,
     pub rev: String,
+    pub added_order: u64,
     pub data: RwLock<PingTargetInner>,
     paused: AtomicBool,
     cancel: CancellationToken,
@@ -223,6 +230,7 @@ impl PingTarget {
         Self {
             addr,
             rev: reverse_name(&addr),
+            added_order: ADD_ORDER.fetch_add(1, Ordering::Relaxed),
             data: data.into(),
             hops: QueryResponse::default().into(),
             ptr: QueryResponse::default().into(),

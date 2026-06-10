@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Mikko Tanner. All rights reserved.
+// Copyright (c) 2025-2026 Mikko Tanner. All rights reserved.
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -233,6 +233,12 @@ impl LatencyWindow {
     pub fn min(&self) -> Result<u32, String> {
         self.no_samples_check()?;
         Ok(self.minq.front().map(|(v, _)| *v).unwrap_or_default())
+    }
+
+    /// Maximum RTT value within the current window.
+    pub fn max(&self) -> Result<u32, String> {
+        self.no_samples_check()?;
+        Ok(self.maxq.front().map(|(v, _)| *v).unwrap_or_default())
     }
 
     /// All-time minimum RTT value. Unlike [Self::min], this never expires

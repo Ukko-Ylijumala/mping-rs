@@ -142,6 +142,8 @@ pub(crate) struct AppLayout {
     pub tbl_constraints: Vec<Constraint>,
     /// Stateful table state for managing selection, scrolling, etc.
     pub tablestate: TableState,
+    /// Active table sort: `(column index, descending)`. `None` = original order.
+    pub sort_state: Option<(usize, bool)>,
     /// Popup state for List-based content.
     pub liststate: ListState,
     pub help_visible: bool,

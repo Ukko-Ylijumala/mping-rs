@@ -68,6 +68,8 @@ state mutations it can trigger:
 | `ResetTgtStats(idx)` | Zeroes counts and clears the latency window / history | |
 | `TogglePerf` | Flips the `perf` atomic | See [concurrency](concurrency.md) |
 | `RemoveAllUnreach` | Bulk-removes unreachable targets | Returns `CmdResult::Count(n)` so the keyboard handler can clear the selection |
+| `Sort(col, desc)` | One-shot stable sort of the targets vec by column | Physical reorder, so UI index == vec index stays true everywhere; missing values always sort last; ties keep current order |
+| `SortReset` | Restores insertion order | Sorts by `PingTarget::added_order`, a monotonic creation stamp — correct at any time, survives runtime adds/removals (a startup-built index list would go stale) |
 
 `AppState::execute(cmd)` (`structs.rs:149-162`) is a simple match dispatch.
 It is synchronous — anything async-y inside individual handlers happens via
@@ -80,10 +82,11 @@ It is synchronous — anything async-y inside individual handlers happens via
 | `q`, Ctrl-C | Quit (Ctrl-C only because raw mode swallows the SIGINT) |
 | ↑ / ↓ | Move row selection |
 | ← / → | Move column selection |
+| Shift+↑ / Shift+↓ | Sort by selected column (asc / desc); same direction again resets to original order |
 | PageUp / PageDown | Scroll one viewport (or scroll popup if visible) |
 | Shift+PageUp/Down | Scroll 10 rows |
 | Home / End | First / last row |
-| Backspace | Clear table selection |
+| Backspace | Clear table selection and sorting |
 | Space | Toggle pause on selected target |
 | `p` / `P` | Pause all / Resume all |
 | `S` | Stop selected target |
@@ -101,6 +104,32 @@ Definitions live in `src/ui/keyboard.rs:37-235`. After handling an event,
 the loop drains any backed-up events with `event::poll(0)`
 (`keyboard.rs:221`) so a held-down key doesn't queue dozens of redundant
 notifies.
+
+## Column sorting
+
+Sorting is a **physical, one-shot** reorder of the `targets` vec
+(`AppState::sort_targets` in `structs.rs`), not a display view. This keeps
+"UI row index == targets vec index" true everywhere, so all the
+index-based commands (`TogglePause(idx)` etc.) work untouched. The
+trade-offs and mechanics:
+
+- One-shot: data changing after the sort does *not* re-sort (live
+  re-sorting makes rows jump under the cursor). Press the same sort again
+  to re-sort with fresh data.
+- "Original order" is *sort by `PingTarget::added_order`*, a monotonic
+  creation stamp — not a stored index list, which would go stale on
+  runtime adds/removals.
+- The sort key is extracted once per target (decorate-sort-undecorate),
+  taking each target's inner `data` read lock exactly once. Targets with
+  no data for the column sort last regardless of direction; ties keep
+  their current relative order (stable sort).
+- The UI state lives in `AppLayout.sort_state: Option<(col, desc)>`,
+  driving both the toggle logic in `handle_sort` (`ui/keyboard.rs`) and
+  the sort indicator in the table's bottom title. `handle_sort` also makes
+  the row selection follow the previously selected target (by address) to
+  its new position.
+- Targets added while sorted simply append at the end; re-sort to
+  integrate them.
 
 ## The add-target dialog branch
 

@@ -357,9 +357,17 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
     if num_tgts == 0 {
         frame.render_widget(PARA_NO_TGTS.clone().block(BORDERS.clone()), layout.table);
     } else {
-        let b_tbl = BORDERS
-            .clone()
-            .title_bottom(Line::from(templater!(INFO_TGTS, num_tgts)));
+        // table title shows the active sort column + direction, if any
+        let tbl_title: String = match layout.sort_state {
+            Some((col, desc)) => templater!(
+                INFO_TGTS_SORTED,
+                num_tgts,
+                tui.headers.strings().get(col).copied().unwrap_or(MISSING),
+                if desc { ARROW_DOWN } else { ARROW_UP }
+            ),
+            None => templater!(INFO_TGTS, num_tgts),
+        };
+        let b_tbl = BORDERS.clone().title_bottom(Line::from(tbl_title));
         let w_table = Table::new(
             data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
             &layout.tbl_constraints,
