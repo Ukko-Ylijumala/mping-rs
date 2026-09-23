@@ -22,7 +22,7 @@ Log level for messages. Follows Linux syslog convention, but
 adds "trace" at 15. Default is "info". "Emergency" and "alert"
 are expected to not be used, as we should not be system critical.
 */
-#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {
     Emergency,
     Alert,
@@ -192,9 +192,18 @@ impl PartialOrd for Message {
     }
 }
 
+/**
+Chronological, with level and text as tie-breakers. The tie-breakers keep
+`Ord` consistent with the derived `Eq` (all fields): comparing on `when`
+alone made two different messages with the same timestamp `Equal` while
+`==` said otherwise, which sorted collections and dedup rely on not happening.
+*/
 impl Ord for Message {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.when.cmp(&other.when)
+        self.when
+            .cmp(&other.when)
+            .then_with(|| self.lvl.cmp(&other.lvl))
+            .then_with(|| self.msg.cmp(&other.msg))
     }
 }
 
@@ -388,4 +397,22 @@ impl Logger for MessageBuffer {
 
     // Implement level-specific logging methods.
     gen_level_methods_impl!(crit, error, warn, notice, info, debug, trace);
+}
+
+/* -------------------------------------------------------------------------- */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn message_ord_agrees_with_eq() {
+        let a = Message::info("a");
+        let mut b = a.clone();
+        assert_eq!(a.cmp(&b), Ordering::Equal);
+        b.msg = "b".into(); // same timestamp and level, different text
+        assert_ne!(a, b);
+        assert_ne!(a.cmp(&b), Ordering::Equal, "Ord must not call unequal messages Equal");
+    }
 }
