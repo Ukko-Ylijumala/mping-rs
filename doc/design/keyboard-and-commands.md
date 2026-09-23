@@ -79,7 +79,8 @@ It is synchronous — anything async-y inside individual handlers happens via
 
 | Key | Action |
 |---|---|
-| `q`, Ctrl-C | Quit (Ctrl-C only because raw mode swallows the SIGINT) |
+| `q` | Close the topmost popup (help, log, event timeline) if one is open, otherwise quit |
+| Ctrl-C | Always quit (handled here because raw mode swallows the SIGINT) |
 | ↑ / ↓ | Move row selection |
 | ← / → | Move column selection |
 | Shift+↑ / Shift+↓ | Sort by selected column (asc / desc); same direction again resets to original order |

@@ -104,8 +104,9 @@ mechanism, not the goal.
 
 `AppState::internal_tick` is `min(100ms, interval)` (`structs.rs`). Only the
 render loop uses it now, as its no-op "keep the select alive" branch — it
-bounds how quickly the render loop notices the quit flag and re-evaluates
-its refresh deadline. The ping loops no longer use it (see above).
+bounds how quickly the render loop re-evaluates its refresh deadline (and
+notices a flag-only quit; normal quits cancel `AppState::shutdown` and wake
+it at once). The ping loops no longer use it (see above).
 
 ## What runs where, by example
 

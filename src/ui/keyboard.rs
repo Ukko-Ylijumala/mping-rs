@@ -44,8 +44,13 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
             }
 
             match (e.code, e.modifiers) {
-                // Quit the application
-                (KeyCode::Char('q'), KeyModifiers::NONE) => { app.execute(Command::Quit); },
+                // Quit the application - or, if a popup is open, just close it
+                // (a reflexive 'q' to dismiss help shouldn't end the session)
+                (KeyCode::Char('q'), KeyModifiers::NONE) => {
+                    if !close_top_overlay(tui) {
+                        app.execute(Command::Quit);
+                    }
+                },
 
                 // terminal in raw mode -> ctrl-c has to be processed manually
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
@@ -218,18 +223,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 (KeyCode::Char('a'), _) => { tui.add_tgt_dialog_open(); }
 
                 // Close active popup/help/input overlays
-                (KeyCode::Esc, _) => {
-                    let mut lo = tui.layout.write();
-                    if lo.help_visible {
-                        lo.help_visible = false;
-                    } else if lo.input_visible {
-                        lo.input_visible = false;
-                    } else if lo.popup_visible {
-                        *tui.popup_contents.write() = PopupContents::None;
-                        lo.popup_visible = false;
-                        lo.liststate.select(None);
-                    }
-                }
+                (KeyCode::Esc, _) => { close_top_overlay(tui); }
 
                 // Show/hide the help popup
                 (KeyCode::F(1), _) => {
@@ -281,6 +275,28 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
         // nothing was polled during the wait time
         Ok(false)
     }
+}
+
+/**
+Close the topmost visible overlay (help, then input dialog, then the text
+popup). Returns `false` if nothing was open.
+
+NOTE: lock-order - takes `layout` then `popup_contents`, same as render.
+*/
+fn close_top_overlay(tui: &TuiState) -> bool {
+    let mut lo = tui.layout.write();
+    if lo.help_visible {
+        lo.help_visible = false;
+    } else if lo.input_visible {
+        lo.input_visible = false;
+    } else if lo.popup_visible {
+        *tui.popup_contents.write() = PopupContents::None;
+        lo.popup_visible = false;
+        lo.liststate.select(None);
+    } else {
+        return false;
+    }
+    true
 }
 
 /**

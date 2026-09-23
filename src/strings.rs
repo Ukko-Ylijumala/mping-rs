@@ -222,7 +222,7 @@ pub static ADD_TGT_DIA_PAUSE: &str = "Add as paused";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 26] = [
+pub static HELP_KEYS: [[&str; 2]; 27] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["Shift+Up/Down",  "Sort by selected column (same direction again: reset)"],
@@ -244,7 +244,8 @@ pub static HELP_KEYS: [[&str; 2]; 26] = [
     ["CTRL+Delete",    "Stop and remove all unreachable targets"],
     ["",               ""],
     ["Esc",            "Close popups (help, messages) or input box"],
-    ["q, CTRL-C",      "Quit the program"],
+    ["q",              "Close the open popup, or quit the program"],
+    ["CTRL-C",         "Quit the program (always)"],
     ["",                ""],
     ["F1",             "Show/hide this help screen"],
     ["F10",            "Toggle \"perf\" mode (reduce task spawn overhead)"],
