@@ -11,7 +11,7 @@ doesn't degrade as window size grows.
 ```text
 LatencyWindow {
     cap:    usize          // window capacity, clamped to MIN_WINDOW_SIZE = 3
-    buf:    Vec<u32>       // ring buffer of µs RTTs
+    buf:    Vec<u32>       // ring buffer of µs RTTs; grows on push up to cap
     head:   usize          // next write position
     len:    usize          // current size, ≤ cap
     sum:    f64            // running Σ x

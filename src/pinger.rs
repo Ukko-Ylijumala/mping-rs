@@ -12,11 +12,12 @@ use crate::{
 };
 use futures::stream::{FuturesUnordered, StreamExt};
 use rand::{fill, random};
-use std::{future::Future, net::IpAddr, sync::Arc};
+use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
 use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
 use tokio::time::{self, Instant, Interval};
 
 const PAYLOAD_RND_BYTES: usize = 32;
+const MAX_INFLIGHT: usize = 5; // perf mode: max pending pings per target
 
 /**
 Helper to mark a ping as sent and calculate the next sequence number.
@@ -53,7 +54,6 @@ fn build_payload(app: &AppState) -> Arc<[u8]> {
     match app.defaults.randomize {
         true => {
             let mut payload: Arc<[u8]> = app.payload.clone();
-            let payload: &mut [u8] = Arc::make_mut(&mut payload);
             /*
             Can't use a thread-local RNG here (for performance)
             because it's not Send'able across await points.
@@ -61,8 +61,8 @@ fn build_payload(app: &AppState) -> Arc<[u8]> {
             the first 32 bytes of the payload, which should be plenty.
             And we already know the payload must be 32 bytes minimum.
             */
-            fill(&mut payload[..PAYLOAD_RND_BYTES]);
-            payload.into()
+            fill(&mut Arc::make_mut(&mut payload)[..PAYLOAD_RND_BYTES]);
+            payload // the make_mut copy itself - no second allocation
         }
         false => app.payload.clone(),
     }
@@ -107,6 +107,19 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
     });
 }
 
+/**
+Perf-mode bound on concurrently pending pings per target.
+
+floor + 1, not ceil: at an integer ratio (the default 2s / 1s) the oldest
+ping times out a hair *after* the tick that wants its slot, so ceil would
+skip every (ratio + 1)th probe to an unresponsive target. Args caps the
+timeout at 4 intervals, hence at most 5 in flight.
+*/
+fn max_inflight(interval: Duration, timeout: Duration) -> usize {
+    let interval: f64 = interval.as_secs_f64().max(1e-6); // 1 us min to avoid div by zero
+    ((timeout.as_secs_f64() / interval).floor() as usize + 1).clamp(1, MAX_INFLIGHT)
+}
+
 /* -------------------------------------------------------------------------- */
 
 /// Set up a ping loop for each target.
@@ -120,9 +133,7 @@ pub(crate) async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
     let mut next_ping: Instant = tokio::time::Instant::now();
 
     // These variables are used only if perf mode is enabled
-    let interval: f64 = app.defaults.interval.as_secs_f64().max(1e-6); // 1 us min to avoid div by zero
-    let timeout: f64 = app.defaults.timeout.as_secs_f64();
-    let max_inflight: usize = ((timeout / interval).ceil() as usize).clamp(1, 4);
+    let max_inflight: usize = max_inflight(app.defaults.interval, app.defaults.timeout);
     let mut inflight = FuturesUnordered::new();
 
     loop {
@@ -237,4 +248,26 @@ pub(crate) async fn collect_and_spawn(
     spawn_ping_loops(app, &added);
 
     AddOutcome { collected, added, skipped }
+}
+
+/* -------------------------------------------------------------------------- */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_inflight_bounds() {
+        let ms = Duration::from_millis;
+        // integer ratios need one slot more than the ratio (see fn docs)
+        assert_eq!(max_inflight(ms(1000), ms(2000)), 3);
+        assert_eq!(max_inflight(ms(500), ms(2000)), 5);
+        assert_eq!(max_inflight(ms(1000), ms(1000)), 2);
+        // fractional ratios: floor + 1 == ceil
+        assert_eq!(max_inflight(ms(1000), ms(2500)), 3);
+        assert_eq!(max_inflight(ms(1000), ms(500)), 1);
+        // clamped
+        assert_eq!(max_inflight(ms(10), ms(5000)), MAX_INFLIGHT);
+        assert_eq!(max_inflight(Duration::ZERO, ms(10)), MAX_INFLIGHT);
+    }
 }

@@ -51,7 +51,9 @@ replies by `(host, ident, seq)` and rejects such a duplicate as an
 `IdenticalRequests` error, which would itself decrement `sent` and repeat
 the collision. The 16-bit counter wraps at 65 536 (the protocol limit for
 ICMP Echo) via `wrapping_add`, so a long-lived target keeps producing valid
-sequence numbers indefinitely. `reset_stats` resets it to zero.
+sequence numbers indefinitely. `reset_stats` deliberately leaves it alone:
+pings may still be in flight across a reset, and restarting at zero would
+re-issue their sequence numbers.
 
 ## Three tiers of status
 

@@ -29,6 +29,9 @@ const ICMP_HEADER_SIZE: usize = 8; // ICMP(v4/v6) header size
 const IPV4_HEADER_MIN: usize = 20; // IPv4 header size without options
 const IPV6_HEADER_SIZE: usize = 40; // IPv6 header size (fixed)
 const RECV_BUF_SIZE: usize = 1500;
+/// Shortest read timeout we hand to the socket. Anything under 1 µs becomes
+/// `timeval {0, 0}`, which `SO_RCVTIMEO` treats as "block forever".
+const MIN_READ_TIMEOUT: Duration = Duration::from_millis(1);
 
 /**
 Estimate hop count for a single target using one ICMP Echo Request/Reply.
@@ -62,12 +65,13 @@ fn estimate_hops(received_ttl: u8) -> u8 {
     }
 }
 
-/// Time left until `deadline`, or a timeout error if it has passed.
+/// Time left until `deadline`, or a timeout error if (nearly) passed.
+/// See [MIN_READ_TIMEOUT] for why "nearly" matters.
 #[inline]
 fn time_left(deadline: Instant) -> Result<Duration, String> {
     deadline
         .checked_duration_since(Instant::now())
-        .filter(|d| !d.is_zero())
+        .filter(|d| *d >= MIN_READ_TIMEOUT)
         .ok_or_else(|| TIMEOUT.to_string())
 }
 

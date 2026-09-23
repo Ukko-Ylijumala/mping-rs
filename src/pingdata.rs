@@ -398,7 +398,8 @@ impl PingTarget {
     NOTE: locks the inner `data` for writing.
     */
     pub fn reset_stats(&self) {
-        let paused: bool = self.is_paused();
+        // a stopped target stays excluded from monitored time after a reset
+        let paused: bool = self.is_paused() || self.is_stopped();
         let mut data = self.data.write();
         data.sent = 0;
         data.recv = 0;
@@ -407,7 +408,11 @@ impl PingTarget {
         data.raw_status = PingStatus::None;
         data.last_seq = 0;
         data.last_sent = None;
-        data.next_seq = 0;
+        /*
+        `next_seq` is deliberately NOT reset: pings may still be in flight,
+        and re-issuing their sequence numbers makes surge-ping reject the
+        new ones as identical requests.
+        */
         data.tracker.clear(paused);
     }
 
@@ -897,7 +902,7 @@ impl PacketHistory {
 
         match self
             .iter()
-            .filter_map(|rec: &PacketRecord| rec.rtt().ok())
+            .filter_map(|rec: &PacketRecord| rec.rtt) // field, not rtt(): no Err String per loss
             .min()
         {
             Some(v) => Ok(v),
@@ -912,7 +917,7 @@ impl PacketHistory {
 
         match self
             .iter()
-            .filter_map(|rec: &PacketRecord| rec.rtt().ok())
+            .filter_map(|rec: &PacketRecord| rec.rtt) // field, not rtt(): no Err String per loss
             .max()
         {
             Some(v) => Ok(v),
@@ -933,7 +938,7 @@ impl PacketHistory {
         let (sum, count) = self
             .iter()
             .skip(skip)
-            .filter_map(|rec| rec.rtt().ok())
+            .filter_map(|rec| rec.rtt)
             .fold((Duration::ZERO, 0u32), |(s, c), rtt| (s + rtt, c + 1));
 
         if count == 0 {

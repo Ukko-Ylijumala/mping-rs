@@ -76,12 +76,12 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 (KeyCode::PageUp, m) => {
                     let mut lo = tui.layout.write();
                     if lo.popup_visible && m != KeyModifiers::SHIFT {
-                        let step: u16 = lo.popup_usable_rows() as u16 * 2 - 1;
+                        let step: u16 = (lo.popup_usable_rows() as u16 * 2).saturating_sub(1);
                         lo.liststate.scroll_up_by(step);
                     } else {
                         let step: u16 = match m {
                             KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
-                            _ => lo.tbl_usable_rows() as u16 - 1,
+                            _ => (lo.tbl_usable_rows() as u16).saturating_sub(1),
                         };
                         lo.tablestate.scroll_up_by(step);
                     }
@@ -89,12 +89,12 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 (KeyCode::PageDown, m) => {
                     let mut lo = tui.layout.write();
                     if lo.popup_visible && m != KeyModifiers::SHIFT {
-                        let step: u16 = lo.popup_usable_rows() as u16 * 2 - 1;
+                        let step: u16 = (lo.popup_usable_rows() as u16 * 2).saturating_sub(1);
                         lo.liststate.scroll_down_by(step);
                     } else {
                         let step: u16 = match m {
                             KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
-                            _ => lo.tbl_usable_rows() as u16 - 1,
+                            _ => (lo.tbl_usable_rows() as u16).saturating_sub(1),
                         };
                         lo.tablestate.scroll_down_by(step);
                     }
@@ -202,8 +202,9 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                                 let mut lo = tui.layout.write();
                                 if len == 0 {
                                     lo.tablestate.select(None);
-                                } else if idx == len - 1 {
-                                    lo.tablestate.select(Some(idx.saturating_sub(1)));
+                                } else if idx >= len {
+                                    // removed the last row -> select the new last one
+                                    lo.tablestate.select(Some(len - 1));
                                 }
 
                                 lo.reset_table_widths();

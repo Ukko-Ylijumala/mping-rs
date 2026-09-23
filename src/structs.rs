@@ -242,14 +242,15 @@ impl AppState {
         targets: I,
     ) -> (Vec<Arc<PingTarget>>, usize) {
         let mut tgts = self.targets.write();
-        let existing: HashSet<IpAddr> = tgts.iter().map(|t| t.addr).collect();
+        // grows as we add, so it catches duplicates within `targets` too (O(1) each)
+        let mut existing: HashSet<IpAddr> = tgts.iter().map(|t| t.addr).collect();
         let names = self.resolved.read();
         let orig_len: usize = tgts.len();
 
         let mut added: Vec<Arc<PingTarget>> = Vec::new();
         let mut skipped: usize = 0;
         for t in targets {
-            if !existing.contains(&t.addr) && added.iter().all(|a| a.addr != t.addr) {
+            if existing.insert(t.addr) {
                 if let Some(name) = names.get_name(&t.addr) {
                     t.set_name(name);
                 }

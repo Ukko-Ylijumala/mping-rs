@@ -798,8 +798,9 @@ impl TuiState {
 
     /// Open the add target dialog in the UI.
     pub fn add_tgt_dialog_open(&self) {
-        let mut state = self.input_state.write();
-        *state = AddTargetDialogState::default();
+        // statement-scoped guards: never hold `input_state` while taking `layout`
+        // (render takes them in the opposite order)
+        *self.input_state.write() = AddTargetDialogState::default();
         self.layout.write().input_visible = true;
     }
 
@@ -828,7 +829,12 @@ impl ViewPort {
     pub fn new(tui: &TuiState, targets: usize) -> Self {
         let layout = tui.layout.read();
         let rows = layout.tbl_usable_rows();
-        let offset: usize = layout.tablestate.offset();
+        let offset: usize = predict_offset(
+            layout.tablestate.offset(),
+            layout.tablestate.selected(),
+            rows,
+            targets,
+        );
         Self {
             targets,
             rows,
@@ -842,6 +848,28 @@ impl ViewPort {
     pub fn needs_paging(&self) -> bool {
         self.targets > self.rows
     }
+}
+
+/**
+Predict the offset Ratatui's `Table` will settle on when rendering (mirrors
+its `visible_rows` for 1-line rows): clamp to the last row, then scroll just
+enough to keep the selection visible.
+
+Ratatui only moves [TableState]'s offset *during* render, i.e. after the row
+data has been gathered. Using the stale offset would format the wrong rows -
+a page of blanks for a frame after PageDown/End, or an out-of-bounds slice
+if targets were removed since the last render.
+*/
+fn predict_offset(offset: usize, selected: Option<usize>, rows: usize, targets: usize) -> usize {
+    let last: usize = targets.saturating_sub(1);
+    let mut start: usize = offset.min(last);
+    if let Some(sel) = selected.map(|s| s.min(last)) {
+        start = start.min(sel);
+        if sel >= start + rows {
+            start = sel + 1 - rows.max(1);
+        }
+    }
+    start
 }
 
 /* -------------------------------------------------------------------------- */
@@ -868,7 +896,11 @@ impl TerminalGuard {
         panic::set_hook(Box::new(panic_handler));
         enable_raw_mode()?;
         let mut stdout: Stdout = stdout();
-        execute!(stdout, EnterAlternateScreen, Hide)?;
+        if let Err(e) = execute!(stdout, EnterAlternateScreen, Hide) {
+            // no guard exists yet to undo raw mode for us
+            let _ = disable_raw_mode();
+            return Err(e);
+        }
         set_alt_screen_active(true);
         logger.trace(TUI_TERMINAL);
 
@@ -916,5 +948,29 @@ fn set_alt_screen_active(active: bool) {
 pub(crate) fn eprintln_safe(args: fmt::Arguments<'_>) {
     if !ALT_SCREEN_ACTIVE.load(Ordering::Acquire) {
         eprintln!("{args}");
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn predict_offset_follows_ratatui() {
+        // 100 targets, 10 visible rows
+        assert_eq!(predict_offset(0, None, 10, 100), 0);
+        assert_eq!(predict_offset(0, Some(9), 10, 100), 0, "selection still visible");
+        assert_eq!(predict_offset(0, Some(10), 10, 100), 1, "scroll by one past the edge");
+        assert_eq!(predict_offset(0, Some(35), 10, 100), 26, "PageDown: selection at bottom");
+        assert_eq!(predict_offset(50, Some(20), 10, 100), 20, "selection above: scroll up to it");
+        assert_eq!(predict_offset(0, Some(usize::MAX), 10, 100), 90, "End: clamped to last page");
+        // targets removed under a stale offset/selection -> stays in bounds
+        assert_eq!(predict_offset(80, Some(95), 10, 5), 4);
+        assert_eq!(predict_offset(80, None, 10, 5), 4, "ratatui clamps to last row, not page");
+        assert_eq!(predict_offset(7, Some(3), 10, 0), 0);
+        // degenerate table with no usable rows doesn't underflow
+        assert_eq!(predict_offset(0, Some(5), 0, 100), 5);
     }
 }

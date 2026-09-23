@@ -39,6 +39,14 @@ only the rows currently inside the viewport and pads the rest with empty
 `TableRow`s so Ratatui still has a row for every target (scroll position
 and selection indices line up).
 
+The viewport offset is *predicted* (`predict_offset` in `ui/tui.rs`) rather
+than read straight from `TableState`: Ratatui only moves the offset while
+rendering, i.e. after the rows were gathered. The stale value would format
+the wrong slice — a page of blank rows for one frame after PageDown/End, or
+an out-of-bounds slice if targets were removed in between. The prediction
+mirrors Ratatui's `visible_rows` for 1-line rows: clamp to the last row,
+then scroll just enough to keep the selection visible.
+
 When `all == true` (the final stdout dump after teardown — `main.rs:519`),
 it formats every row so the printed stats are complete.
 

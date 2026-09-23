@@ -120,8 +120,8 @@ While we're in `MpConfig::parse`, two other clamps happen
 The `timeout ≤ 4×interval` rule limits how many pending pings can stack
 up per target. Without it, a user could set `--interval 0.01 --timeout 5`
 and accumulate 500 inflight pings per target. With it, even adversarial
-combinations cap at 4 — which is also the upper bound used by
-`max_inflight` in perf mode (`pinger.rs:124`).
+combinations cap at 4 timeouts' worth of pings — `max_inflight` in perf
+mode is `floor(timeout / interval) + 1`, so at most 5 (`pinger.rs`).
 
 ## File map
 

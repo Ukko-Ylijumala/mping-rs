@@ -44,7 +44,7 @@ println!("Mean: {:.2}ms", mean / 1e3);
 #[derive(Debug, Default)]
 pub struct LatencyWindow {
     cap: usize,
-    buf: Vec<u32>,                  // ring buffer of values
+    buf: Vec<u32>,                  // ring buffer of values (grows up to cap)
     head: usize,                    // next write position
     len: usize,
     sum: f64,                       // running sum
@@ -64,7 +64,12 @@ impl LatencyWindow {
         let cap: usize = max(cap, MIN_WINDOW_SIZE);
         Self {
             cap,
-            buf: vec![0; cap],
+            /*
+            Grown by push() rather than preallocated: a large target list
+            (f.ex. a /16) would otherwise commit cap * 4 bytes per target up
+            front, while most windows fill slowly or never.
+            */
+            buf: Vec::new(),
             head: 0,
             len: 0,
             sum: 0.0,
@@ -102,8 +107,8 @@ impl LatencyWindow {
         }
 
         if self.len < self.cap {
-            // Growing
-            self.buf[self.head] = val;
+            // Growing (head == len here, so this appends)
+            self.buf.push(val);
             self.head = (self.head + 1) % self.cap;
             self.len += 1;
             self.sum += val_f;
@@ -194,7 +199,7 @@ impl LatencyWindow {
 
     /// Reset the window to empty state.
     pub fn clear(&mut self) {
-        self.buf.fill(0);
+        self.buf.clear(); // keeps the allocation; push() appends again from 0
         self.head = 0;
         self.len = 0;
         self.sum = 0.0;
@@ -520,5 +525,14 @@ mod tests {
         assert!(lw.mean_min_max().is_err());
         assert!(lw.min_ever().is_err(), "min_ever should reset on clear()");
         assert!(lw.jitter().is_err(), "jitter should reset on clear()");
+
+        // the buffer refills from scratch and wraps again after clear()
+        for v in [7, 8, 9, 10] {
+            lw.push(v);
+        }
+        assert_eq!(lw.len(), 3);
+        assert_eq!(lw.last().unwrap(), 10);
+        assert_eq!(lw.recent_samples(5).unwrap(), vec![8, 9, 10]);
+        assert_eq!(lw.mean_min_max().unwrap(), (9.0, 8, 10));
     }
 }

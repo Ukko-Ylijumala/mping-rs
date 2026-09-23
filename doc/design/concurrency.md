@@ -64,9 +64,12 @@ otherwise dominates when the runtime is busy.
 - **Perf mode** (`app.perf() == true`): each tick pushes a future into a
   per-target `FuturesUnordered` of size up to `max_inflight`
   (`pinger.rs:149-154`). No `spawn` per ping — the existing `ping_loop` task
-  drives them all. The bound is computed as
-  `ceil(timeout / interval).clamp(1, 4)` so you never accumulate more than four
-  pending pings per target even with adversarial settings.
+  drives them all. The bound comes from `max_inflight()`:
+  `floor(timeout / interval) + 1`, clamped to `1..=5`. The `+ 1` matters at
+  integer ratios (the default 2 s / 1 s): the oldest ping times out a hair
+  *after* the tick that wants its slot, so a `ceil`-based bound skipped every
+  third probe to an unresponsive target. Args caps the timeout at 4 intervals,
+  so the clamp never binds with valid settings.
 
 The mode is a runtime toggle, not a startup flag — F10 flips it live. That
 means a user can react to observed jitter under load without restarting:

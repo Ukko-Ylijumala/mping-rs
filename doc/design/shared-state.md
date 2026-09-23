@@ -77,6 +77,10 @@ keyboard thread. To keep that cycle-free:
   they need to fix up selection state (see the Delete branch in
   `ui/keyboard.rs`).
 
+The same goes for `input_state` (the add-target dialog): render takes
+`layout` → `input_state`, so the keyboard side must never hold
+`input_state` while taking `layout` (see `TuiState::add_tgt_dialog_open`).
+
 Violating either rule re-creates a cross-thread ABBA deadlock that hangs
 the UI permanently (the quit flag is checked under these same locks).
 
