@@ -33,7 +33,7 @@ Top-level shared fields and their lock granularity:
 | Field | Type | Notes |
 |---|---|---|
 | `targets` | `RwLock<Vec<Arc<PingTarget>>>` | Read on every render; write only when adding/removing |
-| `tasks` | `RwLock<Vec<JoinHandle<()>>>` | Written when spawning ping loops; read on shutdown to join |
+| `tasks` | `RwLock<Vec<JoinHandle<()>>>` | Written when spawning ping loops (finished handles pruned on each runtime add); read on shutdown to join |
 | `quit` | `Arc<AtomicBool>` | Cloned to the signal thread; checked by every loop |
 | `perf` | `AtomicBool` | Runtime toggle; see [concurrency](concurrency.md) |
 | `spawned_tasks` | `AtomicU64` | Stat counter, `inc_spawned_tasks()` increments it on every spawn |

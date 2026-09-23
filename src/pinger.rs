@@ -188,12 +188,17 @@ pub(crate) async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
 /**
 Spawn a [ping_loop] task for each newly-added target and stash the [tokio::task::JoinHandle]
 in `app.tasks` so shutdown can join them.
+
+Handles of loops that have already finished (removed / stopped targets) are
+pruned first: a [tokio::task::JoinHandle] keeps its task's allocation alive,
+so repeated add/remove cycles would otherwise grow memory without bound.
 */
 pub(crate) fn spawn_ping_loops(app: &Arc<AppState>, new_targets: &[Arc<PingTarget>]) {
     if new_targets.is_empty() {
         return;
     }
     let mut tasks = app.tasks.write();
+    tasks.retain(|h| !h.is_finished());
     for tgt in new_targets {
         tasks.push(app.spawn(ping_loop(tgt.clone(), app.clone())));
     }
