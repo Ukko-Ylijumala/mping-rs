@@ -24,9 +24,13 @@ Helper to mark a ping as sent and calculate the next sequence number.
 Update sent timestamp as late as possible before sending so that the time
 difference is minimized. There will still  be some delay due to task
 scheduling etc, but this should be negligible compared to network latencies.
+
+Returns the probe's [PacketRecord], stamped under the same lock that bumps
+`sent`: a stats reset then orders cleanly before or after the probe, which
+is what lets [PingTarget::update_stats] drop results from before a reset.
 */
 #[inline]
-fn mark_sent_and_next_seq(tgt: &PingTarget) -> u16 {
+fn mark_sent_and_next_seq(tgt: &PingTarget) -> PacketRecord {
     let mut stats = tgt.data.write();
     /*
     update sent count here to make sure it's incremented before
@@ -42,9 +46,10 @@ fn mark_sent_and_next_seq(tgt: &PingTarget) -> u16 {
     stats.next_seq = seq.wrapping_add(1);
 
     // store last sent seq and timestamp for master reference
+    let rec: PacketRecord = PacketRecord::new(seq);
     stats.last_seq = seq;
-    stats.last_sent = Some(std::time::Instant::now());
-    seq
+    stats.last_sent = Some(rec.sent);
+    rec
 }
 
 /// Helper to clone the payload slice into a new one, which we can randomize if
@@ -83,9 +88,8 @@ fn build_ping_future(
         let mut pinger: Pinger = c.pinger(tgt.addr, id).await;
         pinger.timeout(app.defaults.timeout);
 
-        let seq: u16 = mark_sent_and_next_seq(&tgt);
-        let rec: PacketRecord = PacketRecord::new(seq);
-        let res = pinger.ping(PingSequence(seq), &pl).await;
+        let rec: PacketRecord = mark_sent_and_next_seq(&tgt);
+        let res = pinger.ping(PingSequence(rec.seq), &pl).await;
         tgt.update_stats(res, rec).await;
     }
 }
@@ -98,11 +102,10 @@ async fn ping_task(tgt: Arc<PingTarget>, c: &Arc<Client>, app: &Arc<AppState>, i
     pinger.timeout(app.defaults.timeout);
 
     let pl: Arc<[u8]> = build_payload(app);
-    let seq: u16 = mark_sent_and_next_seq(&tgt);
+    let rec: PacketRecord = mark_sent_and_next_seq(&tgt);
 
     app.spawn(async move {
-        let rec: PacketRecord = PacketRecord::new(seq);
-        let res = pinger.ping(PingSequence(seq), &pl).await;
+        let res = pinger.ping(PingSequence(rec.seq), &pl).await;
         tgt.update_stats(res, rec).await;
     });
 }

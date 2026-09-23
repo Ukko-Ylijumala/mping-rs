@@ -58,6 +58,15 @@ sequence numbers indefinitely. `reset_stats` deliberately leaves it alone:
 pings may still be in flight across a reset, and restarting at zero would
 re-issue their sequence numbers.
 
+Pings in flight across a reset are a problem for the counters too: the
+reset wiped their `sent` increment, so a late reply would push `recv` above
+`sent`, and a late send error would decrement the *new* `sent`. So
+`mark_sent_and_next_seq` builds the probe's `PacketRecord` under the same
+lock that bumps `sent` (its `sent` timestamp orders cleanly against a
+reset), `reset_stats` records `reset_at`, and `update_stats` drops any
+result whose probe was sent before it — counters, history and outage
+tracker alike.
+
 ## Three tiers of status
 
 The displayed status is computed in three layers. The raw status stored in

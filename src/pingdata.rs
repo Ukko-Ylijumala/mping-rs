@@ -121,6 +121,13 @@ pub(crate) struct PingTargetInner {
     probes leave no RTT sample, so samples x interval understates it).
     */
     reply_sent: VecDeque<Instant>,
+    /**
+    When stats were last reset. Results for probes sent before it are
+    dropped entirely: their `sent` increment was wiped by the reset, so
+    counting a late reply (recv > sent) or undoing `sent` on a late send
+    error (undercount) would corrupt the fresh counters.
+    */
+    reset_at: Option<Instant>,
 }
 
 impl PingTargetInner {
@@ -274,6 +281,9 @@ impl PingTarget {
         mut rec: PacketRecord,
     ) {
         let mut inner = self.data.write();
+        if inner.reset_at.is_some_and(|t| rec.sent < t) {
+            return; // probe predates the last stats reset
+        }
         inner.raw_status = match res {
             Ok((_, dur)) => {
                 inner.recv += 1;
@@ -434,6 +444,7 @@ impl PingTarget {
         data.last_seq = 0;
         data.last_sent = None;
         data.reply_sent.clear();
+        data.reset_at = Some(Instant::now());
         /*
         `next_seq` is deliberately NOT reset: pings may still be in flight,
         and re-issuing their sequence numbers makes surge-ping reject the
@@ -1673,5 +1684,41 @@ mod tracker_tests {
             t.record_miss(now + Duration::from_millis(i));
         }
         assert_eq!(t.summary().outages, 1);
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+    use futures::executor::block_on;
+    use std::{io, net::Ipv4Addr, thread};
+    use surge_ping::PingSequence;
+
+    #[test]
+    fn results_from_before_reset_are_dropped() {
+        let tgt = PingTarget::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 60, 10, false);
+        let old: PacketRecord = PacketRecord::new(0); // probe in flight...
+        thread::sleep(Duration::from_millis(1));
+        tgt.reset_stats(); // ...across a reset
+        tgt.data.write().sent = 1; // a fresh post-reset probe in flight
+
+        // a late send error must not undo the fresh probe's `sent`
+        let err = SurgeError::IOError(io::Error::other("no route"));
+        block_on(tgt.update_stats(Err(err), old.clone()));
+        // a late timeout must not count as a loss or an outage miss
+        let timeout = SurgeError::Timeout { seq: PingSequence(0) };
+        block_on(tgt.update_stats(Err(timeout), old));
+
+        let data = tgt.data.read();
+        assert_eq!(data.sent, 1);
+        assert!(data.recent.is_empty(), "stale results must not enter the history");
+        assert_eq!(data.raw_status, PingStatus::None);
+
+        // post-reset probes are accounted as usual
+        drop(data);
+        let new: PacketRecord = PacketRecord::new(1);
+        let timeout = SurgeError::Timeout { seq: PingSequence(1) };
+        block_on(tgt.update_stats(Err(timeout), new));
+        assert_eq!(tgt.data.read().recent.len(), 1);
     }
 }
