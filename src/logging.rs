@@ -242,7 +242,7 @@ impl MessageBuffer {
     }
 
     /// Set the log level threshold for printing messages to stderr.
-    pub fn to_stderr(&mut self, lvl: LogLevel) {
+    pub fn set_stderr_level(&mut self, lvl: LogLevel) {
         self.to_stderr = lvl;
     }
 

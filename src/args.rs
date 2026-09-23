@@ -194,7 +194,7 @@ impl MpConfig {
                 LogLevel::Info
             };
             // Have to perform a bit of a dance here due to Arc immutability...
-            Arc::get_mut(&mut config.buf).unwrap().to_stderr(lvl);
+            Arc::get_mut(&mut config.buf).unwrap().set_stderr_level(lvl);
         }
 
         // clamp DNS timeout between 1 and 10 seconds
