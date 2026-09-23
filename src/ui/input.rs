@@ -124,19 +124,16 @@ impl AddTargetDialogState {
         }
 
         // Route editing keys to the active input
-        match self.active {
-            ActiveField::Addresses => {
-                // map crossterm KeyEvent -> tui-input editing ops (arrows, backspace, char insert...)
-                if self.addrs.handle_event(&Event::Key(key)).is_some() {
-                    return DialogAction::Redraw;
-                }
-            }
-            ActiveField::Exclusions => {
-                if self.excls.handle_event(&Event::Key(key)).is_some() {
-                    return DialogAction::Redraw;
-                }
-            }
-            _ => {}
+        let input: Option<&mut Input> = match self.active {
+            ActiveField::Addresses => Some(&mut self.addrs),
+            ActiveField::Exclusions => Some(&mut self.excls),
+            _ => None,
+        };
+        // map crossterm KeyEvent -> tui-input editing ops (arrows, backspace, char insert...)
+        if let Some(input) = input
+            && input.handle_event(&Event::Key(key)).is_some()
+        {
+            return DialogAction::Redraw;
         }
 
         // no state change
@@ -319,10 +316,10 @@ impl StatefulWidget for &AddTgtDialog {
 
         // addresses/exclusions input: scroll horizontally (in sync with the
         // cursor math in `field_cursor_pos`) instead of wrapping
-        let addrs_inner = (&self.b_addrs).inner(self.addrs);
+        let addrs_inner = self.b_addrs.inner(self.addrs);
         let addrs_scroll = state.addrs.visual_scroll(field_width(addrs_inner)) as u16;
         Paragraph::new(state.addrs.value()).scroll((0, addrs_scroll)).render(addrs_inner, buf);
-        let excls_inner = (&self.b_excls).inner(self.excls);
+        let excls_inner = self.b_excls.inner(self.excls);
         let excls_scroll = state.excls.visual_scroll(field_width(excls_inner)) as u16;
         Paragraph::new(state.excls.value()).scroll((0, excls_scroll)).render(excls_inner, buf);
 

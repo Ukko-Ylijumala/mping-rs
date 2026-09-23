@@ -188,7 +188,7 @@ impl Display for Message {
 
 impl PartialOrd for Message {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.when.cmp(&other.when))
+        Some(self.cmp(other)) // canonical: defer to Ord
     }
 }
 
@@ -275,7 +275,7 @@ impl MessageBuffer {
     /// Read access to the inner VecDeque via a closure.
     #[inline]
     pub fn with<R>(&self, f: impl FnOnce(&VecDeque<Message>) -> R) -> R {
-        f(&*self.buf.read())
+        f(&self.buf.read())
     }
 
     pub fn len(&self) -> usize {

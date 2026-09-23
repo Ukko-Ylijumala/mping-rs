@@ -131,7 +131,7 @@ mod tests {
 
     impl Wrapper {
         fn with_mut<R>(&self, f: impl FnOnce(&mut String) -> R) -> R {
-            f(&mut *self.0.write())
+            f(&mut self.0.write())
         }
 
         delegate_write!(&push_str, s: &str);

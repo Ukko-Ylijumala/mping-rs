@@ -47,7 +47,7 @@ hence Ctrl-C might need to be handled manually in a key event loop instead.
 */
 pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
     // Signals to listen for
-    let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT]).expect(ERR_SIGNALS);
+    let mut signals = Signals::new([SIGINT, SIGTERM, SIGQUIT]).expect(ERR_SIGNALS);
 
     // Spawn a dedicated thread that listens for signals.
     std::thread::spawn(move || {
@@ -75,7 +75,7 @@ pub(crate) fn nice_permission_error(err: &Error, ip_ver: usize) -> Box<dyn std::
         {
             let name: String = env::args()
                 .next()
-                .and_then(|p| p.split(MAIN_SEPARATOR).last().map(|s| s.to_string()))
+                .and_then(|p| p.split(MAIN_SEPARATOR).next_back().map(|s| s.to_string()))
                 .unwrap_or_else(|| APP_NAME.to_string());
             let bin_path: PathBuf = env::current_exe().unwrap_or_else(|_| PathBuf::from(&name));
             eprintln!("{ERR_CAPS_LINUX} {}", bin_path.display());

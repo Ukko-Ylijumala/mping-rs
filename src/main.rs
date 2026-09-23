@@ -55,7 +55,7 @@ fn make_targets(addrs: &[IpAddr], defaults: &TargetDefaults) -> Vec<PingTarget> 
 
 /// Format a single target's data into a [TableRow]. Separate fn for ease of parallelization.
 fn format_row(tgt: &Arc<PingTarget>, debug: bool, timeout: Duration) -> TableRow {
-    let snap: StatsSnapshot = StatsSnapshot::new_from(&tgt, timeout);
+    let snap: StatsSnapshot = StatsSnapshot::new_from(tgt, timeout);
     let status: String = match &snap.status {
         PingStatus::Error(e) if debug => e.to_string(),
         _ => snap.status.to_display(),
@@ -213,7 +213,7 @@ the time of holding the targets lock is minimized to reduce contention.
 */
 fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[TableRow]) {
     let layout = &mut tui.layout.write();
-    layout.maybe_update(frame.area(), &data);
+    layout.maybe_update(frame.area(), data);
     let tgts = state.targets.read();
     let num_tgts: usize = tgts.len();
     // actively pinged targets, for send rate / bandwidth display (cheap atomics)
@@ -403,7 +403,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
         };
         let b_tbl = BORDERS.clone().title_bottom(Line::from(tbl_title));
         let w_table = Table::new(
-            data.iter().map(|r| <&TableRow as Into<Row>>::into(r)),
+            data.iter().map(Row::from),
             &layout.tbl_constraints,
         )
         .header((&tui.headers).into())

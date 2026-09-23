@@ -358,13 +358,11 @@ pub(crate) struct MutableLine<'a>(RwLock<Line<'a>>);
 
 impl<'a> MutableLine<'a> {
     pub fn new() -> Self {
-        Self {
-            0: Line::default().into(),
-        }
+        Self(Line::default().into())
     }
 
     pub fn new_from<T: Into<Line<'a>>>(s: T) -> Self {
-        Self { 0: s.into().into() }
+        Self(s.into().into())
     }
 
     /// Apply a [Style] to a (new) MutableLine using a (consuming) builder pattern.
@@ -382,19 +380,19 @@ impl<'a> MutableLine<'a> {
     /// Read access to the inner Line via a closure.
     #[inline]
     pub fn with<R>(&self, f: impl FnOnce(&Line<'a>) -> R) -> R {
-        f(&*self.0.read())
+        f(&self.0.read())
     }
 
     /// Write access to the inner Line via a closure.
     #[inline]
     pub fn with_mut<R>(&self, f: impl FnOnce(&mut Line<'a>) -> R) -> R {
-        f(&mut *self.0.write())
+        f(&mut self.0.write())
     }
 
     /// Try read access to the inner Line via a closure that may fail.
     #[inline]
     pub fn try_with<R>(&self, f: impl FnOnce(&Line<'a>) -> Option<R>) -> Option<R> {
-        f(&*self.0.read())
+        f(&self.0.read())
     }
 
     /// Replace the entire line
@@ -426,9 +424,7 @@ impl<'a> MutableLine<'a> {
 
 impl Clone for MutableLine<'_> {
     fn clone(&self) -> Self {
-        Self {
-            0: RwLock::new(self.0.read().clone()),
-        }
+        Self(RwLock::new(self.0.read().clone()))
     }
 }
 

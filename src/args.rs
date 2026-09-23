@@ -215,7 +215,7 @@ impl MpConfig {
             } else {
                 let mut res_opts = ResolverOpts::default();
                 if !wants_default_opts {
-                    config.buf.debug(&format!(
+                    config.buf.debug(format!(
                         "{INFO_DNS_TIMEO}: {:.1}s",
                         config.dns_timeout.as_secs_f64()
                     ));
@@ -227,7 +227,7 @@ impl MpConfig {
                         sys_conf
                     }
                     false => {
-                        config.buf.debug(&format!(
+                        config.buf.debug(format!(
                             "{INFO_DNS_CUSTOM}: {}",
                             config
                                 .dns_servers
@@ -291,7 +291,7 @@ impl MpConfig {
         config.addrs = collected.addrs;
         config.seen = collected.seen;
         if config.addrs.is_empty() {
-            config.buf.notice(format!("{WARN_NO_VALID_IPS}"));
+            config.buf.notice(WARN_NO_VALID_IPS.to_string());
         } else {
             config
                 .buf

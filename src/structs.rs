@@ -641,8 +641,8 @@ impl Resolved {
     /// All resolved IP addresses as a Vec grouped by name.
     pub fn addrs_by_name(&self) -> Vec<IpAddr> {
         self.by_name
-            .iter()
-            .flat_map(|(_, ips)| ips.iter().cloned())
+            .values()
+            .flat_map(|ips| ips.iter().cloned())
             .collect()
     }
 

@@ -174,7 +174,7 @@ impl PingTargetInner {
     /// Does NOT return "paused" or "stopped" states (as that requires access to parent).
     #[inline]
     pub fn effective_status(&self) -> PingStatus {
-        if &self.raw_status == &PingStatus::Timeout && self.is_unreachable() {
+        if self.raw_status == PingStatus::Timeout && self.is_unreachable() {
             return PingStatus::NotReachable;
         }
 
@@ -203,15 +203,15 @@ This struct represents a single ping target with its associated data and state.
 - `data`: Inner data containing statistics and history (protected by a [RwLock]).
 - `paused`: Atomic boolean indicating whether pinging is paused for this target.
 - `cancel`: Cancellation token to signal a permanent stop. Setting this will
-abort the (spawned) ping task, which currently is irreversible.
+  abort the (spawned) ping task, which currently is irreversible.
 - `resumed`: Wakes the (sleeping) ping task when a paused target is resumed.
 - `hops`: Last known hop count query response (protected by a [RwLock]).
 - `ptr`: Last known PTR record query response (protected by a [RwLock]).
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
 - `hostname`: The host or DNS name this target was resolved from, if any.
 - `added_order`: Monotonic creation stamp. The target list can be re-sorted
-physically (column sorting in the UI); sorting by this restores the original
-insertion order at any point, surviving runtime adds and removals.
+  physically (column sorting in the UI); sorting by this restores the original
+  insertion order at any point, surviving runtime adds and removals.
 */
 #[derive(Debug)]
 pub(crate) struct PingTarget {
@@ -236,7 +236,7 @@ impl PingTarget {
     - `histsize` specifies the size of the full RTT latency window.
     - `detailed` specifies the number of recent more detailed packet stats to keep.
     - `paused` specifies whether the target should be created in paused state (meaning,
-    the spawned ping task will sleep until `paused` is set to `false`).
+      the spawned ping task will sleep until `paused` is set to `false`).
     */
     pub fn new(addr: IpAddr, histsize: usize, detailed: usize, paused: bool) -> Self {
         let mut data = PingTargetInner {
@@ -579,10 +579,7 @@ impl PingTarget {
     NOTE: locks the inner `data` for reading.
     */
     pub fn is_laggy(&self) -> bool {
-        match self.data.read().is_laggy(DEFAULT_WIN, LAGGY_FACTOR) {
-            Ok(v) => v,
-            Err(_) => false,
-        }
+        self.data.read().is_laggy(DEFAULT_WIN, LAGGY_FACTOR).unwrap_or_default()
     }
 
     /**
@@ -749,21 +746,21 @@ impl PingTarget {
         match self.est_distance_km(factor) {
             Ok(dist) if dist > 0.0 => {
                 match dist {
-                    d if d < 2.0 => return INFO_LOCAL.to_string(),
-                    d if (d < 30.0 && d >= 2.0) => return INFO_NEARBY.to_string(),
-                    d if (d < BAND_SIZE_KM && d >= 30.0) => {
-                        return format!("< {:.0} km", BAND_SIZE_KM);
+                    d if d < 2.0 => INFO_LOCAL.to_string(),
+                    d if (2.0..30.0).contains(&d) => INFO_NEARBY.to_string(),
+                    d if (30.0..BAND_SIZE_KM).contains(&d) => {
+                        format!("< {:.0} km", BAND_SIZE_KM)
                     }
-                    d if (d < BAND_SIZE_KM * 2.0 && d >= BAND_SIZE_KM) => {
-                        return format!("< {:.0} km", BAND_SIZE_KM * 2.0);
+                    d if (BAND_SIZE_KM..BAND_SIZE_KM * 2.0).contains(&d) => {
+                        format!("< {:.0} km", BAND_SIZE_KM * 2.0)
                     }
-                    d if (d < BAND_SIZE_KM * 5.0 && d >= BAND_SIZE_KM * 2.0) => {
-                        return format!("< {:.0} km", BAND_SIZE_KM * 5.0);
+                    d if (BAND_SIZE_KM * 2.0..BAND_SIZE_KM * 5.0).contains(&d) => {
+                        format!("< {:.0} km", BAND_SIZE_KM * 5.0)
                     }
-                    d if (d < BAND_SIZE_KM * 10.0 && d >= BAND_SIZE_KM * 5.0) => {
-                        return format!("< {:.0} km", BAND_SIZE_KM * 10.0);
+                    d if (BAND_SIZE_KM * 5.0..BAND_SIZE_KM * 10.0).contains(&d) => {
+                        format!("< {:.0} km", BAND_SIZE_KM * 10.0)
                     }
-                    d if d > SPEED_KM_S / 5.0 => return INFO_INTERPLANETARY.to_string(),
+                    d if d > SPEED_KM_S / 5.0 => INFO_INTERPLANETARY.to_string(),
                     _ => {
                         // Quantize to nearest lower band
                         let banded = (dist / BAND_SIZE_KM).floor() * BAND_SIZE_KM;
@@ -1383,11 +1380,11 @@ impl HistorySnapshot {
             let mut expected_seq: Option<u16> = None;
             let mut gaps: bool = false;
             for rec in data.iter().rev().take(DEFAULT_WIN) {
-                if let Some(exp) = expected_seq {
-                    if rec.seq.wrapping_add(1) != exp {
-                        gaps = true;
-                        break;
-                    }
+                if let Some(exp) = expected_seq
+                    && rec.seq.wrapping_add(1) != exp
+                {
+                    gaps = true;
+                    break;
                 }
                 expected_seq = Some(rec.seq);
             }
@@ -1423,18 +1420,9 @@ impl HistorySnapshot {
             recent_losses: data.recent_losses(DEFAULT_WIN),
             loss_pct: data.loss(),
 
-            min: match data.min() {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
-            max: match data.max() {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
-            mean: match data.mean(None) {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
+            min: data.min().ok(),
+            max: data.max().ok(),
+            mean: data.mean(None).ok(),
         }
     }
 }
@@ -1500,14 +1488,8 @@ impl StatsSnapshot {
             mean,
             min,
             max,
-            last: match data.rtts.last() {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
-            stdev: match data.rtts.stdev() {
-                Ok(v) => Some(v),
-                Err(_) => None,
-            },
+            last: data.rtts.last().ok(),
+            stdev: data.rtts.stdev().ok(),
             status: data.effective_status(),
             hist: detailed.then(|| HistorySnapshot::new_from(&data.recent)),
             latest_seq: data.last_seq,
