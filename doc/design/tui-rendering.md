@@ -11,7 +11,8 @@ pass and a "columns can grow but never shrink" sizing policy.
 loop {
     tokio::select! {
         biased;
-        true = app.is_quitting_async()       => break,
+        _   = app.shutdown.cancelled()       => break,
+        true = app.is_quitting_async()       => break,  // flag-only fallback
         true = tui.ui_refresh_elapsed_async() => render,
         _   = app.key_event.notified()       => immediate render,
         _   = tick.tick()                    => no-op

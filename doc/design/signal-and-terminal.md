@@ -12,8 +12,8 @@ Defined at `src/ui/tui.rs:820`. Constructed once near the top of `main`
 (`src/main.rs:479`).
 
 ```text
-TerminalGuard::new(interval, logger, quit)
-  ↓ panic::set_hook(raise quit + panic_handler)  ── set the hook FIRST
+TerminalGuard::new(interval, logger, on_panic)
+  ↓ panic::set_hook(on_panic + panic_handler)  ── set the hook FIRST
   ↓ enable_raw_mode()
   ↓ execute!(stdout, EnterAlternateScreen, Hide)
   ↓ set_alt_screen_active(true)
@@ -34,22 +34,25 @@ appears on the normal terminal (`main.rs:510`).
 
 ## The signal thread
 
-`setup_signal_handler(quit)` (`src/utils.rs:43-61`) installs a separate
+`setup_signal_handler(on_signal)` (`src/utils.rs`) installs a separate
 `std::thread` that loops over signals coming through `signal_hook::Signals`:
 
 ```text
 for sig in signals.forever() {
     eprintln!("got {sig}");
-    quit.store(true, Relaxed);
+    on_signal();   // main passes: app.execute(Command::Quit)
 }
 ```
 
-We listen for `SIGINT`, `SIGTERM`, and `SIGQUIT`. The thread does not call
-back into the application — it just flips `AppState::quit`, which the
-render loop (`is_quitting_async`) notices on its next tick; on its way out
-it cancels `AppState::shutdown`, waking every (sleeping) `ping_loop`. Cleanup then runs
-through the normal exit path: ping tasks join, the `TerminalGuard` drops,
-the terminal is restored.
+We listen for `SIGINT`, `SIGTERM`, and `SIGQUIT`. The callback runs the
+same quit path as the `q` key: `AppState::quit` sets the quit flag *and*
+cancels `AppState::shutdown`, so the render loop and every (sleeping)
+`ping_loop` wake immediately. Cleanup then runs through the normal exit
+path: ping tasks join, the `TerminalGuard` drops, the terminal is restored.
+
+The render loop still has a `true = app.is_quitting_async()` branch, and
+`main` cancels the token once more after the loop: both are fallbacks for
+anything that might raise only the flag, costing nothing otherwise.
 
 `SIGQUIT` normally cores; here we just treat it like a graceful quit.
 `SIGKILL` cannot be caught — the README's `tput reset` note is the
@@ -73,10 +76,11 @@ re-emits the panic info on stderr. Because the alt-screen flag is set
 back to `false` before the panic message prints, the message lands on the
 real terminal rather than getting eaten by the alternate buffer.
 
-The hook also raises the quit flag (passed into `TerminalGuard::new`). A
-panic in a ping task, the keyboard thread or a blocking task doesn't end
-the process, but the hook has already torn the terminal down — without the
-flag the app would keep drawing onto the normal screen. The shutdown path
+The hook also runs the quit path (the `on_panic` callback passed into
+`TerminalGuard::new`, i.e. `app.execute(Command::Quit)`). A panic in a
+ping task, the keyboard thread or a blocking task doesn't end the process,
+but the hook has already torn the terminal down — without quitting, the
+app would keep drawing onto the normal screen. The shutdown path
 then tolerates a panicked keyboard thread (`join()` error is reported, not
 re-panicked) so the final stats still print.
 

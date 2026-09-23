@@ -21,7 +21,7 @@ use crate::{
     pingdata::{GRAPH_SAMPLES, PingStatus, PingTarget, StatsSnapshot},
     pinger::ping_loop,
     strings::*,
-    structs::{AppState, TargetDefaults},
+    structs::{AppState, Command, TargetDefaults},
     ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow},
     utils::{human_duration, human_rate, make_histogram_buckets, setup_signal_handler},
 };
@@ -554,9 +554,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
-    setup_signal_handler(app.quit.clone());
+    // Signals and panics take the same quit path as the 'q' key: flag + shutdown token.
+    let quit_app = {
+        let app: Arc<AppState> = app.clone();
+        move || {
+            app.execute(Command::Quit);
+        }
+    };
+    setup_signal_handler(quit_app.clone());
     let mut guard: TerminalGuard =
-        TerminalGuard::new(tui.ui_interval, app.logger.clone(), app.quit.clone())?;
+        TerminalGuard::new(tui.ui_interval, app.logger.clone(), quit_app)?;
     // The tick gates how often the select! loop re-evaluates the refresh
     // deadline, so it must not be coarser than the UI refresh interval.
     let mut tick: Interval = time::interval(app.internal_tick.min(tui.ui_interval));
@@ -570,6 +577,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         tokio::select! {
             biased; // preferentially handle quit condition first, then rest in order
+            _ = app.shutdown.cancelled() => break,
+            // fallback for anything raising only the flag
             true = app.is_quitting_async() => break,
             true = tui.ui_refresh_elapsed_async() => {
                 // Gather data for display and render the frame
@@ -588,8 +597,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Cleanup. The quit flag may have been raised directly (signal thread,
-    // panic hook), so make sure the sleeping ping loops get woken too.
+    // Cleanup. Normally a no-op (every quit path cancels the token), but if
+    // something raised only the flag, the sleeping ping loops need waking.
     app.shutdown.cancel();
     drop(guard); // explicitly drop TUI guard to restore terminal so we can print
     if app.debug {

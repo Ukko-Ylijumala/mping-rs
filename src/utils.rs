@@ -18,10 +18,6 @@ use std::{
         ErrorKind::{Other, PermissionDenied},
     },
     net::IpAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
     time::Duration,
     vec,
 };
@@ -42,10 +38,17 @@ Currently we handle:
   - [SIGTERM] - `kill -15` from shell or systemd etc
   - [SIGQUIT] - `Ctrl-\`. This normally creates a core dump, but here we just exit cleanly.
 
+`on_signal` is called for every caught signal; the app passes a closure that
+runs the full quit path (flag *and* shutdown token), so sleeping tasks wake
+immediately instead of on some later poll of the flag.
+
 NOTE: some (many? most?) console emulators do not process SIGINT when in raw mode,
 hence Ctrl-C might need to be handled manually in a key event loop instead.
 */
-pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
+pub(crate) fn setup_signal_handler<F>(on_signal: F)
+where
+    F: Fn() + Send + 'static,
+{
     // Signals to listen for
     let mut signals = Signals::new([SIGINT, SIGTERM, SIGQUIT]).expect(ERR_SIGNALS);
 
@@ -60,7 +63,7 @@ pub(crate) fn setup_signal_handler(quit: Arc<AtomicBool>) {
             }
 
             // Tell the rest of the program to exit.
-            quit.store(true, Ordering::Relaxed);
+            on_signal();
         }
     });
 }

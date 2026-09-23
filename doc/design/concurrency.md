@@ -117,10 +117,10 @@ its refresh deadline. The ping loops no longer use it (see above).
   `AppState::spawn_blocking(determine_hops)` (blocking ICMP) **and**
   `AppState::spawn(resolve_ptr)` (async DNS), both via the stored runtime
   handle (`structs.rs:318, 334`).
-- A signal: signal thread → `quit.store(true)` → the render loop notices
-  via `is_quitting_async` on its next tick, breaks, and cancels
-  `AppState::shutdown`, which wakes every `ping_loop` at once. (Quitting
-  from the keyboard cancels the token directly in `AppState::quit`.)
+- A signal: signal thread → `app.execute(Command::Quit)` → `AppState::quit`
+  sets the flag and cancels `AppState::shutdown`, which wakes the render
+  loop and every `ping_loop` at once. The `q` key, Ctrl-C and the panic
+  hook all take this same path.
 
 ## File map
 

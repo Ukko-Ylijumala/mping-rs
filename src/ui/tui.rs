@@ -883,12 +883,15 @@ pub struct TerminalGuard {
 
 impl TerminalGuard {
     /**
-    Set up the TUI. `quit` is the application's quit flag: the panic hook
-    raises it, since after the hook has torn down the terminal the app must
-    not keep drawing (a panic in a ping task or the keyboard thread would
-    otherwise leave it running on a dead TUI).
+    Set up the TUI. `on_panic` runs from the panic hook before the terminal
+    is restored; the app passes its quit path, since after the hook has torn
+    down the terminal the app must not keep drawing (a panic in a ping task
+    or the keyboard thread would otherwise leave it running on a dead TUI).
     */
-    pub fn new(interval: Duration, logger: Arc<MessageBuffer>, quit: Arc<AtomicBool>) -> Result<Self> {
+    pub fn new<F>(interval: Duration, logger: Arc<MessageBuffer>, on_panic: F) -> Result<Self>
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
         logger.info(format!(
             "{TUI_INIT}: {:.1} Hz.",
             1e3 / interval.as_millis() as f32
@@ -896,7 +899,7 @@ impl TerminalGuard {
 
         // set up the ratatui/crossterm environment (panic hook first!)
         panic::set_hook(Box::new(move |info| {
-            quit.store(true, Ordering::Relaxed);
+            on_panic();
             panic_handler(info);
         }));
         enable_raw_mode()?;
