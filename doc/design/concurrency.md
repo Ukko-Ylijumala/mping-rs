@@ -26,15 +26,18 @@ there would panic the keyboard thread — don't paper over it.
 ## Per-target ping loop
 
 `ping_loop(tgt, app)` runs as a Tokio task per `PingTarget`
-(`pinger.rs:112`). It owns an `Interval` and a per-loop `FuturesUnordered`
-buffer. The loop body is a `biased` `tokio::select!`:
+(`pinger.rs`). It owns an `Interval` running at the **ping interval itself**
+and a per-loop `FuturesUnordered` buffer. The loop body is a `biased`
+`tokio::select!` in which every branch is a real wakeup source — the loop
+sleeps until one of them fires:
 
 ```text
 biased ordering (top wins on tie):
-  1. quit flag        — break out
-  2. target stopped   — break out
-  3. inflight.next()  — drain a completed perf-mode future
-  4. ticker.tick()    — try to issue the next ping
+  1. app.shutdown.cancelled()  — break out (quit)
+  2. tgt.stopped()             — break out (target cancelled)
+  3. inflight.next()           — drain a completed perf-mode future
+  4. tgt.resumed(), if paused  — re-arm the ticker (ping immediately)
+  5. ticker.tick(), if !paused — issue the next ping
 ```
 
 Keep that ordering when adding branches. The quit/stop checks must always win
@@ -42,9 +45,25 @@ over ticks so shutdown doesn't queue another wave of work first. The
 `inflight.next()` branch is guarded by `if !inflight.is_empty()` so it is only
 considered when the perf-mode buffer has something to drain.
 
-When unpausing, the loop sets `next_ping = now` so the resumed target fires
-immediately and then resumes at the normal cadence — no backlog catch-up
-(`pinger.rs:138-144`).
+Scheduling details:
+
+- The ticker uses `MissedTickBehavior::Skip`: after a stall (SIGSTOP, an
+  overloaded runtime) one ping goes out late and the cadence snaps back to
+  its grid — no burst of catch-up pings.
+- While paused the ticker isn't polled at all. `PingTarget::resume` /
+  `toggle_pause` call `Notify::notify_one`, which stores a permit if the
+  loop isn't waiting yet, so a resume racing the loop's `is_paused()` read
+  isn't lost (a stale permit costs one spurious wakeup). On wakeup the loop
+  calls `ticker.reset_immediately()`: the resumed target fires at once and
+  then continues at the normal cadence.
+- Shutdown and stop are awaited as `CancellationToken`s, not polled flags,
+  so even a 10 s interval loop exits immediately.
+
+This replaced an earlier design that polled every target on a shared 100 ms
+"internal tick" and gated work with `now >= next_ping`: it quantized send
+times to the tick (a 250 ms interval went out as 300/200 ms gaps), woke
+every target 10×/s regardless of its interval, and burst catch-up pings
+after a stall.
 
 When the loop exits for any reason *other than* quit, it drains outstanding
 inflight pings so their stats get recorded. On quit it abandons them —
@@ -83,12 +102,10 @@ mechanism, not the goal.
 
 ## Internal tick
 
-`AppState::internal_tick` is the minimum scheduling granularity:
-`min(100ms, interval)` (`structs.rs:99`). The render loop uses it as a no-op
-"keep the select alive" branch (`main.rs:505`); the per-target ping loops use
-it as their `Interval` period and gate work with `now >= next_ping`. This
-indirection means a fast interval (e.g. 10 ms) still drives both render and
-ping loops without two separate tickers.
+`AppState::internal_tick` is `min(100ms, interval)` (`structs.rs`). Only the
+render loop uses it now, as its no-op "keep the select alive" branch — it
+bounds how quickly the render loop notices the quit flag and re-evaluates
+its refresh deadline. The ping loops no longer use it (see above).
 
 ## What runs where, by example
 
@@ -100,8 +117,10 @@ ping loops without two separate tickers.
   `AppState::spawn_blocking(determine_hops)` (blocking ICMP) **and**
   `AppState::spawn(resolve_ptr)` (async DNS), both via the stored runtime
   handle (`structs.rs:318, 334`).
-- A signal: signal thread → `quit.store(true)` → both the render loop and
-  every `ping_loop` notice via `is_quitting_async`, break, and clean up.
+- A signal: signal thread → `quit.store(true)` → the render loop notices
+  via `is_quitting_async` on its next tick, breaks, and cancels
+  `AppState::shutdown`, which wakes every `ping_loop` at once. (Quitting
+  from the keyboard cancels the token directly in `AppState::quit`.)
 
 ## File map
 

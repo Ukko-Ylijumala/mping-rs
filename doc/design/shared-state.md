@@ -89,7 +89,8 @@ the UI permanently (the quit flag is checked under these same locks).
 `PingTarget::cancel` is a `tokio_util::sync::CancellationToken`
 (`pingdata.rs:190`). Stopping a target — either via `Command::StopTarget` or
 during `Command::RemoveTarget` — calls `cancel.cancel()`, which `ping_loop`
-observes via `tgt.is_stopped_async()` in its `select!` and exits cleanly. A
+awaits via `tgt.stopped()` (`cancel.cancelled()`) in its `select!` and exits
+immediately, even mid-interval. A
 stopped target is irreversible; it never returns to active pinging.
 
 This is cleaner than polling another atomic and avoids the "select branch

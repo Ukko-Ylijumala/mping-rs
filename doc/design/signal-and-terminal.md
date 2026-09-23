@@ -12,8 +12,8 @@ Defined at `src/ui/tui.rs:820`. Constructed once near the top of `main`
 (`src/main.rs:479`).
 
 ```text
-TerminalGuard::new(interval, logger)
-  ↓ panic::set_hook(panic_handler)          ── set the hook FIRST
+TerminalGuard::new(interval, logger, quit)
+  ↓ panic::set_hook(raise quit + panic_handler)  ── set the hook FIRST
   ↓ enable_raw_mode()
   ↓ execute!(stdout, EnterAlternateScreen, Hide)
   ↓ set_alt_screen_active(true)
@@ -45,9 +45,9 @@ for sig in signals.forever() {
 ```
 
 We listen for `SIGINT`, `SIGTERM`, and `SIGQUIT`. The thread does not call
-back into the application — it just flips `AppState::quit`, which both
-the render loop (`is_quitting_async`) and every `ping_loop` notice on
-their next `select!` iteration and break out cleanly. Cleanup then runs
+back into the application — it just flips `AppState::quit`, which the
+render loop (`is_quitting_async`) notices on its next tick; on its way out
+it cancels `AppState::shutdown`, waking every (sleeping) `ping_loop`. Cleanup then runs
 through the normal exit path: ping tasks join, the `TerminalGuard` drops,
 the terminal is restored.
 
@@ -72,6 +72,13 @@ the signal thread handles it. Both paths converge on the same quit flag.
 re-emits the panic info on stderr. Because the alt-screen flag is set
 back to `false` before the panic message prints, the message lands on the
 real terminal rather than getting eaten by the alternate buffer.
+
+The hook also raises the quit flag (passed into `TerminalGuard::new`). A
+panic in a ping task, the keyboard thread or a blocking task doesn't end
+the process, but the hook has already torn the terminal down — without the
+flag the app would keep drawing onto the normal screen. The shutdown path
+then tolerates a panicked keyboard thread (`join()` error is reported, not
+re-panicked) so the final stats still print.
 
 ## `ALT_SCREEN_ACTIVE` and `eprintln_safe`
 

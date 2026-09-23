@@ -18,12 +18,12 @@ mod utils;
 
 use crate::{
     args::MpConfig,
-    pingdata::{PingStatus, PingTarget, StatsSnapshot},
+    pingdata::{GRAPH_SAMPLES, PingStatus, PingTarget, StatsSnapshot},
     pinger::ping_loop,
     strings::*,
     structs::{AppState, TargetDefaults},
     ui::{PopupContents, TerminalGuard, TuiState, keyboard::key_event_handler, tui::TableRow},
-    utils::{human_rate, make_histogram_buckets, setup_signal_handler},
+    utils::{human_duration, human_rate, make_histogram_buckets, setup_signal_handler},
 };
 
 use futures::future::join_all;
@@ -38,7 +38,6 @@ use std::{
 };
 use tokio::time::{self, Interval};
 
-const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 const ICMP_HEADER_BYTES: usize = 8; // for send rate estimation (excludes IP overhead)
 
 type WritableLayout<'a> =
@@ -250,7 +249,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
 
     /* -------- Recent RTT graph and histogram for selected target. -------- */
     if let Some(target) = selected {
-        let rtt_data: Vec<(f64, f64)> = target.get_recent_rtts(GRAPH_SAMPLES);
+        let (rtt_data, span) = target.get_recent_rtts_and_span(GRAPH_SAMPLES);
         // release targets read lock here, not needed anymore
         drop(tgts);
 
@@ -263,7 +262,9 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
 
         if !rtt_data.is_empty() {
             let samples: usize = rtt_data.len();
-            let sample_t: f64 = samples as f64 * state.defaults.interval.as_secs_f64();
+            // real age of the oldest plotted sample; lost probes stretch it
+            // beyond samples x interval, which remains the fallback
+            let span: Duration = span.unwrap_or(state.defaults.interval * samples as u32);
             let mut values: Vec<f64> = Vec::with_capacity(samples);
 
             // get values and min/max RTT (for graph scaling) in one pass
@@ -312,7 +313,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
                 .x_axis(
                     Axis::default()
                         .bounds([0.0, samples as f64 - 1.0])
-                        .labels([format!("-{sample_t:.0}s").bold(), INFO_NOW.bold()]),
+                        .labels([format!("-{}", human_duration(span)).bold(), INFO_NOW.bold()]),
                 )
                 .y_axis(Axis::default().bounds([min_rtt, max_rtt]).labels([
                     format!("{min_rtt:.1}").bold().cyan(),
@@ -554,7 +555,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Full-console TUI initialization - the RAII guard will clean up on drop
     setup_signal_handler(app.quit.clone());
-    let mut guard: TerminalGuard = TerminalGuard::new(tui.ui_interval, app.logger.clone())?;
+    let mut guard: TerminalGuard =
+        TerminalGuard::new(tui.ui_interval, app.logger.clone(), app.quit.clone())?;
     // The tick gates how often the select! loop re-evaluates the refresh
     // deadline, so it must not be coarser than the UI refresh interval.
     let mut tick: Interval = time::interval(app.internal_tick.min(tui.ui_interval));
@@ -586,12 +588,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Cleanup
+    // Cleanup. The quit flag may have been raised directly (signal thread,
+    // panic hook), so make sure the sleeping ping loops get woken too.
+    app.shutdown.cancel();
     drop(guard); // explicitly drop TUI guard to restore terminal so we can print
     if app.debug {
         eprintln!("{INFO_QUITTING}");
     }
-    kev_handle.join().expect(ERR_KEV_JOIN);
+    // a panicked keyboard thread was already reported by the panic hook;
+    // don't lose the final stats over it
+    if kev_handle.join().is_err() {
+        eprintln!("{ERR_KEV_JOIN}");
+    }
     // Take the handles out of the lock so the guard isn't held across the await.
     let tasks: Vec<tokio::task::JoinHandle<()>> = std::mem::take(&mut *app.tasks.write());
     join_all(tasks).await;

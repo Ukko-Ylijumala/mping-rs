@@ -125,9 +125,15 @@ header row) on `TuiState`, so they're built once at startup.
 
 When a row is selected, the right-hand `info_upper` area shows the target
 summary, an RTT line graph, and an RTT histogram (`main.rs:217-302`). The
-graph and histogram pull from `get_recent_rtts(GRAPH_SAMPLES)` —
-`GRAPH_SAMPLES = 180`, so at the default 1 s interval the graph spans the
-last 3 minutes. The y-axis is rounded to one decimal place; values below
+graph and histogram pull from `get_recent_rtts_and_span(GRAPH_SAMPLES)` —
+`GRAPH_SAMPLES = 180` (`pingdata.rs`), so at the default 1 s interval and
+no loss the graph spans the last 3 minutes. Only answered probes produce
+samples, so under loss the plotted samples cover more time than
+samples × interval; `PingTargetInner` therefore keeps the send times of the
+last `GRAPH_SAMPLES` answered probes (a small ring pushed in lockstep with
+the latency window) and the x-axis label shows the real age of the oldest
+plotted sample (`human_duration`, e.g. `-3m12s`). samples × interval is
+only the fallback if no send time is available. The y-axis is rounded to one decimal place; values below
 0.5 ms snap the lower bound to 0 for a cleaner baseline.
 
 The `targets` read lock is dropped (`main.rs:236, 304`) before the chart

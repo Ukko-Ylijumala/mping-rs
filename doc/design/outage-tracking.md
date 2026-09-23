@@ -19,9 +19,19 @@ hold — the tracker adds no new locking.
   probe *send* times (first missed → first answered), so the configured
   timeout doesn't inflate it.
 - Pausing or stopping a target closes an ongoing outage at that moment.
+- Results are only accounted if the target is monitored and the probe was
+  sent after the tracker's `epoch` (creation, last resume, last stats
+  reset). Pings still in flight across a pause/stop/reset would otherwise
+  open outages (and "DOWN for X" counters) for time nobody is monitoring.
+  Packet counters (sent/recv/loss) are unaffected — a reply is a reply.
+- A send the OS refuses (`SurgeError::IOError`: no route, network down)
+  counts as a miss, so a dead uplink shows up as an outage. Other errors
+  (`IdenticalRequests` etc.) are internal and ignored here, so they can't
+  fake one. Such probes still don't count as *sent* (see
+  [per-target-data](per-target-data.md)).
 - In perf mode ping results can complete out of order, so consecutive-miss
   counting (and thus outage edges) is approximate to within the inflight
-  window (≤ 4 probes).
+  window (≤ 5 probes).
 
 ## Availability
 

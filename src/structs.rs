@@ -25,6 +25,7 @@ use std::{
 };
 use surge_ping::{Client, Config, ICMP};
 use tokio::{sync::Notify, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 
 pub(crate) const DEFAULT_PAYLOAD_SIZE: usize = 48;
 pub(crate) const DEFAULT_HISTSIZE: usize = 3600; // one hour of per-second history
@@ -49,6 +50,12 @@ pub(crate) struct AppState {
     pub defaults: TargetDefaults,
     pub debug: bool,
     pub quit: Arc<AtomicBool>,
+    /**
+    Cancelled on quit, so sleeping tasks (the ping loops) wake up at once.
+    The quit *flag* can also be set directly (signal thread, panic hook);
+    the render loop cancels this token on its way out to cover those paths.
+    */
+    pub shutdown: CancellationToken,
     pub payload: Arc<[u8]>,
     pub internal_tick: Duration,
     pub key_event: Notify,
@@ -93,6 +100,7 @@ impl AppState {
             defaults: tgt_defaults,
             debug: conf.debug,
             quit: AtomicBool::new(false).into(),
+            shutdown: CancellationToken::new(),
             payload: vec![0u8; conf.size as usize].into(), // 48 bytes -> 56-byte packet
             // adjust internal tick (delay) lower if it's higher than ping
             // interval, othwerwise we'd send out fewer pings than intended
@@ -223,6 +231,7 @@ impl AppState {
     /// Set the quit flag to true. This triggers a graceful shutdown in a short order.
     fn quit(&self) -> CmdResult {
         self.quit.store(true, Ordering::Relaxed);
+        self.shutdown.cancel();
         CmdResult::ByeBye
     }
 

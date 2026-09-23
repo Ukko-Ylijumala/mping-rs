@@ -29,6 +29,7 @@ use std::{
 };
 use surge_ping::{IcmpPacket, SurgeError};
 use timesince::TimeSinceEpoch;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 const MICROS_PER_MILLI: f64 = 1e3;
@@ -43,6 +44,8 @@ const BAND_SIZE_KM: f64 = 100.0; // Quantize to nearest 100km
 
 /// Global creation counter behind [PingTarget::added_order].
 static ADD_ORDER: AtomicU64 = AtomicU64::new(0);
+/// RTT samples shown in the TUI graph; also the size of the reply send-time ring.
+pub(crate) const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 const OUTAGE_THRESH: u32 = 3; // consecutive misses before an outage is declared
 const EVENT_CAP: usize = 100; // per-target event ring capacity
 
@@ -112,6 +115,12 @@ pub(crate) struct PingTargetInner {
     pub next_seq: u16,
     /// Outage accounting and the per-target event timeline.
     pub tracker: EventTracker,
+    /**
+    Send times of the last [GRAPH_SAMPLES] *answered* probes, pushed in
+    lockstep with `rtts` so the graph can label its real time span (lost
+    probes leave no RTT sample, so samples x interval understates it).
+    */
+    reply_sent: VecDeque<Instant>,
 }
 
 impl PingTargetInner {
@@ -195,6 +204,7 @@ This struct represents a single ping target with its associated data and state.
 - `paused`: Atomic boolean indicating whether pinging is paused for this target.
 - `cancel`: Cancellation token to signal a permanent stop. Setting this will
 abort the (spawned) ping task, which currently is irreversible.
+- `resumed`: Wakes the (sleeping) ping task when a paused target is resumed.
 - `hops`: Last known hop count query response (protected by a [RwLock]).
 - `ptr`: Last known PTR record query response (protected by a [RwLock]).
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
@@ -211,6 +221,7 @@ pub(crate) struct PingTarget {
     pub data: RwLock<PingTargetInner>,
     paused: AtomicBool,
     cancel: CancellationToken,
+    resumed: Notify,
     hops: RwLock<QueryResponse>,
     ptr: RwLock<QueryResponse>,
     rev_ptr: RwLock<QueryResponse>,
@@ -247,6 +258,7 @@ impl PingTarget {
             rev_ptr: QueryResponse::default().into(),
             paused: AtomicBool::new(paused),
             cancel: CancellationToken::new(),
+            resumed: Notify::new(),
             hostname: OnceLock::new(),
         }
     }
@@ -266,6 +278,10 @@ impl PingTarget {
             Ok((_, dur)) => {
                 inner.recv += 1;
                 inner.rtts.push(dur.as_micros() as u32);
+                if inner.reply_sent.len() >= GRAPH_SAMPLES {
+                    inner.reply_sent.pop_front();
+                }
+                inner.reply_sent.push_back(rec.sent);
                 rec.set_rtt(dur);
                 inner.tracker.record_success(rec.sent);
                 PingStatus::Ok
@@ -276,6 +292,15 @@ impl PingTarget {
                     PingStatus::Timeout
                 }
                 _ => {
+                    /*
+                    The OS refusing the send (no route, network down) means the
+                    target is unreachable from here: an outage as far as uptime
+                    is concerned. Internal errors (IdenticalRequests etc) are
+                    not, or they could fake one.
+                    */
+                    if matches!(e, SurgeError::IOError(_)) {
+                        inner.tracker.record_miss(rec.sent);
+                    }
                     // Don't count errors, as the packet was never sent. Saturating,
                     // because a stats reset may race with an in-flight ping.
                     inner.sent = inner.sent.saturating_sub(1);
@@ -408,6 +433,7 @@ impl PingTarget {
         data.raw_status = PingStatus::None;
         data.last_seq = 0;
         data.last_sent = None;
+        data.reply_sent.clear();
         /*
         `next_seq` is deliberately NOT reset: pings may still be in flight,
         and re-issuing their sequence numbers makes surge-ping reject the
@@ -447,6 +473,7 @@ impl PingTarget {
             let mut data = self.data.write();
             data.raw_status = PingStatus::Resuming;
             data.tracker.resume();
+            self.resumed.notify_one();
         }
     }
 
@@ -462,6 +489,7 @@ impl PingTarget {
             if was_paused {
                 data.raw_status = PingStatus::Resuming;
                 data.tracker.resume();
+                self.resumed.notify_one();
             } else {
                 data.raw_status = PingStatus::Paused;
                 data.tracker.pause();
@@ -479,6 +507,22 @@ impl PingTarget {
     /// Async version for tokio::select! to `await` on it.
     pub async fn is_stopped_async(&self) -> bool {
         self.cancel.is_cancelled()
+    }
+
+    /// Completes when this target is stopped. Unlike [Self::is_stopped_async],
+    /// this actually waits, so a sleeping `select!` wakes up on it.
+    pub async fn stopped(&self) {
+        self.cancel.cancelled().await
+    }
+
+    /**
+    Completes when this target is resumed from pause. [Notify::notify_one]
+    stores a permit if nobody is waiting yet, so a resume racing the caller's
+    `is_paused()` check isn't lost; a stale permit costs one spurious wakeup,
+    hence callers must re-check [Self::is_paused] afterwards.
+    */
+    pub async fn resumed(&self) {
+        self.resumed.notified().await
     }
 
     /**
@@ -598,16 +642,37 @@ impl PingTarget {
     NOTE: locks the inner `data` for reading.
     */
     pub fn get_recent_rtts(&self, n: usize) -> Vec<(f64, f64)> {
-        let rtts: Vec<u32> = self
-            .data
-            .read()
-            .rtts
-            .recent_samples(n)
-            .unwrap_or_else(|_| vec![]);
-        rtts.iter()
+        self.get_recent_rtts_and_span(n).0
+    }
+
+    /**
+    Like [Self::get_recent_rtts], plus the time span the returned samples
+    actually cover: the age of the oldest sample's probe (lost probes stretch
+    it beyond samples x interval). The span is `None` without samples, or if
+    `n` exceeds [GRAPH_SAMPLES] (no send times kept that far back).
+
+    NOTE: locks the inner `data` for reading (once, so both are consistent).
+    */
+    pub fn get_recent_rtts_and_span(&self, n: usize) -> (Vec<(f64, f64)>, Option<Duration>) {
+        let data = self.data.read();
+        let rtts: Vec<u32> = data.rtts.recent_samples(n).unwrap_or_else(|_| vec![]);
+        let span: Option<Duration> = match rtts.len() {
+            0 => None,
+            k => data
+                .reply_sent
+                .len()
+                .checked_sub(k)
+                .and_then(|i| data.reply_sent.get(i))
+                .map(|t| t.elapsed()),
+        };
+        drop(data);
+
+        let rtts: Vec<(f64, f64)> = rtts
+            .iter()
             .enumerate()
             .map(|(i, &rtt)| (i as f64, rtt as f64 / MICROS_PER_MILLI)) // x: index, y: ms
-            .collect()
+            .collect();
+        (rtts, span)
     }
 
     /**
@@ -1050,6 +1115,10 @@ pause/resume/stop paths) already hold.
 - Pausing or stopping a target closes an ongoing outage at that moment;
   paused/stopped time is excluded from the monitored time used for the
   availability estimate.
+- Results arriving while paused/stopped, or for probes sent before the
+  latest resume / stats reset (the `epoch`), are ignored: pings still in
+  flight across a pause would otherwise open outages nobody is monitoring.
+- A send refused by the OS (no route, network down) counts as a miss.
 
 NOTE: in perf mode, ping results can complete out of order, so the
 consecutive-miss counting (and thus outage edges) is approximate to
@@ -1074,6 +1143,8 @@ pub(crate) struct EventTracker {
     paused_total: Duration,
     /// Set while paused or stopped.
     pause_since: Option<Instant>,
+    /// Probes sent before this (creation, last resume or reset) are ignored.
+    epoch: Instant,
 }
 
 impl EventTracker {
@@ -1090,7 +1161,14 @@ impl EventTracker {
             started: now,
             paused_total: Duration::ZERO,
             pause_since: paused.then_some(now),
+            epoch: now,
         }
+    }
+
+    /// Whether a result for the probe sent at `sent` should be accounted.
+    #[inline]
+    fn is_current(&self, sent: Instant) -> bool {
+        self.pause_since.is_none() && sent >= self.epoch
     }
 
     /// Append an event with the current wall-clock timestamp.
@@ -1108,6 +1186,9 @@ impl EventTracker {
 
     /// A reply was received for the probe sent at `sent`.
     pub fn record_success(&mut self, sent: Instant) {
+        if !self.is_current(sent) {
+            return;
+        }
         if self.in_outage {
             self.close_outage(sent);
         }
@@ -1117,6 +1198,9 @@ impl EventTracker {
 
     /// The probe sent at `sent` timed out.
     pub fn record_miss(&mut self, sent: Instant) {
+        if !self.is_current(sent) {
+            return;
+        }
         if self.miss_started.is_none() {
             self.miss_started = Some(sent);
         }
@@ -1161,6 +1245,7 @@ impl EventTracker {
         if let Some(p) = self.pause_since.take() {
             self.paused_total += p.elapsed();
         }
+        self.epoch = Instant::now();
         self.push(EventKind::Resumed);
     }
 
@@ -1188,6 +1273,7 @@ impl EventTracker {
         self.started = now;
         self.paused_total = Duration::ZERO;
         self.pause_since = paused.then_some(now);
+        self.epoch = now;
         self.push(EventKind::StatsReset);
     }
 
@@ -1373,8 +1459,9 @@ pub(crate) struct StatsSnapshot {
     pub stdev: Option<f64>,
     /// Current effective status of the target. DOES NOT contain "paused" or "stopped" states.
     pub status: PingStatus,
-    /// History of recent sent/received packets
-    pub hist: HistorySnapshot,
+    /// History of recent sent/received packets. Only built by
+    /// [StatsSnapshot::new_from_detailed] - it's ~6 passes over the history.
+    pub hist: Option<HistorySnapshot>,
     /// Timestamp of this snapshot.
     pub when: Instant,
     /// The latest sequence number from master data AT THE TIME OF THIS SNAPSHOT
@@ -1391,6 +1478,15 @@ impl StatsSnapshot {
     - `timeout` is the overall ping timeout duration.
     */
     pub fn new_from(tgt: &Arc<PingTarget>, timeout: Duration) -> Self {
+        Self::build(tgt, timeout, false)
+    }
+
+    /// Like [Self::new_from], but also fills in the [HistorySnapshot].
+    pub fn new_from_detailed(tgt: &Arc<PingTarget>, timeout: Duration) -> Self {
+        Self::build(tgt, timeout, true)
+    }
+
+    fn build(tgt: &Arc<PingTarget>, timeout: Duration, detailed: bool) -> Self {
         let data = tgt.data.read();
         let now: Instant = Instant::now();
         let (mean, min, max) = match data.rtts.mean_min_max() {
@@ -1413,7 +1509,7 @@ impl StatsSnapshot {
                 Err(_) => None,
             },
             status: data.effective_status(),
-            hist: HistorySnapshot::new_from(&data.recent),
+            hist: detailed.then(|| HistorySnapshot::new_from(&data.recent)),
             latest_seq: data.last_seq,
             latest_sent: data.last_sent.unwrap_or(now),
             timeout,
@@ -1568,5 +1664,32 @@ mod tracker_tests {
             t.events().last().unwrap().kind,
             EventKind::StatsReset
         ));
+    }
+
+    #[test]
+    fn stale_results_are_ignored() {
+        let mut t = EventTracker::new(false);
+        let before_pause: Instant = Instant::now();
+
+        // misses from probes still in flight when paused must not open an outage
+        t.pause();
+        for _ in 0..5 {
+            t.record_miss(before_pause);
+        }
+        assert_eq!(t.summary().outages, 0, "paused: results ignored");
+
+        // ...nor after resume, as they were sent before it
+        t.resume();
+        for _ in 0..5 {
+            t.record_miss(before_pause);
+        }
+        assert_eq!(t.summary().outages, 0, "pre-resume probes ignored");
+
+        // fresh probes count again
+        let now: Instant = Instant::now();
+        for i in 0..3 {
+            t.record_miss(now + Duration::from_millis(i));
+        }
+        assert_eq!(t.summary().outages, 1);
     }
 }

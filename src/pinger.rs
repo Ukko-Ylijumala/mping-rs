@@ -14,7 +14,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use rand::{fill, random};
 use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
 use surge_ping::{Client, PingIdentifier, PingSequence, Pinger};
-use tokio::time::{self, Instant, Interval};
+use tokio::time::{self, Interval, MissedTickBehavior};
 
 const PAYLOAD_RND_BYTES: usize = 32;
 const MAX_INFLIGHT: usize = 5; // perf mode: max pending pings per target
@@ -122,52 +122,53 @@ fn max_inflight(interval: Duration, timeout: Duration) -> usize {
 
 /* -------------------------------------------------------------------------- */
 
-/// Set up a ping loop for each target.
+/**
+Set up a ping loop for each target.
+
+The loop sleeps on an [Interval] running at the ping interval itself, so
+pings go out on schedule (no quantization to a coarser polling tick), and
+every other wakeup is event-driven: shutdown, stop, resume from pause and
+perf-mode completions. [MissedTickBehavior::Skip] drops ticks missed during
+a stall instead of bursting catch-up pings.
+*/
 pub(crate) async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
     let client = match tgt.addr {
         IpAddr::V4(_) => app.c_v4.as_ref().expect(ERR_V4_MISSING),
         IpAddr::V6(_) => app.c_v6.as_ref().expect(ERR_V6_MISSING),
     };
     let id: PingIdentifier = PingIdentifier(random());
-    let mut ticker: Interval = time::interval(app.internal_tick);
-    let mut next_ping: Instant = tokio::time::Instant::now();
+    let mut ticker: Interval = time::interval(app.defaults.interval);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // These variables are used only if perf mode is enabled
     let max_inflight: usize = max_inflight(app.defaults.interval, app.defaults.timeout);
     let mut inflight = FuturesUnordered::new();
 
     loop {
+        // While paused the ticker isn't polled at all; the resume wakeup re-arms it.
+        let paused: bool = tgt.is_paused();
         tokio::select! {
             biased;
-            true = app.is_quitting_async() => break,
-            true = tgt.is_stopped_async() => break,
+            _ = app.shutdown.cancelled() => break,
+            _ = tgt.stopped() => break,
 
             Some(_) = inflight.next(), if !inflight.is_empty() => { /* stats updated inside future */ }
 
-            _ = ticker.tick() => {
-                let now = tokio::time::Instant::now();
-                if tgt.is_paused() {
-                    /*
-                    Adjust next ping time to not build a backlog while paused.
-                    When unpaused, the next ping should be pretty much immediate
-                    and subsequent pings will resume at normal pace.
-                    */
-                    next_ping = now;
-                    continue;
-                } else if now < next_ping {
-                    continue;
-                }
+            // ping immediately on resume, then at normal pace from there
+            _ = tgt.resumed(), if paused => ticker.reset_immediately(),
 
+            _ = ticker.tick(), if !paused => {
+                if tgt.is_paused() {
+                    continue; // paused since the check above
+                }
                 if app.perf() {
                     if inflight.len() >= max_inflight {
-                        next_ping = now + app.defaults.interval;
-                        continue;
+                        continue; // skip this probe, try again next tick
                     }
                     inflight.push(build_ping_future(tgt.clone(), client.clone(), app.clone(), id));
                 } else {
                     ping_task(tgt.clone(), client, &app, id).await;
                 }
-                next_ping += app.defaults.interval;
             }
         }
     }

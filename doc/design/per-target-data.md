@@ -31,8 +31,9 @@ PingTarget (immutable shape)
 ```
 
 Splitting `paused` and `cancel` out of the inner `data` lock is intentional —
-the hot select in `ping_loop` checks them every tick, so they're behind their
-own cheap atomic/token rather than fighting for `data`.
+the `ping_loop` select reads/awaits them on every wakeup, so they're behind
+their own cheap atomic/token (plus the `resumed` `Notify` that wakes a paused
+loop) rather than fighting for `data`.
 
 ## `sent` is incremented before the network call
 
@@ -42,6 +43,8 @@ the ping returns an error or the response arrives out of order. The one
 exception: if `surge_ping` returns a non-timeout error, `update_stats`
 decrements `sent` again (saturating, since a stats reset can race an
 in-flight ping) because in that case no packet ever made it onto the wire.
+Outage tracking still counts an OS-refused send (`IOError`) as a miss — see
+[outage-tracking](outage-tracking.md).
 
 Sequence numbers come from a dedicated `next_seq: u16` wrapping counter in
 `PingTargetInner`, **not** from `sent`. Because `sent` is decremented on
@@ -127,6 +130,10 @@ graphing / min / max / stdev is the separate `LatencyWindow` — see
 `StatsSnapshot::new_from(&tgt, timeout)` (called from `format_row` at
 `main.rs:58`) grabs a single short read lock and copies out the data the
 renderer needs: sent/recv counts, latency window summary, effective status.
+The `HistorySnapshot` (sequence gaps, reordering, detailed-window stats) is
+several passes over the detailed history and nothing on the render path
+reads it, so it's only built by `StatsSnapshot::new_from_detailed`;
+`new_from` leaves `hist` as `None`.
 This keeps the lock held for one short critical section per visible target,
 which matters when there are many targets in the table.
 
