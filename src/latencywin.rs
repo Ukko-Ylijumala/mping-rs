@@ -47,7 +47,7 @@ let (mean, min, max) = win.mean_min_max().unwrap();
 println!("Mean: {:.2}ms", mean / 1e3);
 ```
 */
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LatencyWindow {
     cap: usize,
     buf: Vec<u32>,                  // ring buffer of values (grows up to cap)
@@ -365,6 +365,18 @@ impl LatencyWindow {
 }
 
 /**
+Minimum-capacity window. Not derived: a derived default would have
+capacity 0, and the first push would panic on `% cap`. Callers wanting a
+real window use [LatencyWindow::new]; this exists so containers (like
+`PingTargetInner`) can derive `Default`.
+*/
+impl Default for LatencyWindow {
+    fn default() -> Self {
+        Self::new(MIN_WINDOW_SIZE)
+    }
+}
+
+/**
 Naive reference calculation for sum of squares, which here means
 the sum of the squared differences between data values and the mean.
 
@@ -507,6 +519,16 @@ mod tests {
         lw.push(5);
         assert_eq!(lw.min().unwrap(), 5, "Wrong windowed min after pushing 5");
         assert_eq!(lw.min_ever().unwrap(), 5, "min_ever should track a new all-time low");
+    }
+
+    #[test]
+    fn test_default_is_usable() {
+        let mut lw: LatencyWindow = LatencyWindow::default();
+        assert_eq!(lw.maxlen(), MIN_WINDOW_SIZE);
+        for v in 1..=5 {
+            lw.push(v); // must not panic, and must evict normally
+        }
+        assert_eq!(lw.recent_samples(10).unwrap(), vec![3, 4, 5]);
     }
 
     #[test]
