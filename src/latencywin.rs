@@ -9,25 +9,31 @@
 //! a sliding window of samples. Should work for usual kinds of latency
 //! measurements.
 
-use std::{cmp::max, collections::VecDeque};
+use std::collections::VecDeque;
 
 const MIN_WINDOW_SIZE: usize = 3;
+/// Upper capacity bound that keeps the integer accumulators overflow-free
+/// (see "Numerical Considerations" on [LatencyWindow]).
+const MAX_WINDOW_SIZE: usize = u32::MAX as usize;
 
 /**
 O(1) amortized rolling latency window over the last N samples.
 
 Maintains a fixed-size sliding window of latency samples and computes
 statistical metrics efficiently. All values are stored in microseconds
-as u32, and calculations use f64 for precision.
+as u32; derived statistics are f64.
 
 ## Capacity
 The window capacity is clamped to a minimum of 3 samples to ensure
-statistical operations are meaningful.
+statistical operations are meaningful, and to a maximum of `u32::MAX`.
 
 ## Numerical Considerations
-Variance is computed using a computational formula which is efficient
-but may lose precision for extremely large values or very small variance.
-Suitable for typical (network) latency monitoring (µs to ms range).
+The running sums are exact integers (`Σx` as u64, `Σx²` as u128), so the
+add-new/subtract-evicted updates never accumulate rounding error, however
+long the window runs. Variance uses the computational formula on those
+exact sums, `(nΣx² − (Σx)²) / n²`, whose numerator is computed exactly and
+is non-negative by construction; the only rounding is the final conversion
+to f64. With u32 samples and capacity below 2³² nothing can overflow.
 
 ## Example
 ```
@@ -47,8 +53,8 @@ pub struct LatencyWindow {
     buf: Vec<u32>,                  // ring buffer of values (grows up to cap)
     head: usize,                    // next write position
     len: usize,
-    sum: f64,                       // running sum
-    sum_sq: f64,                    // running sum of squares
+    sum: u64,                       // running sum (exact)
+    sum_sq: u128,                   // running sum of squares (exact)
     variance: f64,                  // running population variance (M2 / N)
     stdev: f64,                     // running population standard deviation as f64
     minq: VecDeque<(u32, usize)>,   // monotonic increasing (value, index)
@@ -59,9 +65,9 @@ pub struct LatencyWindow {
 }
 
 impl LatencyWindow {
-    /// Create new LatencyWindow with capacity `cap` (clamped to 3 minimum).
+    /// Create new LatencyWindow with capacity `cap` (clamped to `3..=u32::MAX`).
     pub fn new(cap: usize) -> Self {
-        let cap: usize = max(cap, MIN_WINDOW_SIZE);
+        let cap: usize = cap.clamp(MIN_WINDOW_SIZE, MAX_WINDOW_SIZE);
         Self {
             cap,
             /*
@@ -72,8 +78,8 @@ impl LatencyWindow {
             buf: Vec::new(),
             head: 0,
             len: 0,
-            sum: 0.0,
-            sum_sq: 0.0,
+            sum: 0,
+            sum_sq: 0,
             variance: 0.0,
             stdev: 0.0,
             minq: VecDeque::new(),
@@ -111,16 +117,17 @@ impl LatencyWindow {
             self.buf.push(val);
             self.head = (self.head + 1) % self.cap;
             self.len += 1;
-            self.sum += val_f;
-            self.sum_sq += val_f * val_f;
+            self.sum += val as u64;
+            self.sum_sq += (val as u128).pow(2);
         } else {
             // Evict oldest at head
             let tail_pos: usize = self.head;
-            let old: f64 = self.buf[tail_pos] as f64;
+            let old: u32 = self.buf[tail_pos];
             self.buf[tail_pos] = val;
             self.head = (self.head + 1) % self.cap;
-            self.sum += val_f - old;
-            self.sum_sq += val_f * val_f - old * old;
+            // the evicted value is part of both sums, so these can't underflow
+            self.sum = self.sum - old as u64 + val as u64;
+            self.sum_sq = self.sum_sq - (old as u128).pow(2) + (val as u128).pow(2);
 
             /*
             The global “logical index” of the evicted element is idx - cap,
@@ -131,17 +138,15 @@ impl LatencyWindow {
 
         // Compute population variance and stdev
         if self.len > 1 {
-            let len_f: f64 = self.len as f64;
+            let n: u128 = self.len as u128;
             /*
-            Due to floating-point rounding errors in the computational formula,
-            variance could become slightly negative (e.g. -1e-15), even though
-            mathematically it should not. Guard against that here.
+            Computational formula on the exact integer sums: the numerator
+            n*Σx² - (Σx)² is exact and never negative (Cauchy-Schwarz), so
+            unlike the old f64 version no clamping against drift is needed.
+            Saturating only as a belt-and-braces guard.
             */
-            let mut variance: f64 = (self.sum_sq - (self.sum * self.sum / len_f)) / len_f;
-            if variance < 0.0 {
-                variance = 0.0;
-            }
-            self.variance = variance;
+            let num: u128 = (n * self.sum_sq).saturating_sub((self.sum as u128).pow(2));
+            self.variance = num as f64 / (n * n) as f64;
             self.stdev = self.variance.sqrt();
         }
 
@@ -202,8 +207,8 @@ impl LatencyWindow {
         self.buf.clear(); // keeps the allocation; push() appends again from 0
         self.head = 0;
         self.len = 0;
-        self.sum = 0.0;
-        self.sum_sq = 0.0;
+        self.sum = 0;
+        self.sum_sq = 0;
         self.variance = 0.0;
         self.stdev = 0.0;
         self.minq.clear();
@@ -291,7 +296,7 @@ impl LatencyWindow {
     /// Mean value (aka. average).
     pub fn mean(&self) -> Result<f64, String> {
         self.no_samples_check()?;
-        Ok(self.sum / self.len as f64)
+        Ok(self.sum as f64 / self.len as f64)
     }
 
     /**
@@ -352,7 +357,7 @@ impl LatencyWindow {
     /// Mean/min/max values.
     pub fn mean_min_max(&self) -> Result<(f64, u32, u32), String> {
         self.no_samples_check()?;
-        let mean: f64 = self.sum / self.len as f64;
+        let mean: f64 = self.sum as f64 / self.len as f64;
         let min: u32 = self.minq.front().map(|(v, _)| *v).unwrap_or_default();
         let max: u32 = self.maxq.front().map(|(v, _)| *v).unwrap_or_default();
         Ok((mean, min, max))
@@ -502,6 +507,22 @@ mod tests {
         lw.push(5);
         assert_eq!(lw.min().unwrap(), 5, "Wrong windowed min after pushing 5");
         assert_eq!(lw.min_ever().unwrap(), 5, "min_ever should track a new all-time low");
+    }
+
+    #[test]
+    fn test_no_drift() {
+        /*
+        Large values, tiny variance, many evictions: the worst case for the
+        computational formula on floating-point running sums. Alternating
+        base / base + 2 over an even window has variance exactly 1.
+        */
+        let base: u32 = 4_000_000_000;
+        let mut lw: LatencyWindow = LatencyWindow::new(100);
+        for i in 0..1_000_000u32 {
+            lw.push(base + 2 * (i % 2));
+        }
+        assert_eq!(lw.variance().unwrap(), 1.0, "variance drifted");
+        assert_eq!(lw.mean().unwrap(), base as f64 + 1.0, "mean drifted");
     }
 
     #[test]

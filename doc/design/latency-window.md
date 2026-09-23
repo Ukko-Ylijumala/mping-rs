@@ -14,8 +14,8 @@ LatencyWindow {
     buf:    Vec<u32>       // ring buffer of µs RTTs; grows on push up to cap
     head:   usize          // next write position
     len:    usize          // current size, ≤ cap
-    sum:    f64            // running Σ x
-    sum_sq: f64            // running Σ x²
+    sum:    u64            // running Σ x  (exact)
+    sum_sq: u128           // running Σ x² (exact)
     variance: f64          // last computed population variance
     stdev:    f64          // last computed population stdev
     minq:   VecDeque<(u32, usize)>  // monotonic increasing  (value, sample idx)
@@ -27,10 +27,11 @@ LatencyWindow {
 ```
 
 RTTs are stored as `u32` microseconds (the unit `update_stats` writes into
-the window — `pingdata.rs:243`). Accumulators are `f64` so the variance
-formula doesn't lose precision over the µs–ms range expected for network
-latency. The capacity is clamped to a minimum of 3 because variance below
-that is not meaningful.
+the window — `pingdata.rs:243`). The running sums are exact integers, so
+the O(1) add/evict updates never accumulate rounding error (see *Numerical
+considerations*). The capacity is clamped to a minimum of 3 because
+variance below that is not meaningful, and to a maximum of `u32::MAX`,
+which keeps the integer sums overflow-free.
 
 ## O(1) push
 
@@ -40,10 +41,10 @@ that is not meaningful.
 2. If growing, write to `buf[head]`, bump `head`, increment `len`, add
    `val` and `val²` to the running sums.
    If full, also subtract the evicted oldest value's contribution.
-3. Recompute population variance with the **computational formula**:
-   `var = (Σx² − (Σx)² / n) / n`. Negative values can appear due to
-   floating-point cancellation when variance is near zero — clamped to 0
-   (`latencywin.rs:114-117`).
+3. Recompute population variance with the **computational formula** on
+   the exact sums: `var = (nΣx² − (Σx)²) / n²`. The numerator is exact
+   integer arithmetic and never negative, so only the final division
+   rounds.
 4. Drop from the front of `minq`/`maxq` any entries whose original sample
    index has aged out of the window.
 5. Drop from the back of `minq` any entries with values ≥ `val` (they can
@@ -87,17 +88,20 @@ pushed and popped from each deque at most once.
 
 ## Numerical considerations
 
-The computational variance formula `(Σx² − (Σx)²/n) / n` is fast and O(1),
-but it can lose precision when the data is large relative to the variance
-(catastrophic cancellation). For typical ping RTTs (microseconds to tens of
-milliseconds with µs-scale jitter) this is fine — the doc comment on the
-struct (`latencywin.rs:15-30`) calls this out. If anyone ever feeds it
-nanosecond resolution or huge values, switch to Welford's algorithm
-instead.
+The computational variance formula is fast and O(1), but on
+floating-point running sums it has two weaknesses: catastrophic
+cancellation when the values are large relative to the variance, and drift
+— every add/evict update rounds, and over days of runtime the error in
+`Σx²` accumulates until variance and stdev are meaningless (the
+`test_no_drift` unit test shows the old `f64` version reporting 0.0 instead
+of 1.0).
 
-The guard in step 3 — clamping negative variance to 0 — is *only* there to
-catch floating-point drift; if you see large negative values, something is
-wrong.
+Both go away with exact integer sums: `Σx` fits a `u64` and `Σx²` a `u128`
+for u32 samples and capacity below 2³², and so do `nΣx²` and `(Σx)²`. The
+numerator `nΣx² − (Σx)²` is therefore exact (and ≥ 0 by Cauchy–Schwarz;
+the `saturating_sub` is only a guard), and the only rounding left is the
+final conversion to `f64`, recomputed fresh on every push. No need for
+Welford's algorithm.
 
 ## Clear and rebuild
 
