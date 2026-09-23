@@ -47,8 +47,11 @@ an out-of-bounds slice if targets were removed in between. The prediction
 mirrors Ratatui's `visible_rows` for 1-line rows: clamp to the last row,
 then scroll just enough to keep the selection visible.
 
-When `all == true` (the final stdout dump after teardown — `main.rs:519`),
-it formats every row so the printed stats are complete.
+`all == true` formats every row. Nothing uses it at the moment: the final
+stdout dump after teardown prints only the rows that were visible in the
+TUI, so it takes the viewport path too and slices the formatted rows out
+using a viewport computed from the gathered `data.len()` (the target list
+could still grow after the snapshot if an add-target job was resolving).
 
 Formatting itself happens in `format_row` (`main.rs:57`), which takes
 `StatsSnapshot::new_from(&tgt, timeout)` first (one short read lock) and

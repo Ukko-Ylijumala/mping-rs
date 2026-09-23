@@ -604,10 +604,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tasks: Vec<tokio::task::JoinHandle<()>> = std::mem::take(&mut *app.tasks.write());
     join_all(tasks).await;
 
-    // Print final stats
-    let data: Vec<TableRow> = gather_target_data(&app, &tui, true);
-    // Display the same rows as were visible in the TUI
-    let vp = tui.viewport(app.len());
+    /*
+    Print final stats: the same rows as were visible in the TUI, so only those
+    need formatting (padding rows keep `data` indexed like the target list).
+    The viewport is derived from `data.len()`, not `app.len()`: an add-target
+    job still resolving DNS could grow the list after the snapshot.
+    */
+    let data: Vec<TableRow> = gather_target_data(&app, &tui, false);
+    let vp = tui.viewport(data.len());
     simple_tabulate(&data[vp.offset..vp.end_pos], Some(&tui.headers.strings()))
         .iter()
         .for_each(|line| println!("{line}"));
