@@ -24,6 +24,7 @@ code.
 | [hopcount.md](hopcount.md) | Raw-ICMP TTL inference, the library function + standalone `hopcount` binary, why `spawn_blocking` and the AI-slop comment |
 | [distance-estimation.md](distance-estimation.md) | RTT-to-distance heuristic, double stretch factor, quantization bands, caveats |
 | [as-lookup.md](as-lookup.md) | Origin AS via Team Cymru DNS TXT queries, answer parsing, multi-origin handling, `QueryResponse::As` |
+| [pmtu.md](pmtu.md) | Path MTU discovery with DF echo probes: per-OS socket options, router hints vs bisection, black-hole detection, the socket-free `search` |
 
 ## Conventions across these docs
 

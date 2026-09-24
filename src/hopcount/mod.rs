@@ -25,9 +25,9 @@ use std::{
 
 const ID_VALUE: u16 = 0xb00b; // (very!) arbitrary identifier
 const SEQ_VALUE: u16 = 1; // sequence number for the single probe
-const ICMP_HEADER_SIZE: usize = 8; // ICMP(v4/v6) header size
-const IPV4_HEADER_MIN: usize = 20; // IPv4 header size without options
-const IPV6_HEADER_SIZE: usize = 40; // IPv6 header size (fixed)
+pub(crate) const ICMP_HEADER_SIZE: usize = 8; // ICMP(v4/v6) header size
+pub(crate) const IPV4_HEADER_MIN: usize = 20; // IPv4 header size without options
+pub(crate) const IPV6_HEADER_SIZE: usize = 40; // IPv6 header size (fixed)
 const RECV_BUF_SIZE: usize = 1500;
 /// Shortest read timeout we hand to the socket. Anything under 1 µs becomes
 /// `timeval {0, 0}`, which `SO_RCVTIMEO` treats as "block forever".
@@ -68,7 +68,7 @@ pub(crate) fn estimate_hops(received_ttl: u8) -> u8 {
 /// Time left until `deadline`, or a timeout error if (nearly) passed.
 /// See [MIN_READ_TIMEOUT] for why "nearly" matters.
 #[inline]
-fn time_left(deadline: Instant) -> Result<Duration, String> {
+pub(crate) fn time_left(deadline: Instant) -> Result<Duration, String> {
     deadline
         .checked_duration_since(Instant::now())
         .filter(|d| *d >= MIN_READ_TIMEOUT)
@@ -85,7 +85,7 @@ fn recv_err(e: std::io::Error) -> String {
 }
 
 /// Create and bind a raw ICMP socket for the given IP version.
-fn make_socket(v4: bool, debug: bool) -> Result<Socket, String> {
+pub(crate) fn make_socket(v4: bool, debug: bool) -> Result<Socket, String> {
     let (domain, proto, bind) = if v4 {
         (Domain::IPV4, Protocol::ICMPV4, BIND_SOCKET_IPV4)
     } else {
@@ -108,16 +108,20 @@ fn make_socket(v4: bool, debug: bool) -> Result<Socket, String> {
 
 /* -------------------------------- IPv4 ----------------------------------- */
 
-/// Identifier of the ICMP Echo Request embedded in an ICMPv4 error message
-/// (`[8B ICMP error hdr][inner IPv4 hdr][inner ICMP hdr...]`), if parseable.
-fn embedded_ident_v4(icmp_msg: &[u8]) -> Option<u16> {
+/// Identifier and sequence number of the ICMP Echo Request embedded in an
+/// ICMPv4 error message (`[8B ICMP error hdr][inner IPv4 hdr][inner ICMP hdr...]`),
+/// if parseable. Shared with the path MTU prober.
+pub(crate) fn embedded_echo_v4(icmp_msg: &[u8]) -> Option<(u16, u16)> {
     let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
     let ihl: usize = ((*inner_ip.first()? & 0x0f) as usize) * 4;
     if ihl < IPV4_HEADER_MIN {
         return None;
     }
     let inner_icmp: &[u8] = inner_ip.get(ihl..ihl + ICMP_HEADER_SIZE)?;
-    Some(u16::from_be_bytes([inner_icmp[4], inner_icmp[5]]))
+    Some((
+        u16::from_be_bytes([inner_icmp[4], inner_icmp[5]]),
+        u16::from_be_bytes([inner_icmp[6], inner_icmp[7]]),
+    ))
 }
 
 fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result<(u8, u8), String> {
@@ -197,7 +201,7 @@ fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result
             }
             IcmpTypes::DestinationUnreachable => {
                 // Only ours if the embedded original packet carries our identifier
-                if embedded_ident_v4(icmp_msg) == Some(ID_VALUE) {
+                if matches!(embedded_echo_v4(icmp_msg), Some((ID_VALUE, _))) {
                     return Err(ERR_UNREACH.to_string());
                 }
             }
@@ -212,23 +216,32 @@ fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result
 
 /* -------------------------------- IPv6 ----------------------------------- */
 
-/// Identifier of the ICMPv6 Echo Request embedded in an ICMPv6 error message
-/// (`[8B ICMPv6 error hdr][inner IPv6 hdr][inner ICMPv6 hdr...]`), if parseable.
-fn embedded_ident_v6(icmp_msg: &[u8]) -> Option<u16> {
+/// Identifier and sequence number of the ICMPv6 Echo Request embedded in an
+/// ICMPv6 error message (`[8B ICMPv6 error hdr][inner IPv6 hdr][inner ICMPv6 hdr...]`),
+/// if parseable. Shared with the path MTU prober.
+pub(crate) fn embedded_echo_v6(icmp_msg: &[u8]) -> Option<(u16, u16)> {
     let inner_icmp: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE + IPV6_HEADER_SIZE..)?;
-    let bytes: &[u8] = inner_icmp.get(4..6)?;
-    Some(u16::from_be_bytes([bytes[0], bytes[1]]))
+    let bytes: &[u8] = inner_icmp.get(4..8)?;
+    Some((
+        u16::from_be_bytes([bytes[0], bytes[1]]),
+        u16::from_be_bytes([bytes[2], bytes[3]]),
+    ))
 }
 
-/// Ask the kernel to deliver the hop limit of received packets as ancillary data.
-fn enable_recv_hoplimit(socket: &Socket) -> Result<(), String> {
-    let on: libc::c_int = 1;
+/// `setsockopt` with an `int` value, error text included. Shared with the
+/// path MTU prober for its Don't Fragment options.
+pub(crate) fn set_sockopt_int(
+    socket: &Socket,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: libc::c_int,
+) -> Result<(), String> {
     let ret = unsafe {
         libc::setsockopt(
             socket.as_raw_fd(),
-            libc::IPPROTO_IPV6,
-            libc::IPV6_RECVHOPLIMIT,
-            (&raw const on).cast(),
+            level,
+            name,
+            (&raw const value).cast(),
             size_of::<libc::c_int>() as libc::socklen_t,
         )
     };
@@ -236,6 +249,11 @@ fn enable_recv_hoplimit(socket: &Socket) -> Result<(), String> {
         0 => Ok(()),
         _ => Err(format!("{ERR_SOCK_OPT}: {}", std::io::Error::last_os_error())),
     }
+}
+
+/// Ask the kernel to deliver the hop limit of received packets as ancillary data.
+fn enable_recv_hoplimit(socket: &Socket) -> Result<(), String> {
+    set_sockopt_int(socket, libc::IPPROTO_IPV6, libc::IPV6_RECVHOPLIMIT, 1)
 }
 
 /**
@@ -356,7 +374,7 @@ fn determine_hops_v6(target: Ipv6Addr, timeout: Duration, debug: bool) -> Result
             }
             Icmpv6Types::DestinationUnreachable => {
                 // Only ours if the embedded original packet carries our identifier
-                if embedded_ident_v6(icmp_msg) == Some(ID_VALUE) {
+                if matches!(embedded_echo_v6(icmp_msg), Some((ID_VALUE, _))) {
                     return Err(ERR_UNREACH.to_string());
                 }
             }

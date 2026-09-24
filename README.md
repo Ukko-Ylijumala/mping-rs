@@ -11,7 +11,7 @@ mping is a small concurrent multi-pinger TUI app that displays live RTT stats, g
 - Configurable interval, timeout and ICMP payload size/randomization.
 - Tries to resolve targets which fail to parse as IPs/ranges/CIDRs as DNS names
 - Configurable DNS servers and query timeouts
-- Per-target info on demand: hop count, PTR / reverse-PTR, origin AS (Team Cymru), RTT-based distance estimate
+- Per-target info on demand: hop count, path MTU, PTR / reverse-PTR, origin AS (Team Cymru), RTT-based distance estimate
 
 ### Key implementation points
 - Targets are represented by [`PingTarget`](src/pingdata.rs) struct.
@@ -43,6 +43,7 @@ for the index. Highlights:
 - [`hopcount.md`](doc/design/hopcount.md) — ICMP TTL inference (library + standalone binary).
 - [`distance-estimation.md`](doc/design/distance-estimation.md) — RTT-to-distance heuristic.
 - [`as-lookup.md`](doc/design/as-lookup.md) — origin AS lookup via Team Cymru DNS.
+- [`pmtu.md`](doc/design/pmtu.md) — path MTU discovery with DF echo probes.
 
 ### Install Rust toolchain
 ```sh

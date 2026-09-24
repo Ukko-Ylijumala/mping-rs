@@ -56,7 +56,7 @@ pub static INFO_INFO: &str = " Info ";
 pub static INFO_TGTS: &str = " Targets: {} ";
 pub static INFO_TGTS_SORTED: &str = " Targets: {} | sort: {} {} ";
 pub static INFO_NO_TGTS: &str = " No targets";
-pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n AS      : {}\n Distance: {}\n Hops    : {}\n Jitter  : {}\n Outages : {}\n Uptime  : {}";
+pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n AS      : {}\n Distance: {}\n Hops    : {}\n PMTU    : {}\n Jitter  : {}\n Outages : {}\n Uptime  : {}";
 pub static INFO_SELECT: &str = " Select a target to see detailed info.";
 pub static INFO_RTT_G: &str = " Round-Trip Time graph ";
 pub static INFO_RTT_H: &str = " RTT Histogram (ms) ";
@@ -146,6 +146,15 @@ pub static CYMRU_ORIGIN4: &str = ".origin.asn.cymru.com.";
 pub static CYMRU_ORIGIN6: &str = ".origin6.asn.cymru.com.";
 pub static CYMRU_ASNAME: &str = ".asn.cymru.com.";
 
+// pmtu.rs
+pub static WARN_PMTU_BLACKHOLE: &str = "PMTUD black hole";
+pub static ERR_PMTU_FLOOR: &str = "Even the minimum MTU is too big";
+pub static ERR_PMTU_PROBES: &str = "Probe budget exhausted";
+pub static ERR_PMTU_SIZE: &str = "Probe size below header overhead";
+pub static INFO_PMTU_UPPER: &str = "Path MTU search: upper bound";
+pub static INFO_PMTU_PROBE: &str = "Probing path MTU with";
+pub static INFO_PMTU_VERDICT: &str = "Verdict for";
+
 // hopcount.rs
 pub static BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
 pub static BIND_SOCKET_IPV6: &str = "[::]:0";
@@ -216,6 +225,7 @@ pub static INFO_UPD: &str = "*** updating info for '{}' ***";
 pub static INFO_HOPS: &str = "updated hops for '{}' in {}ms";
 pub static INFO_PTR: &str = "resolved PTR for '{}' in {}ms";
 pub static INFO_AS: &str = "resolved origin AS for '{}' in {}ms";
+pub static INFO_PMTU: &str = "discovered path MTU for '{}' in {}ms";
 pub static INFO_RESET: &str = "resetting statistics for '{}'";
 pub static INFO_STOP: &str = "stopping '{}'";
 pub static INFO_REMOVE: &str = "removing '{}'";

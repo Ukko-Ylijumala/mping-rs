@@ -6,6 +6,7 @@ use crate::{
     asinfo::lookup_as,
     hopcount::{determine_hops, estimate_hops},
     latencywin::LatencyWindow,
+    pmtu::determine_pmtu,
     strings::*,
     structs::QueryResponse,
     utils::{HistogramBucket, human_duration, make_histogram_buckets, reverse_name},
@@ -218,6 +219,7 @@ This struct represents a single ping target with its associated data and state.
 - `ptr`: Last known PTR record query response (protected by a [RwLock]).
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
 - `asinfo`: Last known origin AS (Team Cymru) query response (protected by a [RwLock]).
+- `pmtu`: Last known path MTU discovery response (protected by a [RwLock]).
 - `hostname`: The host or DNS name this target was resolved from, if any.
 - `added_order`: Monotonic creation stamp. The target list can be re-sorted
   physically (column sorting in the UI); sorting by this restores the original
@@ -236,6 +238,7 @@ pub(crate) struct PingTarget {
     ptr: RwLock<QueryResponse>,
     rev_ptr: RwLock<QueryResponse>,
     asinfo: RwLock<QueryResponse>,
+    pmtu: RwLock<QueryResponse>,
     hostname: OnceLock<Arc<str>>,
 }
 
@@ -268,6 +271,7 @@ impl PingTarget {
             ptr: QueryResponse::default().into(),
             rev_ptr: QueryResponse::default().into(),
             asinfo: QueryResponse::default().into(),
+            pmtu: QueryResponse::default().into(),
             paused: AtomicBool::new(paused),
             cancel: CancellationToken::new(),
             resumed: Notify::new(),
@@ -373,6 +377,23 @@ impl PingTarget {
     /// Get the last known hop count query response for this target, if any.
     pub fn hops(&self) -> QueryResponse {
         self.hops.read().clone()
+    }
+
+    /// Try to discover the path MTU to this target. Blocking, several probes.
+    pub fn determine_pmtu(&self, timeout: Duration) {
+        if self.is_stopped() {
+            return;
+        }
+        *self.pmtu.write() = match determine_pmtu(self.addr, timeout, false) {
+            Ok(p) if p.blackhole => QueryResponse::Text(p.to_string()),
+            Ok(p) => QueryResponse::Count(p.mtu as u64),
+            Err(e) => QueryResponse::Error(e),
+        };
+    }
+
+    /// Get the last known path MTU discovery response for this target, if any.
+    pub fn pmtu(&self) -> QueryResponse {
+        self.pmtu.read().clone()
     }
 
     /**

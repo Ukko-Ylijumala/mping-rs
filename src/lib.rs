@@ -12,11 +12,13 @@ mod logging;
 mod macros;
 mod pingdata;
 mod pinger;
+mod pmtu;
 mod strings;
 mod structs;
 mod ui;
 mod utils;
 
 pub use hopcount::determine_hops;
+pub use pmtu::{Pmtu, determine_pmtu};
 pub use ui::TerminalGuard;
 pub use utils::parse_float_into_duration;

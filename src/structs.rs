@@ -33,6 +33,7 @@ pub(crate) const DEFAULT_HISTSIZE: usize = 3600; // one hour of per-second histo
 pub(crate) const DEFAULT_DETAILED: usize = 100; // detailed RTT history size
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
 const UPDATE_TASK_TIMEOUT: Duration = Duration::from_secs(3);
+const PMTU_PROBE_TIMEOUT: Duration = Duration::from_secs(1); // per probe; a black-hole bisection sends ~10
 #[cfg(target_os = "linux")]
 pub static SYSTEM_TTL: u8 = 64;
 #[cfg(target_os = "macos")]
@@ -321,6 +322,7 @@ impl AppState {
             let tgt_ptr1 = tgt.clone();
             let tgt_ptr2 = tgt.clone();
             let tgt_ptr3 = tgt.clone();
+            let tgt_ptr4 = tgt.clone();
             let resolver = self.resolver.clone();
             let resolver_as = self.resolver.clone();
             /*
@@ -354,6 +356,18 @@ impl AppState {
                 logger.debug(templater!(
                     INFO_PTR,
                     tgt_ptr2.addr,
+                    format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
+                ));
+            });
+
+            // Path MTU discovery: several blocking DF probes, same rules as `determine_hops`.
+            let logger = self.logger.clone();
+            self.spawn_blocking(move || {
+                let now: Instant = Instant::now();
+                tgt_ptr4.determine_pmtu(PMTU_PROBE_TIMEOUT);
+                logger.debug(templater!(
+                    INFO_PMTU,
+                    tgt_ptr4.addr,
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
                 ));
             });

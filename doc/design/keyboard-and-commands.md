@@ -37,7 +37,7 @@ runtime, which has implications below.
 
 Calling `tokio::spawn` from outside a runtime panics. Any command that
 needs to do async work (e.g. `UpdateTgtInfo` triggers PTR resolution,
-origin AS lookup and hop-count probing) must go through `AppState::spawn` or
+origin AS lookup, hop-count and path MTU probing) must go through `AppState::spawn` or
 `AppState::spawn_blocking`, both of which use the stored
 `tokio::runtime::Handle` captured at `from_conf` time
 (`structs.rs:105, 165-182`).
@@ -47,9 +47,9 @@ this for `update_target_info`. **Don't** replace those calls with bare
 `tokio::spawn` — the keyboard thread will panic on the first press of
 Enter.
 
-`spawn_blocking` is specifically required for `determine_hops`
-(`structs.rs:318`) because it does blocking socket I/O *and* eventually
-acquires write locks on the target's fields. Scheduling it on a runtime
+`spawn_blocking` is specifically required for `determine_hops` and
+`determine_pmtu` (`structs.rs`) because they do blocking socket I/O *and*
+eventually acquire write locks on the target's fields. Scheduling it on a runtime
 worker that's also holding a read lock on the same target can deadlock.
 
 ## The Command enum and execute
@@ -64,7 +64,7 @@ state mutations it can trigger:
 | `TogglePause(idx)` | Toggles one target | Re-uses the inner write lock to record `Paused`/`Resuming` status |
 | `StopTarget(idx)` | Cancels the target's `CancellationToken` | Irreversible |
 | `RemoveTarget(idx)` | Stop + remove from the targets vec | Takes a write lock on `targets` |
-| `UpdateTgtInfo(idx)` | Fires hop-count (blocking) + PTR + origin AS (async) tasks | See above, [as-lookup](as-lookup.md) |
+| `UpdateTgtInfo(idx)` | Fires hop-count + path MTU (blocking) and PTR + origin AS (async) tasks | See above, [as-lookup](as-lookup.md), [pmtu](pmtu.md) |
 | `ResetTgtStats(idx)` | Zeroes counts and clears the latency window / history | |
 | `TogglePerf` | Flips the `perf` atomic | See [concurrency](concurrency.md) |
 | `RemoveAllUnreach` | Bulk-removes unreachable targets | Returns `CmdResult::Count(n)` so the keyboard handler can clear the selection |
@@ -92,7 +92,7 @@ It is synchronous — anything async-y inside individual handlers happens via
 | `p` / `P` | Pause all / Resume all |
 | `S` | Stop selected target |
 | `R` | Reset selected target's stats |
-| Enter | Update info (hops + PTR + origin AS) for selected target |
+| Enter | Update info (hops, PMTU, PTR, origin AS) for selected target |
 | `E` | Event timeline popup for selected target (pure UI, no `Command` — see [outage-tracking](outage-tracking.md)) |
 | Delete | Remove selected target |
 | Ctrl-Delete | Remove all unreachable targets |

@@ -43,7 +43,8 @@ Common shape of both paths:
    The read timeout is re-armed with the remaining time each iteration.
 4. A `DestinationUnreachable` is only treated as our failure if the
    original packet embedded in the error message carries our identifier
-   (`embedded_ident_v4` / `embedded_ident_v6`).
+   (`embedded_echo_v4` / `embedded_echo_v6`, which return the quoted
+   identifier and sequence number; hopcount checks only the identifier).
 5. Estimate the original TTL by bucketing the received value
    (`estimate_hops`, `pub(crate)` — also used by the reply-TTL
    route-change tracking in `pingdata.rs`):
@@ -125,7 +126,9 @@ denied.
 ## File map
 
 - `src/hopcount/mod.rs` — `determine_hops` (v4/v6 split, filtering
-  receive loops, `recvmsg_v6`) and the AI-slop comment.
+  receive loops, `recvmsg_v6`) and the AI-slop comment. `make_socket`,
+  `time_left`, `set_sockopt_int`, `embedded_echo_v4/v6` and the header
+  size constants are `pub(crate)` for [pmtu.rs](pmtu.md).
 - `src/hopcount/main.rs` — the standalone binary.
 - `src/pingdata.rs:275-288` — `PingTarget::determine_hops` /
   `PingTarget::hops`.

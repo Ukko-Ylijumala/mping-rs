@@ -12,6 +12,7 @@ mod logging;
 mod macros;
 mod pingdata;
 mod pinger;
+mod pmtu;
 mod strings;
 mod structs;
 mod ui;
@@ -240,6 +241,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
             t.asinfo().to_string(),
             t.est_distance_str(state.distance_stretch_factor),
             t.hops().to_string(),
+            t.pmtu().to_string(),
             t.jitter_str(),
             outages.counts_str(),
             outages.availability_str(),
