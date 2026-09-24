@@ -120,6 +120,8 @@ pub static EVT_PAUSED: &str = "pinging paused";
 pub static EVT_RESUMED: &str = "pinging resumed";
 pub static EVT_STOPPED: &str = "pinging stopped permanently";
 pub static EVT_RESET: &str = "statistics reset";
+pub static EVT_ROUTE: &str = "ROUTE - reply TTL";
+pub static EVT_ROUTE_HOPS: &str = "est. hops";
 
 // utils.rs
 pub static ERR_SOCKETS: &str = "cannot create raw sockets for ICMPv";

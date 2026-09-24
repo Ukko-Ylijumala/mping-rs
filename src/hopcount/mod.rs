@@ -55,7 +55,7 @@ pub fn determine_hops(target: IpAddr, timeout: Duration, debug: bool) -> Result<
 /// Estimate the sender's initial TTL / hop limit from the received value.
 /// Common initial values are 64 (Linux, macOS), 128 (Windows) and 255 (network gear).
 #[inline]
-fn estimate_hops(received_ttl: u8) -> u8 {
+pub(crate) fn estimate_hops(received_ttl: u8) -> u8 {
     if received_ttl > 128 {
         255 - received_ttl
     } else if received_ttl > 64 {

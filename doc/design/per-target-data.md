@@ -15,7 +15,7 @@ PingTarget (immutable shape)
 ├── hostname: OnceLock<Arc<str>> ── set once from DNS resolution
 ├── paused: AtomicBool         ── flips fast in the ping loop's select!
 ├── cancel: CancellationToken  ── permanent stop; see shared-state.md
-├── hops:    RwLock<QueryResponse> ── last hop-count result (separate, rarely updated)
+├── hops:    RwLock<QueryResponse> ── hop-count: Enter, or live from the v4 reply TTL (see outage-tracking.md)
 ├── ptr:     RwLock<QueryResponse> ── last PTR result
 ├── rev_ptr: RwLock<QueryResponse> ── reverse-of-PTR result
 ├── asinfo:  RwLock<QueryResponse> ── origin AS result (see as-lookup.md)

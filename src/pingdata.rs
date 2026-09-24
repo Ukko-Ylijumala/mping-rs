@@ -4,7 +4,7 @@
 
 use crate::{
     asinfo::lookup_as,
-    hopcount::determine_hops,
+    hopcount::{determine_hops, estimate_hops},
     latencywin::LatencyWindow,
     strings::*,
     structs::QueryResponse,
@@ -49,6 +49,7 @@ static ADD_ORDER: AtomicU64 = AtomicU64::new(0);
 pub(crate) const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 const OUTAGE_THRESH: u32 = 3; // consecutive misses before an outage is declared
 const EVENT_CAP: usize = 100; // per-target event ring capacity
+const TTL_CONFIRM: u32 = 2; // consecutive replies with a new TTL before a route change is declared
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub(crate) enum PingStatus {
@@ -288,8 +289,9 @@ impl PingTarget {
         if inner.reset_at.is_some_and(|t| rec.sent < t) {
             return; // probe predates the last stats reset
         }
+        let mut ttl_update = TtlUpdate::None;
         inner.raw_status = match res {
-            Ok((_, dur)) => {
+            Ok((pkt, dur)) => {
                 inner.recv += 1;
                 inner.rtts.push(dur.as_micros() as u32);
                 if inner.reply_sent.len() >= GRAPH_SAMPLES {
@@ -298,6 +300,12 @@ impl PingTarget {
                 inner.reply_sent.push_back(rec.sent);
                 rec.set_rtt(dur);
                 inner.tracker.record_success(rec.sent);
+                // IPv4 replies carry the IP header TTL; surge-ping doesn't surface the v6 hop limit
+                let ttl: Option<u8> = match &pkt {
+                    IcmpPacket::V4(p) => p.get_ttl(),
+                    IcmpPacket::V6(_) => None,
+                };
+                ttl_update = inner.tracker.record_ttl(rec.sent, ttl);
                 PingStatus::Ok
             }
             Err(e) => match e {
@@ -323,6 +331,16 @@ impl PingTarget {
             },
         };
         inner.recent.push(rec);
+        drop(inner);
+
+        /*
+        A first or changed reply TTL gives the hop count for free, so keep the
+        on-demand `hops` slot (Enter / `determine_hops`) in sync with it. Done
+        after releasing `data`: `hops` is a separate lock and nothing nests the two.
+        */
+        if let TtlUpdate::First(ttl) | TtlUpdate::Changed(_, ttl) = ttl_update {
+            *self.hops.write() = QueryResponse::Count(estimate_hops(ttl) as u64);
+        }
     }
 
     /**
@@ -1100,6 +1118,20 @@ pub(crate) enum EventKind {
     Resumed,
     Stopped,
     StatsReset,
+    /// The reply TTL changed and stayed changed for [TTL_CONFIRM] replies:
+    /// the path (or the far end's initial TTL) is different. IPv4 only.
+    RouteChange { from: u8, to: u8 },
+}
+
+/// Outcome of feeding a reply TTL to [EventTracker::record_ttl].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TtlUpdate {
+    /// Nothing to report: no TTL, unchanged, or a change not yet confirmed.
+    None,
+    /// First TTL seen in this epoch.
+    First(u8),
+    /// A confirmed change: (previous, new).
+    Changed(u8, u8),
 }
 
 /// A timestamped target event for the per-target timeline.
@@ -1122,6 +1154,12 @@ impl TargetEvent {
             EventKind::Resumed => Span::raw(EVT_RESUMED).cyan(),
             EventKind::Stopped => Span::raw(EVT_STOPPED).dim().italic(),
             EventKind::StatsReset => Span::raw(EVT_RESET).dim(),
+            EventKind::RouteChange { from, to } => Span::raw(format!(
+                "{EVT_ROUTE} {from} -> {to} ({EVT_ROUTE_HOPS} {} -> {})",
+                estimate_hops(*from),
+                estimate_hops(*to)
+            ))
+            .yellow(),
         };
         Line::from_iter([ts, body])
     }
@@ -1176,6 +1214,10 @@ pub(crate) struct EventTracker {
     pause_since: Option<Instant>,
     /// Probes sent before this (creation, last resume or reset) are ignored.
     epoch: Instant,
+    /// Last confirmed reply TTL (IPv4 only); survives pause/resume, not a reset.
+    last_ttl: Option<u8>,
+    /// A differing TTL and how many consecutive replies have carried it.
+    ttl_candidate: Option<(u8, u32)>,
 }
 
 impl EventTracker {
@@ -1193,6 +1235,8 @@ impl EventTracker {
             paused_total: Duration::ZERO,
             pause_since: paused.then_some(now),
             epoch: now,
+            last_ttl: None,
+            ttl_candidate: None,
         }
     }
 
@@ -1225,6 +1269,48 @@ impl EventTracker {
         }
         self.miss_started = None;
         self.consec_misses = 0;
+    }
+
+    /**
+    The reply for the probe sent at `sent` carried this IP TTL, if known.
+
+    A different TTL means the reply took a different path (or the far end
+    changed its initial TTL). A new value must be seen on [TTL_CONFIRM]
+    consecutive replies before a [EventKind::RouteChange] is recorded, so a
+    single stray reply over another ECMP path doesn't make the timeline; a
+    per-packet alternation between two paths never confirms at all.
+    */
+    pub fn record_ttl(&mut self, sent: Instant, ttl: Option<u8>) -> TtlUpdate {
+        let Some(ttl) = ttl else {
+            return TtlUpdate::None;
+        };
+        if !self.is_current(sent) {
+            return TtlUpdate::None;
+        }
+        match self.last_ttl {
+            None => {
+                self.last_ttl = Some(ttl);
+                TtlUpdate::First(ttl)
+            }
+            Some(cur) if cur == ttl => {
+                self.ttl_candidate = None;
+                TtlUpdate::None
+            }
+            Some(cur) => {
+                let seen: u32 = match self.ttl_candidate {
+                    Some((c, n)) if c == ttl => n + 1,
+                    _ => 1,
+                };
+                if seen < TTL_CONFIRM {
+                    self.ttl_candidate = Some((ttl, seen));
+                    return TtlUpdate::None;
+                }
+                self.ttl_candidate = None;
+                self.last_ttl = Some(ttl);
+                self.push(EventKind::RouteChange { from: cur, to: ttl });
+                TtlUpdate::Changed(cur, ttl)
+            }
+        }
     }
 
     /// The probe sent at `sent` timed out.
@@ -1305,6 +1391,8 @@ impl EventTracker {
         self.paused_total = Duration::ZERO;
         self.pause_since = paused.then_some(now);
         self.epoch = now;
+        self.last_ttl = None;
+        self.ttl_candidate = None;
         self.push(EventKind::StatsReset);
     }
 
@@ -1615,6 +1703,48 @@ impl StatsSnapshot {
 #[cfg(test)]
 mod tracker_tests {
     use super::*;
+
+    #[test]
+    fn route_change_needs_confirmation() {
+        let mut t = EventTracker::new(false);
+        let start: Instant = Instant::now();
+        let is_route = |e: &TargetEvent| matches!(e.kind, EventKind::RouteChange { .. });
+
+        assert_eq!(t.record_ttl(start, None), TtlUpdate::None);
+        assert_eq!(t.record_ttl(start, Some(57)), TtlUpdate::First(57));
+        assert_eq!(t.record_ttl(start, Some(57)), TtlUpdate::None);
+
+        // one stray reply over another path is not a route change yet
+        assert_eq!(t.record_ttl(start, Some(55)), TtlUpdate::None);
+        assert!(!t.events().any(is_route));
+        // the second consecutive one confirms it
+        assert_eq!(t.record_ttl(start, Some(55)), TtlUpdate::Changed(57, 55));
+        assert!(matches!(
+            t.events().last().unwrap().kind,
+            EventKind::RouteChange { from: 57, to: 55 }
+        ));
+
+        // per-packet ECMP alternation never confirms
+        for _ in 0..10 {
+            assert_eq!(t.record_ttl(start, Some(57)), TtlUpdate::None);
+            assert_eq!(t.record_ttl(start, Some(55)), TtlUpdate::None);
+        }
+        assert_eq!(t.events().filter(|e| is_route(e)).count(), 1);
+
+        // paused: ignored entirely
+        t.pause();
+        assert_eq!(t.record_ttl(start, Some(60)), TtlUpdate::None);
+        t.resume();
+        // the last TTL survives a pause, so a path change while paused is reported
+        let after: Instant = Instant::now();
+        assert_eq!(t.record_ttl(after, Some(60)), TtlUpdate::None);
+        assert_eq!(t.record_ttl(after, Some(60)), TtlUpdate::Changed(55, 60));
+
+        // a stats reset forgets the TTL: the next reply seeds again, no event
+        t.clear(false);
+        assert_eq!(t.record_ttl(Instant::now(), Some(61)), TtlUpdate::First(61));
+        assert!(!t.events().any(is_route));
+    }
 
     #[test]
     fn outage_lifecycle() {

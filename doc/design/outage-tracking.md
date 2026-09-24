@@ -50,9 +50,42 @@ outages and ~100% availability.
 
 A `VecDeque<TargetEvent>` ring capped at `EVENT_CAP` (100) entries.
 Event kinds: `Down`, `Up(duration)`, `Paused`, `Resumed`, `Stopped`,
-`StatsReset`. Each carries a `TimeSinceEpoch` wall-clock timestamp and
-renders itself as a styled `Line` (`TargetEvent::as_line`) — red for
-Down, green for Up, dim for lifecycle events.
+`StatsReset`, `RouteChange { from, to }`. Each carries a `TimeSinceEpoch`
+wall-clock timestamp and renders itself as a styled `Line`
+(`TargetEvent::as_line`) — red for Down, green for Up, yellow for a route
+change, dim for lifecycle events.
+
+## Route-change events from the reply TTL
+
+Every IPv4 echo reply carries the IP header TTL, which surge-ping exposes
+(`Icmpv4Packet::get_ttl`). The number of hops the reply crossed is
+`initial − received` (the same bucketing as [hopcount](hopcount.md),
+`estimate_hops`), so a TTL that changes mid-run means the return path —
+or, rarely, the far end's initial TTL — changed. `update_stats` feeds the
+TTL to `EventTracker::record_ttl` right after `record_success`:
+
+- The first TTL seen in an epoch is remembered silently (`TtlUpdate::First`).
+- A differing TTL becomes a candidate. Only when it has been seen on
+  `TTL_CONFIRM` (2) **consecutive** replies is a `RouteChange { from, to }`
+  event pushed (`TtlUpdate::Changed`) and the remembered TTL replaced. One
+  stray reply over another ECMP path is therefore ignored, and a
+  per-packet alternation between two paths of different length never
+  confirms at all (each reply resets the other's count). A 2-2-2
+  alternation would still flap; that is a real, visible path instability.
+- Replies while paused or from before the epoch are ignored like every
+  other result. The remembered TTL **survives pause/resume** (a path that
+  changed while paused shows up after resume) but **not a stats reset**.
+- IPv6 replies carry no TTL here — surge-ping's `Icmpv6Packet` never
+  fills the hop limit — so v6 targets get no route events and their hop
+  count stays Enter-only.
+
+`TtlUpdate::First` and `Changed` also refresh the target's on-demand
+`hops` slot with `estimate_hops(ttl)`, so for IPv4 the "Hops" info line is
+live from the first reply and follows route changes without pressing
+Enter. That write happens **after** `update_stats` drops the `data` lock:
+`hops` is a separate `RwLock` and nothing may nest the two.
+
+The event line reads `ROUTE - reply TTL 57 -> 55 (est. hops 7 -> 9)`.
 
 A stats reset (`R`) clears the tracker along with everything else and
 leaves a `StatsReset` marker as the first event of the new epoch.
@@ -74,8 +107,11 @@ leaves a `StatsReset` marker as the first event of the new epoch.
 ## File map
 
 - `src/pingdata.rs` — `EventTracker`, `TargetEvent`, `EventKind`,
-  `OutageSummary`, the `update_stats` / pause / resume / stop / reset
-  hooks, `PingTarget::outage_summary` / `recent_events`.
+  `TtlUpdate`, `OutageSummary`, the `update_stats` / pause / resume /
+  stop / reset hooks, `record_ttl`, `PingTarget::outage_summary` /
+  `recent_events`.
+- `src/hopcount/mod.rs` — `estimate_hops` (shared with the route-change
+  event rendering and the live hops refresh).
 - `src/ui/tui.rs` — `events_popup`, `PopupContents::Lines`,
   `PopupContents::len`.
 - `src/ui/keyboard.rs` — the `E` key arm.

@@ -45,7 +45,8 @@ Common shape of both paths:
    original packet embedded in the error message carries our identifier
    (`embedded_ident_v4` / `embedded_ident_v6`).
 5. Estimate the original TTL by bucketing the received value
-   (`estimate_hops`):
+   (`estimate_hops`, `pub(crate)` — also used by the reply-TTL
+   route-change tracking in `pingdata.rs`):
    - `> 128` → original 255 (e.g. some Solaris-flavoured stacks)
    - `> 64`  → original 128 (Windows)
    - else    → original 64  (Linux / macOS / *BSD)
@@ -64,6 +65,14 @@ another IP header. The author left the comment for posterity; leave it
 unless you have a strong reason to remove it.
 
 ## How the TUI invokes it
+
+For IPv4 targets the hop count is also derived continuously from the TTL
+of every echo reply (`update_stats` → `EventTracker::record_ttl` →
+`estimate_hops`), which seeds the "Hops" line on the first reply and
+follows confirmed route changes — see
+[outage-tracking](outage-tracking.md#route-change-events-from-the-reply-ttl).
+The explicit probe below remains the only source for IPv6, and a manual
+refresh for both.
 
 When the user hits Enter on a target, the keyboard branch dispatches
 `Command::UpdateTgtInfo(idx)`. The handler (`structs.rs:303-346`) does
