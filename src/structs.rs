@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
+    asinfo::AsInfo,
     args::MpConfig,
     logging::{Logger, MessageBuffer},
     pingdata::{PingStatus, PingTarget},
@@ -319,7 +320,9 @@ impl AppState {
             self.logger.log(templater!(INFO_UPD, tgt));
             let tgt_ptr1 = tgt.clone();
             let tgt_ptr2 = tgt.clone();
+            let tgt_ptr3 = tgt.clone();
             let resolver = self.resolver.clone();
+            let resolver_as = self.resolver.clone();
             /*
             `determine_hops` is blocking, so spawn a thread for it to not block the caller.
 
@@ -351,6 +354,18 @@ impl AppState {
                 logger.debug(templater!(
                     INFO_PTR,
                     tgt_ptr2.addr,
+                    format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
+                ));
+            });
+
+            // Origin AS lookup (Team Cymru DNS): async, same rules as the PTR task.
+            let logger = self.logger.clone();
+            self.spawn(async move {
+                let now: Instant = Instant::now();
+                tgt_ptr3.resolve_as(&resolver_as).await;
+                logger.debug(templater!(
+                    INFO_AS,
+                    tgt_ptr3.addr,
                     format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
                 ));
             });
@@ -663,6 +678,7 @@ impl Resolved {
 #[derive(Default, Debug, Clone)]
 pub(crate) enum QueryResponse {
     IpAddr(IpAddr),
+    As(AsInfo),
     Count(u64),
     Float(f64),
     Text(String),
@@ -691,6 +707,7 @@ impl Display for QueryResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             QueryResponse::IpAddr(ip) => write!(f, "{ip}"),
+            QueryResponse::As(a) => write!(f, "{a}"),
             QueryResponse::Count(c) => write!(f, "{c}"),
             QueryResponse::Float(v) => write!(f, "{v}"),
             QueryResponse::Text(s) => write!(f, "{s}"),

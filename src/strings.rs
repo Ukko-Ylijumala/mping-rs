@@ -56,7 +56,7 @@ pub static INFO_INFO: &str = " Info ";
 pub static INFO_TGTS: &str = " Targets: {} ";
 pub static INFO_TGTS_SORTED: &str = " Targets: {} | sort: {} {} ";
 pub static INFO_NO_TGTS: &str = " No targets";
-pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n Distance: {}\n Hops    : {}\n Jitter  : {}\n Outages : {}\n Uptime  : {}";
+pub static INFO_TARGET: &str = " Target  : {}\n Reverse : {}\n PTR     : {}\n rev-PTR : {}\n AS      : {}\n Distance: {}\n Hops    : {}\n Jitter  : {}\n Outages : {}\n Uptime  : {}";
 pub static INFO_SELECT: &str = " Select a target to see detailed info.";
 pub static INFO_RTT_G: &str = " Round-Trip Time graph ";
 pub static INFO_RTT_H: &str = " RTT Histogram (ms) ";
@@ -100,6 +100,8 @@ pub static KEV_START: &str = "key event handler thread started";
 pub static ERR_PTR_EMPTY: &str = "PTR record empty";
 pub static WARN_PTR_MANY: &str = "Multiple PTRs";
 pub static ERR_PTR_FAILED: &str = "PTR lookup failed";
+pub static WARN_AS_NONE: &str = "Not announced (no origin AS)";
+pub static ERR_AS_PARSE: &str = "Unparseable origin AS answer";
 pub static ERR_NO_RESP: &str = "No Response";
 pub static ERR_NORECORDS: &str = "No records";
 pub static ERR_NOTENOUGH: &str = "Not enough records";
@@ -136,6 +138,11 @@ pub static INFO_RESOLVE_ONE: &str = "number of addresses resolved from";
 pub static ERR_RESOLVE: &str = "failed to resolve";
 pub static PTR_IPV4: &str = ".in-addr.arpa";
 pub static PTR_IPV6: &str = ".ip6.arpa";
+
+// asinfo.rs
+pub static CYMRU_ORIGIN4: &str = ".origin.asn.cymru.com.";
+pub static CYMRU_ORIGIN6: &str = ".origin6.asn.cymru.com.";
+pub static CYMRU_ASNAME: &str = ".asn.cymru.com.";
 
 // hopcount.rs
 pub static BIND_SOCKET_IPV4: &str = "0.0.0.0:0";
@@ -206,6 +213,7 @@ pub static INFO_R_ALL: &str = "resuming all targets";
 pub static INFO_UPD: &str = "*** updating info for '{}' ***";
 pub static INFO_HOPS: &str = "updated hops for '{}' in {}ms";
 pub static INFO_PTR: &str = "resolved PTR for '{}' in {}ms";
+pub static INFO_AS: &str = "resolved origin AS for '{}' in {}ms";
 pub static INFO_RESET: &str = "resetting statistics for '{}'";
 pub static INFO_STOP: &str = "stopping '{}'";
 pub static INFO_REMOVE: &str = "removing '{}'";

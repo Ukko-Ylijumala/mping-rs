@@ -211,19 +211,29 @@ where
 
 /// Return the reverse DNS name of an address (`<..>.in-addr.arpa` or `<..>.ip6.arpa`).
 pub fn reverse_name(addr: &IpAddr) -> String {
+    let suffix: &str = match addr {
+        IpAddr::V4(_) => PTR_IPV4,
+        IpAddr::V6(_) => PTR_IPV6,
+    };
+    reversed_addr(addr) + suffix
+}
+
+/**
+Reverse an address into the dotted form used by `in-addr.arpa` / `ip6.arpa`
+style zones — octets for IPv4, nibbles for IPv6 — without any zone suffix.
+Shared by [reverse_name] (PTR) and the Team Cymru origin AS lookup.
+*/
+pub fn reversed_addr(addr: &IpAddr) -> String {
     match addr {
-        IpAddr::V4(v4) => v4.octets().iter().rev().join(".") + PTR_IPV4,
-        IpAddr::V6(v6) => {
-            itertools::Itertools::intersperse(
-                v6.octets()
-                    .iter()
-                    .rev()
-                    .flat_map(|b| format!("{b:02x}").chars().rev().collect::<Vec<char>>()),
-                '.',
-            )
-            .collect::<String>()
-                + PTR_IPV6
-        }
+        IpAddr::V4(v4) => v4.octets().iter().rev().join("."),
+        IpAddr::V6(v6) => itertools::Itertools::intersperse(
+            v6.octets()
+                .iter()
+                .rev()
+                .flat_map(|b| format!("{b:02x}").chars().rev().collect::<Vec<char>>()),
+            '.',
+        )
+        .collect::<String>(),
     }
 }
 

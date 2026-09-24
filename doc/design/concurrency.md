@@ -8,7 +8,7 @@ load-bearing for any change in this area.
 
 | Context | What it does | Spawned at | File |
 |---|---|---|---|
-| Tokio multi-thread runtime (8 worker threads) | Per-target [`ping_loop`](../../src/pinger.rs)s, all async I/O, hop-count / PTR lookups | `#[tokio::main(worker_threads = 8)]` on `main` | `src/main.rs:461` |
+| Tokio multi-thread runtime (8 worker threads) | Per-target [`ping_loop`](../../src/pinger.rs)s, all async I/O, hop-count / PTR / AS lookups | `#[tokio::main(worker_threads = 8)]` on `main` | `src/main.rs:461` |
 | Keyboard event `std::thread` | Polls crossterm events, dispatches `Command`s, wakes the render loop via `Notify` | `thread::spawn(move \|\| key_event_handler(...))` | `src/main.rs:485` |
 | Signal `std::thread` | Listens for SIGINT/SIGTERM/SIGQUIT, flips the quit `AtomicBool` | `std::thread::spawn` inside `setup_signal_handler` | `src/utils.rs:48` |
 
@@ -116,8 +116,8 @@ it at once). The ping loops no longer use it (see above).
 - Pressing Enter to refresh target info:
   keyboard thread → `Command::UpdateTgtInfo(idx)` →
   `AppState::spawn_blocking(determine_hops)` (blocking ICMP) **and**
-  `AppState::spawn(resolve_ptr)` (async DNS), both via the stored runtime
-  handle (`structs.rs:318, 334`).
+  `AppState::spawn(resolve_ptr)` / `AppState::spawn(resolve_as)` (async
+  DNS), all via the stored runtime handle (`structs.rs`).
 - A signal: signal thread → `app.execute(Command::Quit)` → `AppState::quit`
   sets the flag and cancels `AppState::shutdown`, which wakes the render
   loop and every `ping_loop` at once. The `q` key, Ctrl-C and the panic

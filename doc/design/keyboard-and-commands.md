@@ -36,8 +36,8 @@ runtime, which has implications below.
 ### Spawning async work from the keyboard thread
 
 Calling `tokio::spawn` from outside a runtime panics. Any command that
-needs to do async work (e.g. `UpdateTgtInfo` triggers PTR resolution and
-hop-count probing) must go through `AppState::spawn` or
+needs to do async work (e.g. `UpdateTgtInfo` triggers PTR resolution,
+origin AS lookup and hop-count probing) must go through `AppState::spawn` or
 `AppState::spawn_blocking`, both of which use the stored
 `tokio::runtime::Handle` captured at `from_conf` time
 (`structs.rs:105, 165-182`).
@@ -64,7 +64,7 @@ state mutations it can trigger:
 | `TogglePause(idx)` | Toggles one target | Re-uses the inner write lock to record `Paused`/`Resuming` status |
 | `StopTarget(idx)` | Cancels the target's `CancellationToken` | Irreversible |
 | `RemoveTarget(idx)` | Stop + remove from the targets vec | Takes a write lock on `targets` |
-| `UpdateTgtInfo(idx)` | Fires hop-count (blocking) + PTR (async) tasks | See above |
+| `UpdateTgtInfo(idx)` | Fires hop-count (blocking) + PTR + origin AS (async) tasks | See above, [as-lookup](as-lookup.md) |
 | `ResetTgtStats(idx)` | Zeroes counts and clears the latency window / history | |
 | `TogglePerf` | Flips the `perf` atomic | See [concurrency](concurrency.md) |
 | `RemoveAllUnreach` | Bulk-removes unreachable targets | Returns `CmdResult::Count(n)` so the keyboard handler can clear the selection |
@@ -92,7 +92,7 @@ It is synchronous — anything async-y inside individual handlers happens via
 | `p` / `P` | Pause all / Resume all |
 | `S` | Stop selected target |
 | `R` | Reset selected target's stats |
-| Enter | Update info (hops + PTR) for selected target |
+| Enter | Update info (hops + PTR + origin AS) for selected target |
 | `E` | Event timeline popup for selected target (pure UI, no `Command` — see [outage-tracking](outage-tracking.md)) |
 | Delete | Remove selected target |
 | Ctrl-Delete | Remove all unreachable targets |

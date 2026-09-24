@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod args;
+mod asinfo;
 mod hopcount;
 pub mod latencywin;
 mod logging;

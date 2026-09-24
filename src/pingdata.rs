@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
+    asinfo::lookup_as,
     hopcount::determine_hops,
     latencywin::LatencyWindow,
     strings::*,
@@ -215,6 +216,7 @@ This struct represents a single ping target with its associated data and state.
 - `hops`: Last known hop count query response (protected by a [RwLock]).
 - `ptr`: Last known PTR record query response (protected by a [RwLock]).
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
+- `asinfo`: Last known origin AS (Team Cymru) query response (protected by a [RwLock]).
 - `hostname`: The host or DNS name this target was resolved from, if any.
 - `added_order`: Monotonic creation stamp. The target list can be re-sorted
   physically (column sorting in the UI); sorting by this restores the original
@@ -232,6 +234,7 @@ pub(crate) struct PingTarget {
     hops: RwLock<QueryResponse>,
     ptr: RwLock<QueryResponse>,
     rev_ptr: RwLock<QueryResponse>,
+    asinfo: RwLock<QueryResponse>,
     hostname: OnceLock<Arc<str>>,
 }
 
@@ -263,6 +266,7 @@ impl PingTarget {
             hops: QueryResponse::default().into(),
             ptr: QueryResponse::default().into(),
             rev_ptr: QueryResponse::default().into(),
+            asinfo: QueryResponse::default().into(),
             paused: AtomicBool::new(paused),
             cancel: CancellationToken::new(),
             resumed: Notify::new(),
@@ -425,6 +429,25 @@ impl PingTarget {
     */
     pub fn rev_ptr(&self) -> QueryResponse {
         self.rev_ptr.read().clone()
+    }
+
+    /**
+    Try to look up the origin AS (Team Cymru IP-to-ASN service) for this target.
+
+    NOTE: locks the field `asinfo` for writing.
+    */
+    pub async fn resolve_as(&self, res: &Resolver<TokioConnectionProvider>) {
+        let resp = lookup_as(res, self.addr).await;
+        *self.asinfo.write() = resp;
+    }
+
+    /**
+    Get the last known origin AS query response for this target, if any.
+
+    NOTE: locks the field `asinfo` for reading.
+    */
+    pub fn asinfo(&self) -> QueryResponse {
+        self.asinfo.read().clone()
     }
 
     /**

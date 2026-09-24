@@ -23,6 +23,7 @@ code.
 | [logging.md](logging.md) | `MessageBuffer` ring, syslog-style levels with `Trace`, level-based stderr gating, alt-screen aware output, F12 popup |
 | [hopcount.md](hopcount.md) | Raw-ICMP TTL inference, the library function + standalone `hopcount` binary, why `spawn_blocking` and the AI-slop comment |
 | [distance-estimation.md](distance-estimation.md) | RTT-to-distance heuristic, double stretch factor, quantization bands, caveats |
+| [as-lookup.md](as-lookup.md) | Origin AS via Team Cymru DNS TXT queries, answer parsing, multi-origin handling, `QueryResponse::As` |
 
 ## Conventions across these docs
 

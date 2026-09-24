@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 mod args;
+mod asinfo;
 mod hopcount;
 mod latencywin;
 mod logging;
@@ -236,6 +237,7 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
             &t.rev,
             t.ptr().to_string(),
             t.rev_ptr().to_string(),
+            t.asinfo().to_string(),
             t.est_distance_str(state.distance_stretch_factor),
             t.hops().to_string(),
             t.jitter_str(),

@@ -18,6 +18,7 @@ PingTarget (immutable shape)
 ├── hops:    RwLock<QueryResponse> ── last hop-count result (separate, rarely updated)
 ├── ptr:     RwLock<QueryResponse> ── last PTR result
 ├── rev_ptr: RwLock<QueryResponse> ── reverse-of-PTR result
+├── asinfo:  RwLock<QueryResponse> ── origin AS result (see as-lookup.md)
 └── data: RwLock<PingTargetInner>
         ├── sent: u64
         ├── recv: u64
@@ -152,8 +153,8 @@ which matters when there are many targets in the table.
 - `src/pingdata.rs:73-168` — `PingTargetInner`, the predicates, and
   `effective_status`.
 - `src/pingdata.rs:185-635` — `PingTarget` (pause/resume/stop/reset, status
-  layering, hop/PTR display, distance — see
-  [distance-estimation](distance-estimation.md)).
+  layering, hop/PTR/AS display, distance — see
+  [distance-estimation](distance-estimation.md), [as-lookup](as-lookup.md)).
 - `src/pingdata.rs:639-697` — `PacketRecord`.
 - `src/pingdata.rs:701-863` — `PacketHistory`.
 - `src/pinger.rs:28-46` — `mark_sent_and_next_seq` (sent-before-network
