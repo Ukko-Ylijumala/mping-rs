@@ -146,6 +146,20 @@ pub static CYMRU_ORIGIN4: &str = ".origin.asn.cymru.com.";
 pub static CYMRU_ORIGIN6: &str = ".origin6.asn.cymru.com.";
 pub static CYMRU_ASNAME: &str = ".asn.cymru.com.";
 
+// traceroute.rs / pingdata.rs - traceroute popup
+pub static TRACE_TITLE: &str = "Traceroute to {}";
+pub static TRACE_STARTED: &str = "started";
+pub static TRACE_NONE: &str = "not run yet";
+pub static TRACE_RUNNING: &str = "running...";
+pub static TRACE_PENDING: &str = "...";
+pub static TRACE_REACHED: &str = "target reached";
+pub static TRACE_UNREACH: &str = "destination unreachable";
+pub static TRACE_MAXHOPS: &str = "hop limit reached";
+pub static TRACE_SILENT: &str = "gave up, no answers";
+pub static TRACE_ABORTED: &str = "aborted";
+pub static INFO_TRACE_PROBE: &str = "Probing TTL";
+pub static INFO_TRACE_HOP: &str = "Hop";
+
 // pmtu.rs
 pub static WARN_PMTU_BLACKHOLE: &str = "PMTUD black hole";
 pub static ERR_PMTU_FLOOR: &str = "Even the minimum MTU is too big";
@@ -226,6 +240,9 @@ pub static INFO_HOPS: &str = "updated hops for '{}' in {}ms";
 pub static INFO_PTR: &str = "resolved PTR for '{}' in {}ms";
 pub static INFO_AS: &str = "resolved origin AS for '{}' in {}ms";
 pub static INFO_PMTU: &str = "discovered path MTU for '{}' in {}ms";
+pub static INFO_TRACE: &str = "*** tracing route to '{}' ***";
+pub static INFO_TRACE_DONE: &str = "traceroute to '{}' finished in {}ms";
+pub static INFO_TRACE_BUSY: &str = "traceroute to '{}' already running";
 pub static INFO_RESET: &str = "resetting statistics for '{}'";
 pub static INFO_STOP: &str = "stopping '{}'";
 pub static INFO_REMOVE: &str = "removing '{}'";
@@ -242,7 +259,7 @@ pub static ADD_TGT_DIA_PAUSE: &str = "Add as paused";
 
 // App keybindings help text
 pub static HELP_HDRS: [&str; 2] = ["Key(s)", "Action"];
-pub static HELP_KEYS: [[&str; 2]; 27] = [
+pub static HELP_KEYS: [[&str; 2]; 28] = [
     ["Up, Down",       "Scroll target list up/down"],
     ["Left, Right",    "Scroll table columns left/right"],
     ["Shift+Up/Down",  "Sort by selected column (same direction again: reset)"],
@@ -254,6 +271,7 @@ pub static HELP_KEYS: [[&str; 2]; 27] = [
     ["<space>",        "Toggle pause/resume pinging for selected target"],
     ["Enter",          "Update the selected target's details in the info panel"],
     ["E",              "Show event log (outages etc.) for selected target"],
+    ["T",              "Traceroute (with PTR + AS per hop) to selected target"],
     ["R",              "Reset ping statistics for selected target"],
     ["p",              "Pause pinging for all targets"],
     ["P",              "Resume pinging for all targets"],

@@ -180,6 +180,22 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                     }
                 }
 
+                // Traceroute to the selected target: start it (no-op if running) and
+                // show it in a popup that re-renders from the live trace state.
+                (KeyCode::Char('T'), _) => {
+                    let selected = tui.layout.read().tablestate.selected();
+                    if let Some(idx) = selected {
+                        app.execute(Command::Traceroute(idx));
+                        let tgt = app.targets.read().get(idx).cloned();
+                        if let Some(tgt) = tgt {
+                            *tui.popup_contents.write() = PopupContents::Trace(tgt);
+                            let mut lo = tui.layout.write();
+                            lo.popup_visible = true;
+                            lo.liststate.select(None);
+                        }
+                    }
+                }
+
                 // Fully remove a target or targets from the list
                 (KeyCode::Delete, m) => {
                     match m {

@@ -15,6 +15,7 @@ mod pinger;
 mod pmtu;
 mod strings;
 mod structs;
+mod traceroute;
 mod ui;
 mod utils;
 
@@ -492,8 +493,9 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
                     frame.render_widget(contents.to_list().block(BLK_POPUP.clone()), layout.popup)
                 }
 
-                // Pre-styled lines (event timeline): stateful so PageUp/Down scroll works
-                PopupContents::Lines(_) => {
+                // Pre-styled lines (event timeline) and the live traceroute:
+                // stateful so PageUp/Down scroll works
+                PopupContents::Lines(_) | PopupContents::Trace(_) => {
                     let num = contents.len();
                     if num <= layout.popup_usable_rows() {
                         frame.render_widget(contents.to_list().block(BLK_POPUP.clone()), layout.popup)

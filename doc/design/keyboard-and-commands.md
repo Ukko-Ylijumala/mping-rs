@@ -65,6 +65,7 @@ state mutations it can trigger:
 | `StopTarget(idx)` | Cancels the target's `CancellationToken` | Irreversible |
 | `RemoveTarget(idx)` | Stop + remove from the targets vec | Takes a write lock on `targets` |
 | `UpdateTgtInfo(idx)` | Fires hop-count + path MTU (blocking) and PTR + origin AS (async) tasks | See above, [as-lookup](as-lookup.md), [pmtu](pmtu.md) |
+| `Traceroute(idx)` | Starts a traceroute run on a blocking thread; hops annotated async | No-op (`CmdResult::None`) while one runs; see [traceroute](traceroute.md) |
 | `ResetTgtStats(idx)` | Zeroes counts and clears the latency window / history | |
 | `TogglePerf` | Flips the `perf` atomic | See [concurrency](concurrency.md) |
 | `RemoveAllUnreach` | Bulk-removes unreachable targets | Returns `CmdResult::Count(n)` so the keyboard handler can clear the selection |
@@ -94,6 +95,7 @@ It is synchronous — anything async-y inside individual handlers happens via
 | `R` | Reset selected target's stats |
 | Enter | Update info (hops, PMTU, PTR, origin AS) for selected target |
 | `E` | Event timeline popup for selected target (pure UI, no `Command` — see [outage-tracking](outage-tracking.md)) |
+| `T` | Traceroute to selected target: `Command::Traceroute` + a live popup (see [traceroute](traceroute.md)) |
 | Delete | Remove selected target |
 | Ctrl-Delete | Remove all unreachable targets |
 | `a` | Open add-target dialog |

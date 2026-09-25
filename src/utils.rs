@@ -2,7 +2,7 @@
 // Licensed under the MIT License or the Apache License, Version 2.0.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{logging::Logger, strings::*};
+use crate::{logging::Logger, strings::*, structs::QueryResponse};
 use futures::stream::{self, StreamExt};
 use hickory_resolver::TokioResolver;
 use itertools::Itertools;
@@ -234,6 +234,30 @@ pub fn reversed_addr(addr: &IpAddr) -> String {
             '.',
         )
         .collect::<String>(),
+    }
+}
+
+/**
+Resolve the PTR name(s) of `addr` into a [QueryResponse]: the names joined by
+`, `, [QueryResponse::Empty] when there is none, or the resolver error.
+Used per hop by traceroute; the selected-target PTR line has its own richer
+path in [crate::pingdata::PingTarget::resolve_ptr].
+*/
+pub async fn lookup_ptr(res: &TokioResolver, addr: IpAddr) -> QueryResponse {
+    match res.reverse_lookup(addr).await {
+        Ok(resp) => {
+            let names: Vec<String> = resp
+                .iter()
+                .map(|r| r.to_string().trim_end_matches('.').to_string())
+                .collect();
+            if names.is_empty() {
+                QueryResponse::Empty
+            } else {
+                QueryResponse::Text(names.join(", "))
+            }
+        }
+        Err(e) if e.is_nx_domain() || e.is_no_records_found() => QueryResponse::Empty,
+        Err(e) => QueryResponse::Error(e.to_string()),
     }
 }
 

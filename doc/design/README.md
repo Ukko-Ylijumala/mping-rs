@@ -25,6 +25,7 @@ code.
 | [distance-estimation.md](distance-estimation.md) | RTT-to-distance heuristic, double stretch factor, quantization bands, caveats |
 | [as-lookup.md](as-lookup.md) | Origin AS via Team Cymru DNS TXT queries, answer parsing, multi-origin handling, `QueryResponse::As` |
 | [pmtu.md](pmtu.md) | Path MTU discovery with DF echo probes: per-OS socket options, router hints vs bisection, black-hole detection, the socket-free `search` |
+| [traceroute.md](traceroute.md) | ICMP traceroute with per-hop PTR + origin AS: random per-run ident and quoted-destination filtering, Paris-style constant checksum, live-rendering popup |
 
 ## Conventions across these docs
 

@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use crate::{
-    asinfo::AsInfo,
+    asinfo::{AsInfo, lookup_as},
     args::MpConfig,
     logging::{Logger, MessageBuffer},
     pingdata::{PingStatus, PingTarget},
     strings::*,
-    utils::nice_permission_error,
+    traceroute::trace_route,
+    utils::{lookup_ptr, nice_permission_error},
 };
 use hickory_resolver::TokioResolver;
 use miniutils::{ProcessInfo, inject, templater};
@@ -34,6 +35,8 @@ pub(crate) const DEFAULT_DETAILED: usize = 100; // detailed RTT history size
 const PROCINFO_INTERVAL: u64 = 1000; // CPU+RAM update interval in ms (1 Hz is plenty for us)
 const UPDATE_TASK_TIMEOUT: Duration = Duration::from_secs(3);
 const PMTU_PROBE_TIMEOUT: Duration = Duration::from_secs(1); // per probe; a black-hole bisection sends ~10
+const TRACE_PROBE_TIMEOUT: Duration = Duration::from_secs(1); // per hop
+const TRACE_MAX_HOPS: u8 = 30;
 #[cfg(target_os = "linux")]
 pub static SYSTEM_TTL: u8 = 64;
 #[cfg(target_os = "macos")]
@@ -165,6 +168,7 @@ impl AppState {
             Command::StopTarget(idx) => self.stop_target(idx),
             Command::RemoveTarget(idx) => self.remove_target(idx),
             Command::UpdateTgtInfo(idx) => self.update_target_info(idx),
+            Command::Traceroute(idx) => self.traceroute_target(idx),
             Command::ResetTgtStats(idx) => self.reset_target_stats(idx),
             Command::TogglePerf => self.toggle_perf(),
             Command::RemoveAllUnreach => self.remove_all_unreachables(),
@@ -386,6 +390,59 @@ impl AppState {
             return CmdResult::Done;
         }
         CmdResult::NotFound
+    }
+
+    /**
+    Start a traceroute to the target at the specified index. Nonblocking: the
+    probing runs on a blocking thread and fills the target's trace state hop by
+    hop; each answering hop gets its PTR name and origin AS looked up on the
+    runtime. Returns [CmdResult::None] if a run is already in progress.
+    */
+    fn traceroute_target(&self, index: usize) -> CmdResult {
+        let Some(tgt) = self.targets.read().get(index).cloned() else {
+            return CmdResult::NotFound;
+        };
+        if !tgt.trace_begin() {
+            self.logger.debug(templater!(INFO_TRACE_BUSY, tgt));
+            return CmdResult::None;
+        }
+        self.logger.log(templater!(INFO_TRACE, tgt));
+        let logger = self.logger.clone();
+        let resolver = self.resolver.clone();
+        let runtime = self.runtime.clone();
+        /*
+        Same rules as `determine_hops`: blocking socket I/O plus write locks on
+        target fields, so it goes on a blocking thread via the stored runtime
+        handle (the caller may be the keyboard thread). The per-hop annotations
+        are async DNS and are spawned onto the runtime from that thread.
+        */
+        self.spawn_blocking(move || {
+            let now: Instant = Instant::now();
+            let hop_tgt = tgt.clone();
+            let result = trace_route(tgt.addr, TRACE_PROBE_TIMEOUT, TRACE_MAX_HOPS, false, |hop| {
+                if hop_tgt.is_stopped() {
+                    return false;
+                }
+                let (ttl, addr) = (hop.ttl, hop.addr);
+                hop_tgt.trace_push(hop);
+                if let Some(ip) = addr {
+                    let (tgt, resolver) = (hop_tgt.clone(), resolver.clone());
+                    runtime.spawn(async move {
+                        let (name, asinfo) =
+                            tokio::join!(lookup_ptr(&resolver, ip), lookup_as(&resolver, ip));
+                        tgt.trace_annotate(ttl, name, asinfo);
+                    });
+                }
+                true
+            });
+            tgt.trace_finish(result);
+            logger.debug(templater!(
+                INFO_TRACE_DONE,
+                tgt.addr,
+                format!("{:.2}", now.elapsed().as_secs_f32() * 1e3)
+            ));
+        });
+        CmdResult::Done
     }
 
     /// Reset statistics for the target at the specified index.
@@ -759,6 +816,8 @@ pub(crate) enum Command {
     RemoveTarget(usize),
     /// Update information for the given target (hops, DNS query etc.).
     UpdateTgtInfo(usize),
+    /// Start a traceroute to the given target (no-op if one is running).
+    Traceroute(usize),
     /// Reset statistics for the given target.
     ResetTgtStats(usize),
     /// Toggle performance mode on/off.

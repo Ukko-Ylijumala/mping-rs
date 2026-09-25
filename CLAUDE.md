@@ -26,6 +26,7 @@ covering the area you're touching:
 | RTT → distance estimate | [distance-estimation.md](doc/design/distance-estimation.md) |
 | Origin AS lookup (Team Cymru DNS) | [as-lookup.md](doc/design/as-lookup.md) |
 | Path MTU discovery | [pmtu.md](doc/design/pmtu.md) |
+| Traceroute with AS annotation, live popup | [traceroute.md](doc/design/traceroute.md) |
 
 When the design docs and the code disagree, the code is authoritative — but
 update the doc in the same change.
@@ -50,6 +51,7 @@ update the doc in the same change.
 - `latencywin.rs` — rolling-window stats; `pub` because it appears in a doctest example.
 - `asinfo.rs` — origin AS lookup via Team Cymru DNS TXT records (`AsInfo`, `lookup_as`).
 - `pmtu.rs` — path MTU discovery with DF-flagged echo probes (`Pmtu`, `determine_pmtu`); shares hopcount's raw-socket helpers.
+- `traceroute.rs` — ICMP traceroute (`trace_route`, hop callback, Paris-style constant checksum); the `T` key popup re-renders from `PingTarget::trace_lines`.
 - `hopcount/` — both a module (`pub use determine_hops` from `lib.rs`) and a separate binary (`src/hopcount/main.rs`).
 - `ui/` — `tui.rs` (layout + `TerminalGuard` + `TuiState`), `keyboard.rs` (event handler thread), `input.rs` (the add-target dialog as a `StatefulWidget`).
 - `strings.rs` — all user-facing string constants; many other modules use `crate::strings::*`.

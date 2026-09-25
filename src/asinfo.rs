@@ -54,6 +54,17 @@ pub(crate) struct AsInfo {
 }
 
 impl AsInfo {
+    /// `AS15169 GOOGLE - Google LLC, US` - ASN(s) and name(s) only, for tight columns.
+    pub fn short(&self) -> String {
+        let asns = self.asns.iter().map(|n| format!("AS{n}")).join(", ");
+        let names = self.names.iter().filter(|n| !n.is_empty()).join(" / ");
+        if names.is_empty() {
+            asns
+        } else {
+            format!("{asns} {names}")
+        }
+    }
+
     /// Fold another origin record into this one (multiple announcements
     /// covering the same address): union of ASNs, first record wins the rest.
     fn merge(mut self, other: AsInfo) -> AsInfo {

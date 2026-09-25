@@ -7,7 +7,7 @@ use crate::{
     args::MpConfig,
     logging::MessageBuffer,
     macros::{delegate_read, delegate_write},
-    pingdata::TargetEvent,
+    pingdata::{PingTarget, TargetEvent},
     strings::*,
 };
 use crossterm::{
@@ -640,6 +640,8 @@ pub(crate) enum PopupContents {
     Line(String),
     /// Pre-styled lines (e.g. the per-target event timeline).
     Lines(Vec<Line<'static>>),
+    /// The target's traceroute, re-rendered from live data on every frame.
+    Trace(Arc<PingTarget>),
     Buffer(Arc<MessageBuffer>),
     #[default]
     None,
@@ -651,6 +653,7 @@ impl PopupContents {
             PopupContents::Paragraph(s) | PopupContents::Line(s) => Paragraph::new(s.clone()),
             PopupContents::Multiline(s) => Paragraph::new(s.join("\n")),
             PopupContents::Lines(lines) => Paragraph::new(Text::from(lines.clone())),
+            PopupContents::Trace(tgt) => Paragraph::new(Text::from(tgt.trace_lines())),
             PopupContents::Buffer(buf) => buf.to_paragraph(),
             PopupContents::None => Paragraph::default(),
         }
@@ -662,6 +665,7 @@ impl PopupContents {
             PopupContents::Line(s) => List::new(vec![s.clone()]),
             PopupContents::Multiline(s) => List::new(s.clone()),
             PopupContents::Lines(lines) => List::new(lines.clone()),
+            PopupContents::Trace(tgt) => List::new(tgt.trace_lines()),
             PopupContents::Buffer(buf) => buf.to_list(),
             PopupContents::None => List::default(),
         }
@@ -674,6 +678,7 @@ impl PopupContents {
             PopupContents::Line(_) => 1,
             PopupContents::Multiline(s) => s.len(),
             PopupContents::Lines(lines) => lines.len(),
+            PopupContents::Trace(tgt) => tgt.trace_lines().len(),
             PopupContents::Buffer(buf) => buf.len(),
             PopupContents::None => 0,
         }

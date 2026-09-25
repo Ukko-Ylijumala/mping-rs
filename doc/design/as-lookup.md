@@ -78,6 +78,11 @@ differ (Cloudflare's 1.1.1.0/24 is APNIC/AU space).
 
 ## When it runs
 
+Also per hop of a [traceroute](traceroute.md): every answering hop gets
+the same two queries, displayed in the `AsInfo::short()` form.
+
+### On Enter
+
 Only on Enter (`Command::UpdateTgtInfo`), alongside the hop-count and PTR
 tasks — see [keyboard-and-commands](keyboard-and-commands.md). The handler
 in `AppState::update_target_info` (`structs.rs`) spawns `resolve_as` as a

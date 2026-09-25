@@ -128,7 +128,8 @@ denied.
 - `src/hopcount/mod.rs` — `determine_hops` (v4/v6 split, filtering
   receive loops, `recvmsg_v6`) and the AI-slop comment. `make_socket`,
   `time_left`, `set_sockopt_int`, `embedded_echo_v4/v6` and the header
-  size constants are `pub(crate)` for [pmtu.rs](pmtu.md).
+  size constants are `pub(crate)` for [pmtu.rs](pmtu.md) and
+  [traceroute.rs](traceroute.md).
 - `src/hopcount/main.rs` — the standalone binary.
 - `src/pingdata.rs:275-288` — `PingTarget::determine_hops` /
   `PingTarget::hops`.

@@ -9,10 +9,12 @@ use crate::{
     pmtu::determine_pmtu,
     strings::*,
     structs::QueryResponse,
+    traceroute::{HopKind, TraceEnd, TraceHop},
     utils::{HistogramBucket, human_duration, make_histogram_buckets, reverse_name},
 };
 use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use itertools::Itertools;
+use miniutils::{inject, templater};
 use parking_lot::RwLock;
 use ratatui::{
     style::Stylize,
@@ -20,7 +22,7 @@ use ratatui::{
 };
 use std::{
     collections::VecDeque,
-    fmt,
+    fmt::{self, Display},
     net::IpAddr,
     ops::Index,
     sync::{
@@ -50,6 +52,7 @@ static ADD_ORDER: AtomicU64 = AtomicU64::new(0);
 pub(crate) const GRAPH_SAMPLES: usize = 180; // 3 minutes @ default interval
 const OUTAGE_THRESH: u32 = 3; // consecutive misses before an outage is declared
 const EVENT_CAP: usize = 100; // per-target event ring capacity
+const TRACE_NAME_MAX: usize = 40; // PTR column cap in the traceroute popup
 const TTL_CONFIRM: u32 = 2; // consecutive replies with a new TTL before a route change is declared
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -220,6 +223,7 @@ This struct represents a single ping target with its associated data and state.
 - `rev_ptr`: Last known reverse PTR record query response (protected by a [RwLock]).
 - `asinfo`: Last known origin AS (Team Cymru) query response (protected by a [RwLock]).
 - `pmtu`: Last known path MTU discovery response (protected by a [RwLock]).
+- `trace`: The latest traceroute run, hops filled in live (protected by a [RwLock]).
 - `hostname`: The host or DNS name this target was resolved from, if any.
 - `added_order`: Monotonic creation stamp. The target list can be re-sorted
   physically (column sorting in the UI); sorting by this restores the original
@@ -239,6 +243,7 @@ pub(crate) struct PingTarget {
     rev_ptr: RwLock<QueryResponse>,
     asinfo: RwLock<QueryResponse>,
     pmtu: RwLock<QueryResponse>,
+    trace: RwLock<TraceState>,
     hostname: OnceLock<Arc<str>>,
 }
 
@@ -272,6 +277,7 @@ impl PingTarget {
             rev_ptr: QueryResponse::default().into(),
             asinfo: QueryResponse::default().into(),
             pmtu: QueryResponse::default().into(),
+            trace: TraceState::default().into(),
             paused: AtomicBool::new(paused),
             cancel: CancellationToken::new(),
             resumed: Notify::new(),
@@ -394,6 +400,125 @@ impl PingTarget {
     /// Get the last known path MTU discovery response for this target, if any.
     pub fn pmtu(&self) -> QueryResponse {
         self.pmtu.read().clone()
+    }
+
+    /**
+    Begin a traceroute run: the previous one is discarded. Returns `false`
+    (and changes nothing) if a run is already in progress.
+
+    NOTE: locks the field `trace` for writing.
+    */
+    pub fn trace_begin(&self) -> bool {
+        let mut trace = self.trace.write();
+        if trace.status == TraceStatus::Running {
+            return false;
+        }
+        *trace = TraceState {
+            hops: Vec::new(),
+            status: TraceStatus::Running,
+            started: Some(TimeSinceEpoch::new()),
+        };
+        true
+    }
+
+    /// Record a hop of the running traceroute (annotations arrive later).
+    pub fn trace_push(&self, hop: TraceHop) {
+        self.trace.write().hops.push(TraceHopInfo {
+            hop,
+            name: QueryResponse::None,
+            asinfo: QueryResponse::None,
+        });
+    }
+
+    /// Attach the PTR name and origin AS to the hop with the given TTL.
+    pub fn trace_annotate(&self, ttl: u8, name: QueryResponse, asinfo: QueryResponse) {
+        if let Some(h) = self.trace.write().hops.iter_mut().find(|h| h.hop.ttl == ttl) {
+            h.name = name;
+            h.asinfo = asinfo;
+        }
+    }
+
+    /// Close the running traceroute with its outcome.
+    pub fn trace_finish(&self, result: Result<TraceEnd, String>) {
+        self.trace.write().status = match result {
+            Ok(end) => TraceStatus::Done(end),
+            Err(e) => TraceStatus::Error(e),
+        };
+    }
+
+    /// Snapshot of the latest traceroute run.
+    pub fn trace(&self) -> TraceState {
+        self.trace.read().clone()
+    }
+
+    /**
+    Render the latest traceroute as popup lines: a title with the run's
+    status, then one line per hop - TTL, RTT, address, PTR name and origin
+    AS (the last two filled in asynchronously, `...` until then).
+    */
+    pub fn trace_lines(&self) -> Vec<Line<'static>> {
+        let trace: TraceState = self.trace();
+        let mut lines: Vec<Line<'static>> = Vec::with_capacity(trace.hops.len() + 3);
+
+        let status: Span<'static> = match &trace.status {
+            TraceStatus::None => Span::raw(TRACE_NONE).dim(),
+            TraceStatus::Running => Span::raw(TRACE_RUNNING).yellow(),
+            TraceStatus::Done(end) => Span::raw(end.to_string()).light_green(),
+            TraceStatus::Error(e) => Span::raw(format!("E: {e}")).light_red(),
+        };
+        lines.push(Line::from_iter([
+            Span::raw(templater!(TRACE_TITLE, self.to_string())).bold(),
+            Span::raw(" - "),
+            status,
+        ]));
+        if let Some(started) = &trace.started {
+            lines.push(Line::from(format!("{TRACE_STARTED} {started}")).dim());
+        }
+        lines.push(Line::default());
+
+        // column widths follow the content; every hop line stays aligned
+        let addr_w: usize = trace
+            .hops
+            .iter()
+            .filter_map(|h| h.hop.addr)
+            .map(|a| a.to_string().len())
+            .max()
+            .unwrap_or(1);
+        let name_w: usize = trace
+            .hops
+            .iter()
+            .map(|h| h.name_str().len())
+            .max()
+            .unwrap_or(1)
+            .min(TRACE_NAME_MAX);
+
+        for h in &trace.hops {
+            let ttl: String = format!("{:>2}  ", h.hop.ttl);
+            if h.hop.kind == HopKind::Silent {
+                lines.push(Line::from_iter([Span::raw(ttl), Span::raw("*").dim()]));
+                continue;
+            }
+            let rtt: String = h
+                .hop
+                .rtt
+                .map_or_else(String::new, |d| format!("{:>9.3} ms", d.as_secs_f64() * 1e3));
+            let addr: String = h.hop.addr.map_or_else(String::new, |a| a.to_string());
+            let mut name: String = h.name_str().to_string();
+            name.truncate(TRACE_NAME_MAX);
+            let fixed: String = format!("{ttl}{rtt}  {addr:<addr_w$}  {name:<name_w$}  ");
+            let asn: Span<'static> = match &h.asinfo {
+                QueryResponse::As(a) => Span::raw(a.short()).cyan(),
+                QueryResponse::None => Span::raw(TRACE_PENDING).dim(),
+                _ => Span::raw("-").dim(),
+            };
+            let line = Line::from_iter([Span::raw(fixed), asn]);
+            lines.push(match h.hop.kind {
+                HopKind::Target => line.light_green().bold(),
+                HopKind::Unreachable => line.light_red(),
+                _ => line,
+            });
+        }
+        lines
     }
 
     /**
@@ -1458,6 +1583,45 @@ impl Default for EventTracker {
     }
 }
 
+/* -------------------------------------------------------------------------- */
+
+/// Where a target's traceroute run stands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) enum TraceStatus {
+    #[default]
+    None,
+    Running,
+    Done(TraceEnd),
+    Error(String),
+}
+
+/// A traceroute hop plus its asynchronously resolved PTR name and origin AS.
+#[derive(Debug, Clone)]
+pub(crate) struct TraceHopInfo {
+    pub hop: TraceHop,
+    pub name: QueryResponse,
+    pub asinfo: QueryResponse,
+}
+
+impl TraceHopInfo {
+    /// The PTR name for display: `...` while pending, `-` when there is none.
+    fn name_str(&self) -> &str {
+        match &self.name {
+            QueryResponse::Text(s) => s,
+            QueryResponse::None => TRACE_PENDING,
+            _ => "-",
+        }
+    }
+}
+
+/// A target's latest traceroute: the hops found so far and how the run stands.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TraceState {
+    pub hops: Vec<TraceHopInfo>,
+    pub status: TraceStatus,
+    pub started: Option<TimeSinceEpoch>,
+}
+
 /* ---------------------------------- */
 
 /// Display-oriented snapshot of a target's outage accounting.
@@ -1867,6 +2031,58 @@ mod target_tests {
     use futures::executor::block_on;
     use std::{io, net::Ipv4Addr, thread};
     use surge_ping::PingSequence;
+
+    #[test]
+    fn trace_state_lifecycle_and_lines() {
+        let tgt = PingTarget::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 60, 10, false);
+        assert_eq!(tgt.trace().status, TraceStatus::None);
+        let lines = tgt.trace_lines();
+        assert_eq!(lines.len(), 2, "title + blank, no start time: {lines:?}");
+
+        assert!(tgt.trace_begin());
+        assert!(!tgt.trace_begin(), "already running");
+        assert_eq!(tgt.trace().status, TraceStatus::Running);
+
+        let router = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        tgt.trace_push(TraceHop {
+            ttl: 1,
+            addr: Some(router),
+            rtt: Some(Duration::from_micros(412)),
+            kind: HopKind::Router,
+        });
+        tgt.trace_push(TraceHop {
+            ttl: 2,
+            addr: None,
+            rtt: None,
+            kind: HopKind::Silent,
+        });
+        tgt.trace_push(TraceHop {
+            ttl: 3,
+            addr: Some(tgt.addr),
+            rtt: Some(Duration::from_millis(12)),
+            kind: HopKind::Target,
+        });
+        tgt.trace_annotate(1, QueryResponse::Text("gw.lan".into()), QueryResponse::Empty);
+        tgt.trace_annotate(9, QueryResponse::Text("nope".into()), QueryResponse::Empty);
+        tgt.trace_finish(Ok(TraceEnd::Reached));
+
+        let t = tgt.trace();
+        assert_eq!(t.status, TraceStatus::Done(TraceEnd::Reached));
+        assert_eq!(t.hops.len(), 3);
+        assert_eq!(t.hops[0].name_str(), "gw.lan");
+        assert_eq!(t.hops[2].name_str(), TRACE_PENDING, "not annotated yet");
+
+        let text: Vec<String> = tgt.trace_lines().iter().map(|l| l.to_string()).collect();
+        assert_eq!(text.len(), 3 + 3, "title, started, blank, three hops: {text:?}");
+        assert!(text[0].contains(TRACE_REACHED), "{}", text[0]);
+        assert!(text[3].contains("0.412 ms") && text[3].contains("gw.lan"), "{}", text[3]);
+        assert_eq!(text[4].trim(), "2  *");
+        assert!(text[5].contains("8.8.8.8") && text[5].ends_with(TRACE_PENDING), "{}", text[5]);
+
+        // a new run discards the old one
+        assert!(tgt.trace_begin());
+        assert!(tgt.trace().hops.is_empty());
+    }
 
     #[test]
     fn results_from_before_reset_are_dropped() {
