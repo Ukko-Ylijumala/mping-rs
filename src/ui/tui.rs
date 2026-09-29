@@ -15,7 +15,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use miniutils::{inject, simple_tabulate, templater};
+use miniutils::{simple_tabulate, templater};
 use parking_lot::RwLock;
 use ratatui::{
     Terminal,
@@ -26,7 +26,7 @@ use ratatui::{
     widgets::*,
 };
 use std::{
-    fmt::{self, Display},
+    fmt,
     io::{Result, Stdout, stdout},
     ops::Index,
     panic,

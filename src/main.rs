@@ -30,10 +30,9 @@ use crate::{
 };
 
 use futures::future::join_all;
-use miniutils::{ToDisplay, inject, simple_tabulate, templater};
+use miniutils::{ToDisplay, simple_tabulate, templater};
 use ratatui::{prelude::*, widgets::*};
 use std::{
-    fmt::Display,
     net::IpAddr,
     sync::{Arc, LazyLock},
     thread,

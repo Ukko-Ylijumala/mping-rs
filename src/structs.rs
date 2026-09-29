@@ -12,7 +12,7 @@ use crate::{
     utils::{lookup_ptr, nice_permission_error},
 };
 use hickory_resolver::TokioResolver;
-use miniutils::{ProcessInfo, inject, templater};
+use miniutils::{ProcessInfo, templater};
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, HashSet},

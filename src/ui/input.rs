@@ -4,7 +4,7 @@
 
 use crate::{pinger::AddOutcome, strings::*};
 use crossterm::event::{Event, KeyCode, KeyEvent};
-use miniutils::{inject, templater};
+use miniutils::templater;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
@@ -12,7 +12,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::*,
 };
-use std::{fmt::Display, net::IpAddr, rc::Rc, sync::LazyLock};
+use std::{net::IpAddr, rc::Rc, sync::LazyLock};
 use tui_input::{Input, backend::crossterm::EventHandler};
 
 /// Per-section cap for the post-submit summary in the dialog feedback area.

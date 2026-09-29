@@ -14,7 +14,7 @@ use crate::{
 };
 use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use itertools::Itertools;
-use miniutils::{inject, templater};
+use miniutils::templater;
 use parking_lot::RwLock;
 use ratatui::{
     style::Stylize,
@@ -22,7 +22,7 @@ use ratatui::{
 };
 use std::{
     collections::VecDeque,
-    fmt::{self, Display},
+    fmt,
     net::IpAddr,
     ops::Index,
     sync::{
