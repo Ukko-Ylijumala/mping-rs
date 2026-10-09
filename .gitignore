@@ -6,3 +6,6 @@ Cargo.lock
 *.log
 perf.data*
 heaptrack.*
+
+# Release builds (build_musl.sh)
+dist/
