@@ -38,9 +38,14 @@ use std::{
     thread,
     time::Duration,
 };
-use tokio::time::{self, Interval};
+use tokio::{
+    runtime::{self, Runtime},
+    time::{self, Interval},
+};
 
 const ICMP_HEADER_BYTES: usize = 8; // for send rate estimation (excludes IP overhead)
+const WORKER_THREADS: usize = 8; // tokio runtime worker threads
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(250); // for leftover blocking tasks
 
 type WritableLayout<'a> =
     parking_lot::lock_api::RwLockWriteGuard<'a, parking_lot::RawRwLock, ui::tui::AppLayout>;
@@ -452,8 +457,24 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
     render_popups(frame, tui, layout);
 }
 
-/// Render the popups: text box, help.
+/**
+Render the popups: input dialog, text box, help (bottom to top). The text
+popup goes above the dialog so the log (F12) can be read while adding
+targets; `close_top_overlay` in the keyboard handler mirrors this order.
+*/
 fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout) {
+    /* -------- Input dialog -------- */
+    if layout.input_visible {
+        let state = &mut *tui.input_state.write();
+        frame.render_stateful_widget(&layout.input, layout.input.area, state);
+        // no caret blinking through a popup drawn over the dialog
+        if !layout.popup_visible
+            && let Some(pos) = layout.input.cursor_position(state)
+        {
+            frame.set_cursor_position(pos);
+        }
+    }
+
     /* -------- Text popup -------- */
     if layout.popup_visible {
         let contents = &*tui.popup_contents.read();
@@ -521,15 +542,6 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
         }
     }
 
-    /* -------- Input dialog -------- */
-    if layout.input_visible {
-        let state = &mut *tui.input_state.write();
-        frame.render_stateful_widget(&layout.input, layout.input.area, state);
-        if let Some(pos) = layout.input.cursor_position(state) {
-            frame.set_cursor_position(pos);
-        }
-    }
-
     /* -------- Help popup -------- */
     if layout.help_visible {
         frame.render_widget(Clear, layout.help);
@@ -542,8 +554,26 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
 
 /* -------------------------------------------------------------------------- */
 
-#[tokio::main(worker_threads = 8)]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/**
+The runtime is built by hand (rather than `#[tokio::main]`) so that shutdown
+doesn't depend on its implicit drop, which waits forever for `spawn_blocking`
+work: a hop-count / PMTU / traceroute probe still running on quit (up to tens
+of seconds against a silent target) would hang the process after the final
+stats were already printed. Leftover blocking threads get [SHUTDOWN_GRACE]
+and are then abandoned to process exit.
+*/
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let rt: Runtime = runtime::Builder::new_multi_thread()
+        .worker_threads(WORKER_THREADS)
+        .enable_all()
+        .build()?;
+    let result = rt.block_on(run());
+    rt.shutdown_timeout(SHUTDOWN_GRACE);
+    result
+}
+
+/// The application proper: setup, the render loop, cleanup and final stats.
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let conf: MpConfig = MpConfig::parse().await?;
     let app: AppState = AppState::from_conf(&conf);
     let tgts: Vec<PingTarget> = make_targets(&conf.addrs, &app.defaults);
@@ -569,6 +599,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_signal_handler(quit_app.clone());
     let mut guard: TerminalGuard =
         TerminalGuard::new(tui.ui_interval, app.logger.clone(), quit_app)?;
+    // Size the layout before the first gather: with no table height yet, every
+    // row would be formatted as padding and the first frame would come up blank.
+    tui.layout
+        .write()
+        .update(Rect::from((Position::ORIGIN, guard.term.size()?)));
     // The tick gates how often the select! loop re-evaluates the refresh
     // deadline, so it must not be coarser than the UI refresh interval.
     let mut tick: Interval = time::interval(app.internal_tick.min(tui.ui_interval));

@@ -81,11 +81,11 @@ It is synchronous — anything async-y inside individual handlers happens via
 | Key | Action |
 |---|---|
 | `q` | Close the topmost popup (help, log, event timeline) if one is open, otherwise quit |
-| Ctrl-C | Always quit (handled here because raw mode swallows the SIGINT) |
+| Ctrl-C | Always quit, also from inside the add-target dialog (handled here because raw mode swallows the SIGINT) |
 | ↑ / ↓ | Move row selection |
 | ← / → | Move column selection |
 | Shift+↑ / Shift+↓ | Sort by selected column (asc / desc); same direction again resets to original order |
-| PageUp / PageDown | Scroll one viewport (or scroll popup if visible) |
+| PageUp / PageDown | Scroll one viewport (or scroll popup if visible: by list offset with the selection left at `None`, one line of overlap, clamped to the last full page) |
 | Shift+PageUp/Down | Scroll 10 rows |
 | Home / End | First / last row |
 | Backspace | Clear table selection and sorting |
@@ -100,14 +100,19 @@ It is synchronous — anything async-y inside individual handlers happens via
 | Ctrl-Delete | Remove all unreachable targets |
 | `a` | Open add-target dialog |
 | Esc | Close active modal (help / popup / dialog) |
-| F1 | Toggle help popup |
+| F1 | Toggle help popup (global: also over the add-target dialog) |
 | F10 | Toggle perf mode |
-| F12 | Toggle log popup |
+| F12 | Toggle log popup (global: also over the add-target dialog) |
 
 Definitions live in `src/ui/keyboard.rs:37-235`. After handling an event,
 the loop drains any backed-up events with `event::poll(0)`
 (`keyboard.rs:221`) so a held-down key doesn't queue dozens of redundant
 notifies.
+
+`Event::Resize(w, h)` is handled here too: it updates `AppLayout` to the
+new size and returns `Ok(true)` for an immediate redraw (no queue drain,
+which would discard keystrokes; the `Notify` coalesces resize bursts).
+See [tui-rendering](tui-rendering.md#applayout-and-maybe_update).
 
 ## Column sorting
 
@@ -137,11 +142,20 @@ trade-offs and mechanics:
 
 ## The add-target dialog branch
 
-When the add-target dialog is visible (`tui.layout.read().input_visible`),
-the key handler routes the event to `handle_input_dialog`
-(`keyboard.rs:238`) instead of the main match. That handler delegates to
-`AddTargetDialogState::on_key` and reacts to the returned `DialogAction`.
-See [add-target-dialog](add-target-dialog.md).
+The first arms of `key_event_poll`'s match are the **global keys** —
+Ctrl-C, F1 and F12 — which work whether or not the add-target dialog is
+open. Next, while the dialog is visible (`input_visible`), PageUp/PageDown
+page a text popup opened over it, and every other key is routed to
+`handle_input_dialog` instead of the rest of the match. That handler
+delegates to `AddTargetDialogState::on_key` and reacts to the returned
+`DialogAction`. See [add-target-dialog](add-target-dialog.md).
+
+Overlay z-order (bottom to top) is: input dialog, text popup, help.
+`render_popups` draws them in that order and `close_top_overlay` (Esc /
+`q` / the dialog's Cancel) closes them top-down, so the log opened with
+F12 from inside the dialog sits above it and is dismissed first. Opening
+the dialog (`a`) closes any text popup left open, as it would hide the
+dialog.
 
 ## Adding a new keyboard command
 

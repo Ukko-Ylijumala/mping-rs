@@ -77,6 +77,18 @@ pub(crate) struct AddTargetDialogState {
 }
 
 impl AddTargetDialogState {
+    /**
+    Prepare the state for (re)opening the dialog: start fresh, unless a
+    submission is still in flight. Its task writes the summary back into
+    this state when done, and a reset would both unblock a second submit
+    and let the first batch's summary show up as the second's result.
+    */
+    pub fn reopen(&mut self) {
+        if !self.feedback.is_working() {
+            *self = Self::default();
+        }
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> DialogAction {
         match key.code {
             KeyCode::Esc => return DialogAction::Cancel,
@@ -503,6 +515,39 @@ fn section_line(label: &'static str, entries: &[String], colour: Color) -> Line<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn submit_state() -> AddTargetDialogState {
+        AddTargetDialogState {
+            addrs: Input::new("10.0.0.1".into()),
+            active: ActiveField::Submit,
+            ..Default::default()
+        }
+    }
+
+    fn enter(state: &mut AddTargetDialogState) -> DialogAction {
+        state.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn reopen_keeps_in_flight_submission() {
+        let mut state = submit_state();
+        state.feedback = DialogFeedback::Working;
+        state.reopen();
+        // Working survives close + reopen, re-submit stays blocked
+        assert!(state.feedback.is_working());
+        assert!(matches!(enter(&mut state), DialogAction::None));
+    }
+
+    #[test]
+    fn reopen_resets_idle_dialog() {
+        let mut state = submit_state();
+        state.feedback = DialogFeedback::Summary(Text::from("done"));
+        state.reopen();
+        assert!(matches!(state.feedback, DialogFeedback::None));
+        assert_eq!(state.active, ActiveField::Addresses);
+        assert!(state.addrs.value().is_empty());
+    }
 
     fn to_lines(text: &Text) -> Vec<String> {
         text.lines

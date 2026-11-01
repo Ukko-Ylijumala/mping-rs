@@ -8,7 +8,7 @@ load-bearing for any change in this area.
 
 | Context | What it does | Spawned at | File |
 |---|---|---|---|
-| Tokio multi-thread runtime (8 worker threads) | Per-target [`ping_loop`](../../src/pinger.rs)s, all async I/O, hop-count / PMTU / PTR / AS lookups | `#[tokio::main(worker_threads = 8)]` on `main` | `src/main.rs:461` |
+| Tokio multi-thread runtime (8 worker threads) | Per-target [`ping_loop`](../../src/pinger.rs)s, all async I/O, hop-count / PMTU / PTR / AS lookups | Hand-built in `main` (`runtime::Builder`, `WORKER_THREADS = 8`), running `run()` via `block_on` | `src/main.rs` |
 | Keyboard event `std::thread` | Polls crossterm events, dispatches `Command`s, wakes the render loop via `Notify` | `thread::spawn(move \|\| key_event_handler(...))` | `src/main.rs:485` |
 | Signal `std::thread` | Listens for SIGINT/SIGTERM/SIGQUIT, flips the quit `AtomicBool` | `std::thread::spawn` inside `setup_signal_handler` | `src/utils.rs:48` |
 
@@ -123,6 +123,19 @@ it at once). The ping loops no longer use it (see above).
   sets the flag and cancels `AppState::shutdown`, which wakes the render
   loop and every `ping_loop` at once. The `q` key, Ctrl-C and the panic
   hook all take this same path.
+
+## Shutdown and blocking work
+
+`main` builds the runtime by hand instead of using `#[tokio::main]`,
+because tokio's implicit `Runtime` drop waits *forever* for
+`spawn_blocking` work. A hop-count, PMTU or traceroute probe still
+running on quit (a silent target's traceroute is up to 30 hops × 1 s)
+would otherwise hang the process after the final stats were printed.
+After `block_on(run())` returns, `main` calls
+`rt.shutdown_timeout(SHUTDOWN_GRACE)` (250 ms): async tasks are dropped,
+leftover blocking threads are abandoned to process exit. The traceroute
+hop callback also checks `AppState::shutdown` and stops probing between
+hops once quit was requested.
 
 ## File map
 

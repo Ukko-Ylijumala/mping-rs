@@ -48,7 +48,10 @@ We listen for `SIGINT`, `SIGTERM`, and `SIGQUIT`. The callback runs the
 same quit path as the `q` key: `AppState::quit` sets the quit flag *and*
 cancels `AppState::shutdown`, so the render loop and every (sleeping)
 `ping_loop` wake immediately. Cleanup then runs through the normal exit
-path: ping tasks join, the `TerminalGuard` drops, the terminal is restored.
+path: the `TerminalGuard` drops (restoring the terminal), ping tasks join,
+the final stats print, and `main` shuts the runtime down with a short
+grace period so an in-flight blocking probe can't keep the process alive
+(see [concurrency](concurrency.md#shutdown-and-blocking-work)).
 
 The render loop still has a `true = app.is_quitting_async()` branch, and
 `main` cancels the token once more after the loop: both are fallbacks for
