@@ -10,7 +10,9 @@ use crate::{
     strings::*,
     structs::QueryResponse,
     traceroute::{HopKind, TraceEnd, TraceHop},
-    utils::{HistogramBucket, human_duration, make_histogram_buckets, reverse_name},
+    utils::{
+        HistogramBucket, human_duration, make_histogram_buckets, reverse_name, truncate_chars,
+    },
 };
 use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use itertools::Itertools;
@@ -484,10 +486,11 @@ impl PingTarget {
             .map(|a| a.to_string().len())
             .max()
             .unwrap_or(1);
+        // in chars, not bytes: `{:<w$}` pads by char count, and PTR names may be non-ASCII
         let name_w: usize = trace
             .hops
             .iter()
-            .map(|h| h.name_str().len())
+            .map(|h| h.name_str().chars().count())
             .max()
             .unwrap_or(1)
             .min(TRACE_NAME_MAX);
@@ -504,7 +507,7 @@ impl PingTarget {
                 .map_or_else(String::new, |d| format!("{:>9.3} ms", d.as_secs_f64() * 1e3));
             let addr: String = h.hop.addr.map_or_else(String::new, |a| a.to_string());
             let mut name: String = h.name_str().to_string();
-            name.truncate(TRACE_NAME_MAX);
+            truncate_chars(&mut name, TRACE_NAME_MAX);
             let fixed: String = format!("{ttl}{rtt}  {addr:<addr_w$}  {name:<name_w$}  ");
             let asn: Span<'static> = match &h.asinfo {
                 QueryResponse::As(a) => Span::raw(a.short()).cyan(),
@@ -2082,6 +2085,38 @@ mod target_tests {
         // a new run discards the old one
         assert!(tgt.trace_begin());
         assert!(tgt.trace().hops.is_empty());
+    }
+
+    #[test]
+    fn trace_lines_truncate_non_ascii_names() {
+        let tgt = PingTarget::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 60, 10, false);
+        assert!(tgt.trace_begin());
+        for ttl in 1..=2 {
+            tgt.trace_push(TraceHop {
+                ttl,
+                addr: Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, ttl))),
+                rtt: Some(Duration::from_millis(1)),
+                kind: HopKind::Router,
+            });
+        }
+        // a multi-byte char straddles byte TRACE_NAME_MAX: byte truncation would panic
+        let long: String = format!("{}ü.example", "a".repeat(TRACE_NAME_MAX - 1));
+        tgt.trace_annotate(1, QueryResponse::Text(long), QueryResponse::Empty);
+        tgt.trace_annotate(2, QueryResponse::Text("ä.lan".into()), QueryResponse::Empty);
+
+        let text: Vec<String> = tgt.trace_lines().iter().map(|l| l.to_string()).collect();
+        let want: String = format!("{}ü", "a".repeat(TRACE_NAME_MAX - 1));
+        assert!(text[3].contains(&want), "{}", text[3]);
+        assert!(!text[3].contains(".example"), "{}", text[3]);
+        // the AS column starts at the same char offset on both lines
+        let as_col = |s: &str| s.chars().count() - 1; // both end in the one-char "-"
+        assert_eq!(as_col(&text[3]), as_col(&text[4]), "{text:?}");
+
+        let mut s: String = "äöü".into();
+        truncate_chars(&mut s, 2);
+        assert_eq!(s, "äö");
+        truncate_chars(&mut s, 5);
+        assert_eq!(s, "äö");
     }
 
     #[test]

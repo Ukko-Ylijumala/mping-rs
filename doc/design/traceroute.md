@@ -113,7 +113,10 @@ started 2026-09-25 10:12:03
  5     12.331 ms  8.8.8.8         dns.google             AS15169 GOOGLE - Google LLC, US
 ```
 
-Address and name columns size to their content (name capped at 40); the
+Address and name columns size to their content (name capped at 40 chars,
+cut on a char boundary via `utils::truncate_chars` - PTR names can be
+non-ASCII once hickory decodes IDNA `xn--` labels, and a byte-index
+`String::truncate` would panic mid-char on the render path); the
 AS column is the `AsInfo::short()` form (ASN + name, no prefix), cyan; the
 target line is bold green, an unreachable line red, pending annotations
 show as `...`. The title carries the run status: `running...`, the
