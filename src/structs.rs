@@ -410,6 +410,7 @@ impl AppState {
         let logger = self.logger.clone();
         let resolver = self.resolver.clone();
         let runtime = self.runtime.clone();
+        let shutdown = self.shutdown.clone();
         /*
         Same rules as `determine_hops`: blocking socket I/O plus write locks on
         target fields, so it goes on a blocking thread via the stored runtime
@@ -420,7 +421,8 @@ impl AppState {
             let now: Instant = Instant::now();
             let hop_tgt = tgt.clone();
             let result = trace_route(tgt.addr, TRACE_PROBE_TIMEOUT, TRACE_MAX_HOPS, false, |hop| {
-                if hop_tgt.is_stopped() {
+                // bail out between hops on target stop or app quit
+                if hop_tgt.is_stopped() || shutdown.is_cancelled() {
                     return false;
                 }
                 let (ttl, addr) = (hop.ttl, hop.addr);

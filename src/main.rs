@@ -38,9 +38,14 @@ use std::{
     thread,
     time::Duration,
 };
-use tokio::time::{self, Interval};
+use tokio::{
+    runtime::{self, Runtime},
+    time::{self, Interval},
+};
 
 const ICMP_HEADER_BYTES: usize = 8; // for send rate estimation (excludes IP overhead)
+const WORKER_THREADS: usize = 8; // tokio runtime worker threads
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(250); // for leftover blocking tasks
 
 type WritableLayout<'a> =
     parking_lot::lock_api::RwLockWriteGuard<'a, parking_lot::RawRwLock, ui::tui::AppLayout>;
@@ -549,8 +554,26 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
 
 /* -------------------------------------------------------------------------- */
 
-#[tokio::main(worker_threads = 8)]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/**
+The runtime is built by hand (rather than `#[tokio::main]`) so that shutdown
+doesn't depend on its implicit drop, which waits forever for `spawn_blocking`
+work: a hop-count / PMTU / traceroute probe still running on quit (up to tens
+of seconds against a silent target) would hang the process after the final
+stats were already printed. Leftover blocking threads get [SHUTDOWN_GRACE]
+and are then abandoned to process exit.
+*/
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let rt: Runtime = runtime::Builder::new_multi_thread()
+        .worker_threads(WORKER_THREADS)
+        .enable_all()
+        .build()?;
+    let result = rt.block_on(run());
+    rt.shutdown_timeout(SHUTDOWN_GRACE);
+    result
+}
+
+/// The application proper: setup, the render loop, cleanup and final stats.
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let conf: MpConfig = MpConfig::parse().await?;
     let app: AppState = AppState::from_conf(&conf);
     let tgts: Vec<PingTarget> = make_targets(&conf.addrs, &app.defaults);
