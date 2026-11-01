@@ -18,12 +18,18 @@ use hickory_resolver::{
 use std::{
     collections::HashSet,
     fmt::Debug,
-    net::IpAddr,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::{Arc, LazyLock},
     time::Duration,
 };
 
 const DEFAULT_DNS_TIMEOUT: Duration = Duration::from_secs(5);
+const DNS_PORT: u16 = 53;
+// Nameservers used when the system config is unreadable (glibc does the same).
+const FALLBACK_DNS: [IpAddr; 2] = [
+    IpAddr::V4(Ipv4Addr::LOCALHOST),
+    IpAddr::V6(Ipv6Addr::LOCALHOST),
+];
 // Some default sizes as string constants for clap default_value.
 // Wow, this is mega convoluted...
 static DEFAULT_PAYLOAD_STR: LazyLock<&'static str> =
@@ -211,7 +217,7 @@ impl MpConfig {
         let (resolver_config, resolver_opts) = {
             if wants_default_conf && wants_default_opts {
                 config.buf.debug(INFO_DNS);
-                read_system_conf()? // use system defaults
+                system_conf_or_fallback(&config.buf) // use system defaults
             } else {
                 let mut res_opts = ResolverOpts::default();
                 if !wants_default_opts {
@@ -223,7 +229,7 @@ impl MpConfig {
                 }
                 let res_conf = match wants_default_conf {
                     true => {
-                        let (sys_conf, _) = read_system_conf()?;
+                        let (sys_conf, _) = system_conf_or_fallback(&config.buf);
                         sys_conf
                     }
                     false => {
@@ -239,7 +245,11 @@ impl MpConfig {
                         ResolverConfig::from_parts(
                             None,
                             vec![],
-                            NameServerConfigGroup::from_ips_clear(&config.dns_servers, 53, true),
+                            NameServerConfigGroup::from_ips_clear(
+                                &config.dns_servers,
+                                DNS_PORT,
+                                true,
+                            ),
                         )
                     }
                 };
@@ -329,5 +339,24 @@ impl MpConfig {
         }
 
         Ok(config)
+    }
+}
+
+/**
+Read the system resolver configuration (`/etc/resolv.conf` on Unix). If that
+fails (file missing, no `nameserver` lines, ...), warn and fall back to
+localhost:53 like glibc does: plain IP targets need no DNS at all, so a broken
+resolver config must not abort startup. The resolver still has to exist since
+PTR / AS lookups use it at runtime.
+*/
+fn system_conf_or_fallback(buf: &MessageBuffer) -> (ResolverConfig, ResolverOpts) {
+    match read_system_conf() {
+        Ok(sys) => sys,
+        Err(e) => {
+            buf.warn(format!("{WARN_DNS_SYSCONF}: {e}; {WARN_DNS_FALLBACK}"));
+            let servers = NameServerConfigGroup::from_ips_clear(&FALLBACK_DNS, DNS_PORT, true);
+            let conf = ResolverConfig::from_parts(None, vec![], servers);
+            (conf, ResolverOpts::default())
+        }
     }
 }

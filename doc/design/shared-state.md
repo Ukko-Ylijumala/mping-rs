@@ -22,6 +22,17 @@ when raw sockets aren't permitted — `nice_permission_error`
 keep `from_conf` infallible while still letting client creation surface a
 nice error, and `build` is the only function that wraps `self` in `Arc`.
 
+Only the IPv4 client is mandatory. An IPv6 client failure is fatal only
+when it is a permission error; anything else (e.g. `EAFNOSUPPORT` on a
+kernel booted with `ipv6.disable=1`) logs a warning and leaves
+`c_v6 = None`, so IPv4-only hosts can still run. `AppState::client_for(addr)`
+returns the client for an address family, and `add_targets` uses it to
+skip — and return, as a third tuple element — targets with no client, both
+for the initial targets and for the add-target dialog (whose summary lists
+them as "unsupported"). `ping_loop` uses the same lookup and, should a
+client-less target ever slip through, logs an error and stops that target
+instead of panicking the task.
+
 ## Locks
 
 All locks are `parking_lot::RwLock` — no poisoning, faster than `std`. Atomics

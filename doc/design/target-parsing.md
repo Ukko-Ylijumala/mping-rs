@@ -46,6 +46,18 @@ which resolves to `10.0.0.5`, you get `10.0.0.5`. If you don't want
 that, exclude `myhost.internal` by name won't do anything either —
 exclusions are an IP-only filter.
 
+`CollectedTargets.excluded` holds only the addresses the exclusions
+*actually removed* (`seen ∩ exclusions`), not the whole expanded exclusion
+list — excluding `10.0.0.0/16` from two targets reports 2, not 65534. The
+add-target dialog's `excluded: N` header relies on that.
+
+Every target and exclusion token is whitespace-trimmed and empty tokens
+are skipped before parsing. clap splits `--exclude` on `,` only, so
+`--exclude="10.0.0.1, 10.0.0.2"` would otherwise yield `" 10.0.0.2"`,
+which fails to parse and is silently not excluded; the dialog path
+(`split_dialog_input`) already trims, so both now behave the same. The
+trimmed spelling is what goes into `failed` and on to `resolve_names`.
+
 Exclusions are honored even when they would remove *everything* (you get
 a warning and an empty target list, not your full input back), and after
 they're applied `seen` is updated so it always mirrors `addrs` membership
@@ -103,6 +115,15 @@ combines `--dns-servers` and `--dns-timeout` with `hickory-resolver`'s
 | not set | custom | system config + custom timeout |
 | set | default | custom servers + default options |
 | set | custom | custom servers + custom timeout |
+
+"System config" goes through `system_conf_or_fallback`: if
+`read_system_conf()` fails (no `/etc/resolv.conf`, or one with no
+`nameserver` lines — common in minimal containers), it logs a warning
+and falls back to `127.0.0.1` / `::1` port 53 with default options,
+like glibc does. Startup must not fail over DNS config when the targets
+are plain IPs; the warning points at `--dns-servers` for anyone who
+needs names resolved. Localhost was chosen over a public resolver so
+queries never silently go to a third party.
 
 The DNS timeout is clamped to `[1s, 10s]` (`args.rs:201-205`). The
 resolver is **also** used at runtime for PTR lookups when the user
