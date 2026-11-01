@@ -819,7 +819,7 @@ impl TuiState {
     pub fn add_tgt_dialog_open(&self) {
         // statement-scoped guards: never hold `input_state` while taking `layout`
         // (render takes them in the opposite order)
-        *self.input_state.write() = AddTargetDialogState::default();
+        self.input_state.write().reopen();
         let mut lo = self.layout.write();
         lo.input_visible = true;
         // the text popup is drawn above the dialog (so F12 from it is readable),
