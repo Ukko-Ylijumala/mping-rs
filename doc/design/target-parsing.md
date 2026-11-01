@@ -46,6 +46,18 @@ which resolves to `10.0.0.5`, you get `10.0.0.5`. If you don't want
 that, exclude `myhost.internal` by name won't do anything either —
 exclusions are an IP-only filter.
 
+`CollectedTargets.excluded` holds only the addresses the exclusions
+*actually removed* (`seen ∩ exclusions`), not the whole expanded exclusion
+list — excluding `10.0.0.0/16` from two targets reports 2, not 65534. The
+add-target dialog's `excluded: N` header relies on that.
+
+Every target and exclusion token is whitespace-trimmed and empty tokens
+are skipped before parsing. clap splits `--exclude` on `,` only, so
+`--exclude="10.0.0.1, 10.0.0.2"` would otherwise yield `" 10.0.0.2"`,
+which fails to parse and is silently not excluded; the dialog path
+(`split_dialog_input`) already trims, so both now behave the same. The
+trimmed spelling is what goes into `failed` and on to `resolve_names`.
+
 Exclusions are honored even when they would remove *everything* (you get
 a warning and an empty target list, not your full input back), and after
 they're applied `seen` is updated so it always mirrors `addrs` membership
