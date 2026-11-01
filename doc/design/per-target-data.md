@@ -22,6 +22,7 @@ PingTarget (immutable shape)
 └── data: RwLock<PingTargetInner>
         ├── sent: u64
         ├── recv: u64
+        ├── lost: u64              ── timed-out probes (sent - recv - lost = in flight)
         ├── rtts: LatencyWindow    ── rolling RTT window (µs), see latency-window.md
         ├── recent: PacketHistory  ── short detailed history (default 100 packets)
         ├── raw_status: PingStatus ── Ok / Timeout / Error(_) from results;
@@ -157,6 +158,16 @@ The snapshot's `status` layers `Stopped` / `Paused` over the inner effective
 status just like `PingTarget::effective_status`, reading the outer atomics
 directly (the outer method would re-take the `data` lock already held), so
 the Status column always agrees with the row's paused/stopped styling.
+
+The Loss column masks probes still in flight without hiding real loss:
+`update_stats` counts each `SurgeError::Timeout` in `lost` (other errors
+undo `sent` instead), so `sent - recv - lost` is exactly the number in
+flight. While the latest probe is within its timeout `loss()` is
+`lost / sent`; past it nothing can still be in flight, so it falls back to
+`(sent - recv) / sent`. The Loss sort key uses `lost / sent` too. Basing
+this on time alone (the old "one missing reply and the latest probe is
+young" rule) was always true at the default 1 s interval / 2 s timeout, so
+a single genuine loss read as 0.0% forever.
 The `HistorySnapshot` (sequence gaps, reordering, detailed-window stats) is
 several passes over the detailed history and nothing on the render path
 reads it, so it's only built by `StatsSnapshot::new_from_detailed`;

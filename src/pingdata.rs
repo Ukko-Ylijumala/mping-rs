@@ -95,6 +95,12 @@ impl fmt::Display for PingStatus {
 pub(crate) struct PingTargetInner {
     pub sent: u64,
     pub recv: u64,
+    /**
+    Probes that timed out. Kept apart from `sent - recv`, which also counts
+    probes still in flight: only this lets the loss display tell a genuine
+    loss from a reply that simply hasn't arrived yet.
+    */
+    pub lost: u64,
     /// RTTs in microseconds (rolling window)
     pub rtts: LatencyWindow,
     /// Detailed history of recent sent/received packets
@@ -326,6 +332,7 @@ impl PingTarget {
             }
             Err(e) => match e {
                 SurgeError::Timeout { .. } => {
+                    inner.lost += 1;
                     inner.tracker.record_miss(rec.sent);
                     PingStatus::Timeout
                 }
@@ -641,6 +648,7 @@ impl PingTarget {
         let mut data = self.data.write();
         data.sent = 0;
         data.recv = 0;
+        data.lost = 0;
         data.rtts.clear();
         data.recent.clear();
         data.raw_status = PingStatus::None;
@@ -1763,6 +1771,8 @@ microseconds and displayed as milliseconds.
 pub(crate) struct StatsSnapshot {
     pub sent: u64,
     pub recv: u64,
+    /// Probes that timed out (`sent - recv - lost` are still in flight).
+    pub lost: u64,
     pub min: Option<u32>,
     pub max: Option<u32>,
     pub mean: Option<f64>,
@@ -1817,6 +1827,7 @@ impl StatsSnapshot {
             when: now,
             sent: data.sent,
             recv: data.recv,
+            lost: data.lost,
             mean,
             min,
             max,
@@ -1830,14 +1841,24 @@ impl StatsSnapshot {
         }
     }
 
-    /// Packet loss percentage as a float `[0.0 .. 1.0]`.
+    /**
+    Packet loss percentage as a float `[0.0 .. 1.0]`.
+
+    Probes still in flight are not losses: only timed-out ones count while
+    the latest probe is within its timeout. Past that nothing can still be
+    in flight, so every probe without a reply counts.
+    */
     pub fn loss(&self) -> f64 {
         if self.sent == 0 {
-            0.0
+            return 0.0;
+        }
+        let lost: u64 = if self.is_latest_inflight() {
+            self.lost
         } else {
             // Saturating: a stats reset racing an in-flight reply can leave recv > sent.
-            self.sent.saturating_sub(self.recv) as f64 / self.sent as f64
-        }
+            self.sent.saturating_sub(self.recv).max(self.lost)
+        };
+        lost.min(self.sent) as f64 / self.sent as f64
     }
 
     /**
@@ -1851,14 +1872,11 @@ impl StatsSnapshot {
         self.timeout > self.when.duration_since(self.latest_sent)
     }
 
-    /// Packet loss as formatted string.
+    /// Packet loss as formatted string. In-flight probes are masked, see [Self::loss].
     #[inline]
     pub fn loss_str(&self) -> String {
         if self.sent == 0 {
             MISSING.to_string()
-        } else if (self.sent.saturating_sub(self.recv) == 1) && self.is_latest_inflight() {
-            // catch the common case of one receive missing (still in transit)
-            "0.0%".to_string()
         } else {
             format!("{:.1}%", 1e2 * self.loss())
         }
@@ -2185,6 +2203,41 @@ mod target_tests {
         assert_eq!(tgt.data.read().raw_status, PingStatus::Stopped);
         assert_eq!(status(&tgt), PingStatus::Stopped);
         assert!(!tgt.is_unreachable());
+    }
+
+    #[test]
+    fn loss_masks_only_in_flight_probes() {
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let tgt = Arc::new(PingTarget::new(addr, 60, 10, false));
+        let wait: Duration = Duration::from_secs(2);
+        let set = |sent: u64, recv: u64, lost: u64, ago: Duration| {
+            let mut d = tgt.data.write();
+            (d.sent, d.recv, d.lost) = (sent, recv, lost);
+            d.last_sent = Some(Instant::now() - ago);
+        };
+        let loss = || StatsSnapshot::new_from(&tgt, wait).loss_str();
+
+        assert_eq!(loss(), MISSING);
+        // one genuine loss long ago, the latest probe just sent
+        set(1000, 999, 1, Duration::ZERO);
+        assert_eq!(loss(), "0.1%");
+        // the missing reply is just in flight
+        set(1000, 999, 0, Duration::ZERO);
+        assert_eq!(loss(), "0.0%");
+        // perf mode: several in flight at once are all masked
+        set(1000, 997, 1, Duration::ZERO);
+        assert_eq!(loss(), "0.1%");
+        // past the timeout nothing is in flight: unanswered means lost
+        set(1000, 997, 1, wait * 2);
+        assert_eq!(loss(), "0.3%");
+
+        // a timeout result counts as lost, a reset clears it
+        tgt.data.write().sent += 1;
+        let seq = PingSequence(0);
+        block_on(tgt.update_stats(Err(SurgeError::Timeout { seq }), PacketRecord::new(0)));
+        assert_eq!(tgt.data.read().lost, 2);
+        tgt.reset_stats();
+        assert_eq!(tgt.data.read().lost, 0);
     }
 
     #[test]
