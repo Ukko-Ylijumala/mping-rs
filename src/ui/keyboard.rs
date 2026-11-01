@@ -9,7 +9,6 @@ use crate::{
 };
 use tui_input::Input;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::widgets::ListState;
 use std::{io::Result, sync::Arc, time::Duration};
 
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
@@ -39,12 +38,26 @@ Crossterm key event polling helper
 fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
         if let Event::Key(e) = event::read()? {
-            if tui.layout.read().input_visible {
-                // route key event to input dialog handler
-                return handle_input_dialog(app, tui, e);
-            }
+            let (input_visible, popup_visible) = {
+                let lo = tui.layout.read();
+                (lo.input_visible, lo.popup_visible)
+            };
 
             match (e.code, e.modifiers) {
+                /*
+                Global keys: these work over the add-target dialog too. NOTE:
+                terminal in raw mode -> ctrl-c has to be processed manually.
+                */
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
+                (KeyCode::F(1), _) => toggle_help(tui),
+                (KeyCode::F(12), _) => toggle_log_popup(app, tui),
+
+                // The rest goes to the dialog, except paging a popup opened over it
+                (KeyCode::PageUp | KeyCode::PageDown, _) if input_visible && popup_visible => {
+                    scroll_popup(tui, &mut tui.layout.write(), e.code == KeyCode::PageDown);
+                }
+                _ if input_visible => return handle_input_dialog(app, tui, e),
+
                 // Quit the application - or, if a popup is open, just close it
                 // (a reflexive 'q' to dismiss help shouldn't end the session)
                 (KeyCode::Char('q'), KeyModifiers::NONE) => {
@@ -52,9 +65,6 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                         app.execute(Command::Quit);
                     }
                 },
-
-                // terminal in raw mode -> ctrl-c has to be processed manually
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => { app.execute(Command::Quit); },
 
                 /*
                 Sort by the selected column: Shift+Up ascending, Shift+Down
@@ -172,10 +182,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                             .map(|t| (t.to_string(), t.recent_events()))
                     });
                     if let Some((name, events)) = info {
-                        *tui.popup_contents.write() = events_popup(name, &events);
-                        let mut lo = tui.layout.write();
-                        lo.popup_visible = true;
-                        lo.liststate = ListState::default(); // new contents start at the top
+                        tui.popup_show(&mut tui.layout.write(), events_popup(name, &events));
                     }
                 }
 
@@ -187,10 +194,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                         app.execute(Command::Traceroute(idx));
                         let tgt = app.targets.read().get(idx).cloned();
                         if let Some(tgt) = tgt {
-                            *tui.popup_contents.write() = PopupContents::Trace(tgt);
-                            let mut lo = tui.layout.write();
-                            lo.popup_visible = true;
-                            lo.liststate = ListState::default(); // new contents start at the top
+                            tui.popup_show(&mut tui.layout.write(), PopupContents::Trace(tgt));
                         }
                     }
                 }
@@ -240,37 +244,8 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 // Close active popup/help/input overlays
                 (KeyCode::Esc, _) => { close_top_overlay(tui); }
 
-                // Show/hide the help popup
-                (KeyCode::F(1), _) => {
-                    let mut lo = tui.layout.write();
-                    match lo.help_visible {
-                        false => {
-                            lo.help_visible = true;
-                        }
-                        true => {
-                            lo.help_visible = false;
-                        }
-                    }
-                }
-
                 // Toggle "performance" mode
                 (KeyCode::F(10), _) => { app.execute(Command::TogglePerf); }
-
-                // Show/hide the log message buffer
-                (KeyCode::F(12), _) => {
-                    let mut lo = tui.layout.write();
-                    match lo.popup_visible {
-                        false => {
-                            *tui.popup_contents.write() = PopupContents::Buffer(app.logger.clone());
-                            lo.popup_visible = true;
-                            lo.liststate = ListState::default();
-                        }
-                        true => {
-                            *tui.popup_contents.write() = PopupContents::None;
-                            lo.popup_visible = false;
-                        }
-                    }
-                }
 
                 // Don't signal an unhandled key event
                 _ => return Ok(false),
@@ -294,8 +269,8 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
 }
 
 /**
-Close the topmost visible overlay (help, then input dialog, then the text
-popup). Returns `false` if nothing was open.
+Close the topmost visible overlay (help, then the text popup, then the input
+dialog - the render z-order). Returns `false` if nothing was open.
 
 NOTE: lock-order - takes `layout` then `popup_contents`, same as render.
 */
@@ -303,16 +278,29 @@ fn close_top_overlay(tui: &TuiState) -> bool {
     let mut lo = tui.layout.write();
     if lo.help_visible {
         lo.help_visible = false;
+    } else if lo.popup_visible {
+        tui.popup_hide(&mut lo);
     } else if lo.input_visible {
         lo.input_visible = false;
-    } else if lo.popup_visible {
-        *tui.popup_contents.write() = PopupContents::None;
-        lo.popup_visible = false;
-        lo.liststate = ListState::default(); // next popup starts at the top
     } else {
         return false;
     }
     true
+}
+
+/// Show/hide the help popup.
+fn toggle_help(tui: &TuiState) {
+    let mut lo = tui.layout.write();
+    lo.help_visible = !lo.help_visible;
+}
+
+/// Show the log message buffer, or hide whichever text popup is open.
+fn toggle_log_popup(app: &AppState, tui: &TuiState) {
+    let mut lo = tui.layout.write();
+    match lo.popup_visible {
+        false => tui.popup_show(&mut lo, PopupContents::Buffer(app.logger.clone())),
+        true => tui.popup_hide(&mut lo),
+    }
 }
 
 /**
@@ -388,12 +376,9 @@ fn handle_input_dialog(app: &Arc<AppState>, tui: &Arc<TuiState>, e: KeyEvent) ->
         DialogAction::Redraw => Ok(true),
 
         DialogAction::Cancel => {
-            // help dialog could be open on top of input dialog
-            if tui.layout.read().help_visible {
-                tui.layout.write().help_visible = false;
-            } else {
-                tui.add_tgt_dialog_close()
-            };
+            // help or the log popup could be open on top of the dialog: close
+            // the topmost overlay first, the dialog itself last
+            close_top_overlay(tui);
             Ok(true)
         }
 

@@ -452,8 +452,24 @@ fn render_frame(frame: &mut Frame, state: &AppState, tui: &TuiState, data: &[Tab
     render_popups(frame, tui, layout);
 }
 
-/// Render the popups: text box, help.
+/**
+Render the popups: input dialog, text box, help (bottom to top). The text
+popup goes above the dialog so the log (F12) can be read while adding
+targets; `close_top_overlay` in the keyboard handler mirrors this order.
+*/
 fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout) {
+    /* -------- Input dialog -------- */
+    if layout.input_visible {
+        let state = &mut *tui.input_state.write();
+        frame.render_stateful_widget(&layout.input, layout.input.area, state);
+        // no caret blinking through a popup drawn over the dialog
+        if !layout.popup_visible
+            && let Some(pos) = layout.input.cursor_position(state)
+        {
+            frame.set_cursor_position(pos);
+        }
+    }
+
     /* -------- Text popup -------- */
     if layout.popup_visible {
         let contents = &*tui.popup_contents.read();
@@ -518,15 +534,6 @@ fn render_popups(frame: &mut Frame, tui: &TuiState, layout: &mut WritableLayout)
 
                 _ => frame.render_widget(contents.to_para().block(BLK_POPUP.clone()), layout.popup),
             }
-        }
-    }
-
-    /* -------- Input dialog -------- */
-    if layout.input_visible {
-        let state = &mut *tui.input_state.write();
-        frame.render_stateful_widget(&layout.input, layout.input.area, state);
-        if let Some(pos) = layout.input.cursor_position(state) {
-            frame.set_cursor_position(pos);
         }
     }
 

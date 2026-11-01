@@ -20,17 +20,19 @@ it inside `on_key` (`input.rs:91-97`).
 
 ## Routing & focus
 
-When `tui.layout.read().input_visible` is true,
-`key_event_poll` routes every key to `handle_input_dialog`
-(`keyboard.rs:42`). That helper calls
+When `tui.layout.read().input_visible` is true, `key_event_poll` routes
+every key to `handle_input_dialog` except the global keys (Ctrl-C quits,
+F1 toggles help, F12 toggles the log popup) and PageUp/PageDown while a
+text popup is open over the dialog (they page it). That helper calls
 `AddTargetDialogState::on_key(key) -> DialogAction` and acts on the
 result:
 
 - `None` — no state change, don't even notify the render loop.
 - `Redraw` — state changed (focus moved, character typed, paused
   toggled). Notify the loop.
-- `Cancel` — Esc pressed (and no help popup on top of the dialog) →
-  `tui.add_tgt_dialog_close()`.
+- `Cancel` — Esc pressed (or Enter on Cancel) → `close_top_overlay`,
+  which closes help or the log popup first if one is on top of the
+  dialog, and the dialog itself otherwise.
 - `Submit { addrs, excls, paused }` — Enter on the Submit button →
   parse the input, fire-and-forget async work, close the dialog.
 
@@ -76,12 +78,16 @@ puts the cursor there, so the terminal's actual cursor follows the
 focused field. For non-text focuses (Paused, Submit, Cancel) this
 returns `None` and the cursor stays hidden.
 
-## Help-over-dialog edge case
+## Overlays over the dialog
 
-F1 can open the help popup on top of the input dialog. The Cancel
-branch in `handle_input_dialog` (`keyboard.rs:246-251`) detects this
-and closes the help popup instead of cancelling the dialog. That way
-Esc dismisses the topmost overlay first.
+F1 (help) and F12 (log) can be opened on top of the input dialog: the
+render order is dialog, then text popup, then help, so both draw above
+it (and the dialog's caret is hidden while a text popup covers it). The
+Cancel branch in `handle_input_dialog` goes through `close_top_overlay`,
+which closes help, then the text popup, then the dialog — Esc always
+dismisses the topmost overlay first. Opening the dialog with `a` closes
+a text popup left open from before, since it would otherwise cover the
+dialog.
 
 ## File map
 

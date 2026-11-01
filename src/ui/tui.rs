@@ -797,12 +797,36 @@ impl TuiState {
         tokio::time::Instant::now() >= *self.ui_next_refresh.read()
     }
 
+    /**
+    Show `contents` in the text popup, scrolled to the top.
+
+    NOTE: lock-order - caller holds `layout`, `popup_contents` is taken after it.
+    */
+    pub fn popup_show(&self, lo: &mut AppLayout, contents: PopupContents) {
+        *self.popup_contents.write() = contents;
+        lo.popup_visible = true;
+        lo.liststate = ListState::default();
+    }
+
+    /// Hide the text popup. Same lock-order as [Self::popup_show].
+    pub fn popup_hide(&self, lo: &mut AppLayout) {
+        *self.popup_contents.write() = PopupContents::None;
+        lo.popup_visible = false;
+        lo.liststate = ListState::default();
+    }
+
     /// Open the add target dialog in the UI.
     pub fn add_tgt_dialog_open(&self) {
         // statement-scoped guards: never hold `input_state` while taking `layout`
         // (render takes them in the opposite order)
         *self.input_state.write() = AddTargetDialogState::default();
-        self.layout.write().input_visible = true;
+        let mut lo = self.layout.write();
+        lo.input_visible = true;
+        // the text popup is drawn above the dialog (so F12 from it is readable),
+        // so one left open from before would hide the dialog
+        if lo.popup_visible {
+            self.popup_hide(&mut lo);
+        }
     }
 
     /// Close the add target dialog.
