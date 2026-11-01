@@ -46,8 +46,11 @@ Answer fields are `|`-separated and whitespace padded; `parse_origin` /
   by spaces (`"15169 3356 | ..."`). All are kept, in order.
 - **Several TXT records**: an address covered by more than one announced
   prefix yields one record per announcement. They are folded with
-  `AsInfo::merge` — the union of ASNs, with the first record's prefix /
-  country / RIR / date winning.
+  `fold_origins` / `AsInfo::merge` — the union of ASNs, with the most
+  specific prefix (longest `/N`) supplying prefix / country / RIR / date
+  and its ASN(s) listed first. RRset order is arbitrary (resolvers rotate
+  it), so the records are sorted by prefix length, then ASN list, before
+  folding — the same address always renders the same way.
 
 Unrouted space (RFC 1918, documentation ranges, unallocated blocks)
 answers NXDOMAIN, which hickory surfaces as an error. `no_records_or_err`
@@ -75,6 +78,12 @@ AS15169, AS3356 GOOGLE - Google LLC, US / LEVEL3, US [8.8.8.0/24 US/arin]
 The AS name from Cymru already ends in the AS's own country; the bracketed
 country is the *prefix* registration country, which can legitimately
 differ (Cloudflare's 1.1.1.0/24 is APNIC/AU space).
+
+Names stay positionally paired with the ASN list (`AsInfo::names_aligned`,
+shared by `short()` and `Display`): when only some names are known, each
+missing one renders as `?` (`AS15169, AS3356 ? / LEVEL3, US`) so a later
+name never appears attributed to an earlier ASN. With no names at all only
+the ASN list is shown.
 
 ## When it runs
 
