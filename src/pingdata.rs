@@ -100,10 +100,14 @@ pub(crate) struct PingTargetInner {
     /// Detailed history of recent sent/received packets
     pub recent: PacketHistory,
     /**
-    Raw last known status from pinging. Can only be one of:
+    Raw last known status from pinging. Set by [PingTarget::update_stats] to:
     - [PingStatus::Ok]
     - [PingStatus::Timeout]
     - [PingStatus::Error]
+
+    and by the pause/resume/stop/reset paths to [PingStatus::Paused],
+    [PingStatus::Resuming], [PingStatus::Stopped] or [PingStatus::None].
+    Results for probes outside the current monitored epoch don't overwrite it.
 
     For derived statuses like [PingStatus::Laggy], [PingStatus::Lossy],
     etc, use [PingTarget::effective_status] instead.
@@ -302,7 +306,7 @@ impl PingTarget {
             return; // probe predates the last stats reset
         }
         let mut ttl_update = TtlUpdate::None;
-        inner.raw_status = match res {
+        let status: PingStatus = match res {
             Ok((pkt, dur)) => {
                 inner.recv += 1;
                 inner.rtts.push(dur.as_micros() as u32);
@@ -342,6 +346,15 @@ impl PingTarget {
                 }
             },
         };
+        /*
+        Counters and history take every result, but the status only follows
+        probes of the current monitored epoch: one still in flight across a
+        pause/stop (or sent before the last resume) would otherwise replace
+        `Paused` / `Stopped` / `Resuming` with a stale `Ok` / `Timeout`.
+        */
+        if inner.tracker.is_current(rec.sent) {
+            inner.raw_status = status;
+        }
         inner.recent.push(rec);
         drop(inner);
 
@@ -744,13 +757,13 @@ impl PingTarget {
     /**
     Whether this target is (currently) considered unreachable.
 
-    NOTE: a stopped target is never "unreachable" in this context.
+    NOTE: a stopped or paused target is never "unreachable" in this context.
 
     NOTE: may lock the inner `data` for reading.
     */
     #[inline]
     pub fn is_unreachable(&self) -> bool {
-        if self.is_stopped() {
+        if self.is_stopped() || self.is_paused() {
             return false;
         }
         self.data.read().is_unreachable()
@@ -1755,7 +1768,8 @@ pub(crate) struct StatsSnapshot {
     pub mean: Option<f64>,
     pub last: Option<u32>,
     pub stdev: Option<f64>,
-    /// Current effective status of the target. DOES NOT contain "paused" or "stopped" states.
+    /// Current effective status of the target, `Stopped` / `Paused` layered on top
+    /// as in [PingTarget::effective_status].
     pub status: PingStatus,
     /// History of recent sent/received packets. Only built by
     /// [StatsSnapshot::new_from_detailed] - it's ~6 passes over the history.
@@ -1791,6 +1805,14 @@ impl StatsSnapshot {
             Ok((mean, mi, ma)) => (Some(mean), Some(mi), Some(ma)),
             Err(_) => (None, None, None),
         };
+        // the outer flags are atomics: [PingTarget::effective_status] would re-take `data`
+        let status: PingStatus = if tgt.is_stopped() {
+            PingStatus::Stopped
+        } else if tgt.is_paused() {
+            PingStatus::Paused
+        } else {
+            data.effective_status()
+        };
         Self {
             when: now,
             sent: data.sent,
@@ -1800,7 +1822,7 @@ impl StatsSnapshot {
             max,
             last: data.rtts.last().ok(),
             stdev: data.rtts.stdev().ok(),
-            status: data.effective_status(),
+            status,
             hist: detailed.then(|| HistorySnapshot::new_from(&data.recent)),
             latest_seq: data.last_seq,
             latest_sent: data.last_sent.unwrap_or(now),
@@ -2117,6 +2139,52 @@ mod target_tests {
         assert_eq!(s, "äö");
         truncate_chars(&mut s, 5);
         assert_eq!(s, "äö");
+    }
+
+    #[test]
+    fn stale_results_keep_paused_and_stopped_status() {
+        let seq = PingSequence(0);
+        let timeout = || SurgeError::Timeout { seq };
+        let wait: Duration = Duration::from_secs(2);
+        let status = |t: &Arc<PingTarget>| StatsSnapshot::new_from(t, wait).status;
+
+        // a target that never answers, past the unreachable threshold
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let tgt = Arc::new(PingTarget::new(addr, 60, 100, false));
+        for seq in 0..=DEFAULT_WIN as u16 {
+            tgt.data.write().sent += 1;
+            block_on(tgt.update_stats(Err(timeout()), PacketRecord::new(seq)));
+        }
+        assert!(tgt.is_unreachable());
+        assert_eq!(status(&tgt), PingStatus::NotReachable);
+
+        // a probe in flight across the pause times out afterwards
+        let inflight: PacketRecord = PacketRecord::new(99);
+        tgt.pause();
+        tgt.data.write().sent += 1;
+        block_on(tgt.update_stats(Err(timeout()), inflight.clone()));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Paused);
+        assert_eq!(status(&tgt), PingStatus::Paused);
+        assert!(!tgt.is_unreachable(), "paused: not removable");
+        assert!(!tgt.data.read().is_unreachable());
+
+        // ...or after the resume: still not allowed to clobber `Resuming`
+        tgt.resume();
+        block_on(tgt.update_stats(Err(timeout()), inflight.clone()));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Resuming);
+
+        // fresh probes drive the status again
+        thread::sleep(Duration::from_millis(1));
+        block_on(tgt.update_stats(Err(timeout()), PacketRecord::new(100)));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Timeout);
+
+        // stopped: a late result neither changes the status nor its display
+        let inflight: PacketRecord = PacketRecord::new(101);
+        tgt.stop();
+        block_on(tgt.update_stats(Err(timeout()), inflight));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Stopped);
+        assert_eq!(status(&tgt), PingStatus::Stopped);
+        assert!(!tgt.is_unreachable());
     }
 
     #[test]
