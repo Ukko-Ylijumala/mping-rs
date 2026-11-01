@@ -57,7 +57,12 @@ use std::{
 const MIN_MTU_V4: u16 = 576; // RFC 1122 minimum reassembly buffer, the practical floor
 const MIN_MTU_V6: u16 = 1280; // RFC 8200 minimum link MTU
 const DEFAULT_MAX_MTU: u16 = 1500; // upper bound when the kernel can't tell us the route MTU
-const MAX_PROBES: u32 = 16; // bisecting 576..1500 needs ~10; router hints need far fewer
+/**
+Probe budget. Bisecting 576..1500 needs ~10 probes, router hints far fewer;
+a black hole costs two per failed size (each timeout is confirmed by a
+retry), up to ~23 for 576..1500 and ~31 for 576..9000.
+*/
+const MAX_PROBES: u32 = 32;
 const RECV_BUF_SIZE: usize = u16::MAX as usize; // an echo reply is as big as the probe
 #[cfg(target_os = "linux")]
 const KERNEL_MTU_PORT: u16 = 33434; // any port: the UDP socket is only connected, never sent on
@@ -132,8 +137,9 @@ pub fn determine_pmtu(target: IpAddr, timeout: Duration, debug: bool) -> Result<
 /**
 The size search proper, kept free of sockets so it can be exercised against
 a simulated path. `probe(size)` reports what one DF probe of `size` bytes
-saw. Returns the largest size that got a reply and whether any probe
-vanished silently on the way (black hole).
+saw. A timeout is re-probed once at the same size before it counts as a
+failure. Returns the largest size that got a reply and whether any size
+vanished silently twice on the way (black hole).
 */
 fn search(
     min: u16,
@@ -147,9 +153,19 @@ fn search(
     let mut candidate: u16 = upper;
     let mut from_hint: bool = false; // candidate is a router's reported next-hop MTU
     let mut silent: bool = false; // the last failure was a timeout
+    let mut retried: bool = false; // candidate already timed out once
     for _ in 0..max_probes {
         let mut hint: Option<u16> = None;
         match probe(candidate)? {
+            /*
+            Silence is only a verdict once confirmed: a single lost probe or
+            reply (ordinary packet loss) would otherwise mark the size failed
+            for good, capping the result below it with a bogus black hole.
+            */
+            ProbeResult::Timeout if !retried => {
+                retried = true;
+                continue;
+            }
             ProbeResult::Reply => {
                 good = Some(candidate);
                 /*
@@ -179,6 +195,7 @@ fn search(
         let usable_hint: Option<u16> =
             hint.filter(|h| *h >= min && *h < candidate && good.is_none_or(|g| *h > g));
         from_hint = usable_hint.is_some();
+        retried = false;
         candidate = match usable_hint {
             Some(h) => h,
             None => {
@@ -553,7 +570,7 @@ mod tests {
     fn simulate(
         min: u16,
         upper: u16,
-        path: impl Fn(u16) -> ProbeResult,
+        mut path: impl FnMut(u16) -> ProbeResult,
     ) -> (Result<(u16, bool), String>, Vec<u16>) {
         let mut sent: Vec<u16> = Vec::new();
         let res = search(min, upper, MAX_PROBES, |size| {
@@ -613,6 +630,61 @@ mod tests {
         let (res, sent) = simulate(MIN_MTU_V4, 1500, path);
         assert_eq!(res, Ok((1400, true)));
         assert!(sent.len() as u32 <= MAX_PROBES, "{sent:?}");
+        // every silent size is confirmed by a second probe before it counts
+        for s in sent.iter().filter(|s| **s > 1400) {
+            assert_eq!(sent.iter().filter(|x| *x == s).count(), 2, "{s}: {sent:?}");
+        }
+
+        // worst cases: every bisection step a black hole, all within budget
+        for (upper, pmtu) in [(1500u16, 577u16), (9000, 577), (9000, 8999)] {
+            let path = |s: u16| {
+                if s <= pmtu {
+                    ProbeResult::Reply
+                } else {
+                    ProbeResult::Timeout
+                }
+            };
+            let (res, sent) = simulate(MIN_MTU_V4, upper, path);
+            assert_eq!(res, Ok((pmtu, true)), "{upper}/{pmtu}: {sent:?}");
+        }
+    }
+
+    /// A path with MTU `pmtu` that loses the first probe of size `lost`.
+    fn lossy_path(pmtu: u16, lost: u16) -> impl FnMut(u16) -> ProbeResult {
+        let mut dropped: bool = false;
+        move |s: u16| {
+            if s == lost && !dropped {
+                dropped = true;
+                ProbeResult::Timeout
+            } else if s <= pmtu {
+                ProbeResult::Reply
+            } else {
+                ProbeResult::TooBig(None)
+            }
+        }
+    }
+
+    #[test]
+    fn search_retries_a_single_lost_probe() {
+        // the upper bound itself: one retry, no black hole
+        let (res, sent) = simulate(MIN_MTU_V4, 1500, lossy_path(1500, 1500));
+        assert_eq!(res, Ok((1500, false)));
+        assert_eq!(sent, vec![1500, 1500]);
+
+        // mid-bisection: the lost size still counts as good
+        let (res, sent) = simulate(MIN_MTU_V4, 1500, lossy_path(1400, 1384));
+        assert_eq!(res, Ok((1400, false)), "{sent:?}");
+        assert_eq!(sent.iter().filter(|s| **s == 1384).count(), 2, "{sent:?}");
+
+        // a lost floor probe is not "the target doesn't answer"
+        let (res, sent) = simulate(MIN_MTU_V4, 1500, lossy_path(1000, MIN_MTU_V4));
+        assert_eq!(res, Ok((1000, false)), "{sent:?}");
+        assert_eq!(&sent[..3], &[1500, MIN_MTU_V4, MIN_MTU_V4]);
+
+        // a failure confirmed on the retry is an ordinary failure, not a black hole
+        let (res, sent) = simulate(MIN_MTU_V4, 1500, lossy_path(1400, 1500));
+        assert_eq!(res, Ok((1400, false)), "{sent:?}");
+        assert_eq!(&sent[..2], &[1500, 1500]);
     }
 
     #[test]
@@ -665,7 +737,7 @@ mod tests {
     fn search_errors() {
         let (res, sent) = simulate(MIN_MTU_V4, 1500, |_| ProbeResult::Timeout);
         assert_eq!(res, Err(TIMEOUT.to_string()), "silent target");
-        assert_eq!(sent, vec![1500, MIN_MTU_V4]);
+        assert_eq!(sent, vec![1500, 1500, MIN_MTU_V4, MIN_MTU_V4]);
         let (res, _) = simulate(MIN_MTU_V4, 1500, |_| ProbeResult::TooBig(None));
         assert_eq!(res, Err(ERR_PMTU_FLOOR.to_string()));
         // the floor's own verdict decides the error, not an earlier silence
@@ -678,7 +750,7 @@ mod tests {
         };
         let (res, sent) = simulate(MIN_MTU_V4, 1500, path);
         assert_eq!(res, Err(ERR_PMTU_FLOOR.to_string()));
-        assert_eq!(sent, vec![1500, MIN_MTU_V4]);
+        assert_eq!(sent, vec![1500, 1500, MIN_MTU_V4]);
         let (res, _) = simulate(MIN_MTU_V4, 1500, |_| ProbeResult::Unreachable);
         assert_eq!(res, Err(ERR_UNREACH.to_string()));
         let res = search(MIN_MTU_V4, 1500, MAX_PROBES, |_| Err("boom".to_string()));

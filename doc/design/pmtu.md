@@ -85,16 +85,27 @@ and ends in either a definite answer or a hard error:
    (`Even the minimum MTU is too big`).
 4. **Bisect** between `good` and `bad` until they are adjacent.
 
-A probe that gets **no answer at all** while smaller ones do marks the
-result as a **PMTUD black hole**: some router drops DF packets above a
+**Silence is confirmed before it counts.** A `Timeout` is re-probed once at
+the same size; only a second timeout marks the size failed. A reply (or
+`TooBig`) on the retry is taken at face value and the first silence is
+forgotten. Without this, one ordinary lost probe or reply — say the first
+1500-byte probe on a clean 1500 path — would mark that size `bad` for
+good, and the bisection would end at `1499 (PMTUD black hole)`; a lost
+floor probe would turn into a bogus `timeout` error.
+
+A size that gets **no answer at all** (twice) while smaller ones do marks
+the result as a **PMTUD black hole**: some router drops DF packets above a
 size without sending the ICMP error. The search still converges via
-bisection, at the cost of one timeout per failed size, and the info line
+bisection, at the cost of two timeouts per failed size, and the info line
 says so: `1400 (PMTUD black hole)`.
 
-`MAX_PROBES` (16) bounds the whole run: bisecting 576..1500 needs about ten
-probes; router hints need two or three. The per-probe timeout is
-`PMTU_PROBE_TIMEOUT` (1 s, `structs.rs`), shorter than the 3 s the other
-Enter tasks get, because a black-hole bisection pays it several times.
+`MAX_PROBES` (32) bounds the whole run: bisecting 576..1500 needs about ten
+probes and router hints two or three, but a black-hole bisection pays two
+probes per failed size — up to ~23 for 576..1500, ~31 for a 9000-byte
+jumbo upper bound. The per-probe timeout is `PMTU_PROBE_TIMEOUT` (1 s,
+`structs.rs`), shorter than the 3 s the other Enter tasks get, because a
+black-hole bisection pays it many times (a typical 1500 → 1400 black hole
+takes about ten seconds of timeouts; the worst case about twenty).
 
 ## Result and display
 
@@ -133,8 +144,10 @@ replies, Fragmentation Needed with and without a next-hop MTU, Packet Too
 Big, unreachable, foreign and stale probes, errors quoting another
 target's probe with the same identifier and sequence, truncated datagrams)
 and the
-search against simulated paths (router hint, no hint, black hole, bogus
-hints, IPv6 floor, silent target, broken floor, socket error, probe budget).
+search against simulated paths (router hint, no hint, black hole incl.
+worst-case budgets, a single lost probe at the upper bound / mid-bisection
+/ floor, bogus hints, IPv6 floor, silent target, broken floor, socket
+error, probe budget).
 The wire path itself needs raw sockets and a real network, so run
 `mping` on a target behind a known small-MTU link (a PPPoE or tunnel
 uplink is the classic 1492 / 1280 case) and press Enter.
