@@ -300,8 +300,9 @@ impl MessageBuffer {
     }
 
     /// Convert all messages to strings without timestamps.
+    /// (Not `m.to_string()`: that resolves to the timestamped `Display` impl.)
     pub fn to_strings(&self) -> Vec<String> {
-        self.with(|msgs| msgs.iter().map(|m| m.to_string()).collect())
+        self.with(|msgs| msgs.iter().map(|m| m.msg.clone()).collect())
     }
 
     /// Convert all messages to timestamped strings.
@@ -414,5 +415,15 @@ mod tests {
         b.msg = "b".into(); // same timestamp and level, different text
         assert_ne!(a, b);
         assert_ne!(a.cmp(&b), Ordering::Equal, "Ord must not call unequal messages Equal");
+    }
+
+    #[test]
+    fn to_strings_has_no_timestamp_or_level() {
+        let buf = MessageBuffer::new(4, LogLevel::Critical);
+        buf.push("hello");
+        buf.push_level(LogLevel::Warn, "careful");
+        assert_eq!(buf.to_strings(), vec!["hello", "careful"]);
+        assert_eq!(Logger::messages(&buf), buf.to_strings());
+        assert_ne!(buf.to_strings(), buf.to_timestamped());
     }
 }
