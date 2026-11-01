@@ -385,6 +385,7 @@ pub(crate) fn format_add_summary(outcome: &AddOutcome, paused: bool) -> Text<'st
     let resolved = outcome.collected.resolved.len();
     let unresolved = outcome.collected.unresolved.len();
     let excluded = outcome.collected.excluded.len();
+    let no_client = outcome.unsupported.len();
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -396,6 +397,7 @@ pub(crate) fn format_add_summary(outcome: &AddOutcome, paused: bool) -> Text<'st
     push_count(&mut header, SUMMARY_RESOLVED, resolved, Color::Cyan);
     push_count(&mut header, SUMMARY_UNRESOLVED, unresolved, Color::LightRed);
     push_count(&mut header, SUMMARY_EXCLUDED, excluded, Color::DarkGray);
+    push_count(&mut header, SUMMARY_UNSUPPORTED, no_client, Color::LightRed);
     if header.is_empty() {
         lines.push(Line::from(Span::styled(
             INPUT_NOTHING,
@@ -424,14 +426,14 @@ pub(crate) fn format_add_summary(outcome: &AddOutcome, paused: bool) -> Text<'st
         lines.push(section_line(SUMMARY_ADDED, &entries, Color::Green));
     }
     if skipped > 0 {
-        // Reconstruct the duplicates list from collected.addrs minus added.
+        // Reconstruct the duplicates list from collected.addrs minus added/unsupported.
         let added_set: std::collections::HashSet<IpAddr> =
             outcome.added.iter().map(|t| t.addr).collect();
         let dupes: Vec<String> = outcome
             .collected
             .addrs
             .iter()
-            .filter(|ip| !added_set.contains(*ip))
+            .filter(|ip| !added_set.contains(*ip) && !outcome.unsupported.contains(*ip))
             .map(IpAddr::to_string)
             .collect();
         if !dupes.is_empty() {
@@ -450,6 +452,10 @@ pub(crate) fn format_add_summary(outcome: &AddOutcome, paused: bool) -> Text<'st
     if unresolved > 0 {
         let entries: Vec<String> = outcome.collected.unresolved.iter().cloned().collect();
         lines.push(section_line(SUMMARY_UNRESOLVED, &entries, Color::LightRed));
+    }
+    if no_client > 0 {
+        let entries: Vec<String> = outcome.unsupported.iter().map(IpAddr::to_string).collect();
+        lines.push(section_line(SUMMARY_UNSUPPORTED, &entries, Color::LightRed));
     }
 
     // Trailing blank + close hint.
@@ -490,4 +496,30 @@ fn section_line(label: &'static str, entries: &[String], colour: Color) -> Line<
         Span::styled(format!("  {label}: "), Style::new().fg(colour)),
         Span::raw(body),
     ])
+}
+
+/* ===== tests ===== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_lines(text: &Text) -> Vec<String> {
+        text.lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn summary_reports_unsupported_not_as_duplicates() {
+        let v6: IpAddr = "2001:db8::1".parse().unwrap();
+        let mut outcome = AddOutcome::default();
+        outcome.collected.addrs = vec![v6];
+        outcome.unsupported = vec![v6];
+        let lines = to_lines(&format_add_summary(&outcome, false));
+        assert_eq!(lines[0], format!("{SUMMARY_UNSUPPORTED}: 1"));
+        assert_eq!(lines[1], format!("  {SUMMARY_UNSUPPORTED}: {v6}"));
+        assert!(!lines.iter().any(|l| l.contains(SUMMARY_SKIPPED)));
+    }
 }

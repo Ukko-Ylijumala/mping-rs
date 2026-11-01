@@ -18,6 +18,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
     future::Future,
+    io::ErrorKind::PermissionDenied,
     net::IpAddr,
     sync::{
         Arc,
@@ -126,7 +127,10 @@ impl AppState {
     - set up [surge_ping::Client] instances for IPv4 and IPv6
     - add provided ping targets (if any)
 
-    Returns an error if client creation fails.
+    Returns an error if IPv4 client creation fails, or if IPv6 client creation
+    fails for lack of permissions. Any other IPv6 failure (e.g. a kernel booted
+    with `ipv6.disable=1`) only logs a warning and leaves [Self::c_v6] at `None`;
+    [Self::add_targets] then skips IPv6 targets.
 
     NOTE: sharing a client is (async) safe and allows socket reuse.
     */
@@ -144,7 +148,12 @@ impl AppState {
         self.c_v6 = {
             match Client::new(&Config::builder().kind(ICMP::V6).build()) {
                 Ok(c) => Arc::new(c).into(),
-                Err(e) => return Err(nice_permission_error(&e, 6)),
+                Err(e) if e.kind() == PermissionDenied => return Err(nice_permission_error(&e, 6)),
+                Err(e) => {
+                    self.logger
+                        .warn(format!("{ERR_CLIENT}6: {e}; {WARN_NO_V6}"));
+                    None
+                }
             }
         };
 
@@ -156,6 +165,14 @@ impl AppState {
     /// The number of ping targets in the application state.
     pub fn len(&self) -> usize {
         self.targets.read().len()
+    }
+
+    /// The ICMP client for the address family of `addr`, if one could be created.
+    pub fn client_for(&self, addr: &IpAddr) -> Option<&Arc<Client>> {
+        match addr {
+            IpAddr::V4(_) => self.c_v4.as_ref(),
+            IpAddr::V6(_) => self.c_v6.as_ref(),
+        }
     }
 
     /// Execute/dispatch a [Command] sent from the UI.
@@ -243,19 +260,21 @@ impl AppState {
 
     /**
     Add new ping targets to the application state. Skips any whose IP is already
-    being pinged. Sets hostnames from [Self::resolved] for the ones that survive.
+    being pinged, or whose address family has no ICMP client (see [Self::build]).
+    Sets hostnames from [Self::resolved] for the ones that survive.
 
     Returns a tuple of:
     - the [Arc]'d handles to the newly-added targets (caller spawns their ping
       loops, see [crate::pinger::spawn_ping_loops]),
-    - the number of duplicate targets that were skipped.
+    - the number of duplicate targets that were skipped,
+    - the addresses skipped for lack of a client for their address family.
 
     NOTE: locks `targets` for writing and `resolved` for reading.
     */
     pub fn add_targets<I: IntoIterator<Item = PingTarget>>(
         &self,
         targets: I,
-    ) -> (Vec<Arc<PingTarget>>, usize) {
+    ) -> (Vec<Arc<PingTarget>>, usize, Vec<IpAddr>) {
         let mut tgts = self.targets.write();
         // grows as we add, so it catches duplicates within `targets` too (O(1) each)
         let mut existing: HashSet<IpAddr> = tgts.iter().map(|t| t.addr).collect();
@@ -264,8 +283,11 @@ impl AppState {
 
         let mut added: Vec<Arc<PingTarget>> = Vec::new();
         let mut skipped: usize = 0;
+        let mut unsupported: Vec<IpAddr> = Vec::new();
         for t in targets {
-            if existing.insert(t.addr) {
+            if self.client_for(&t.addr).is_none() {
+                unsupported.push(t.addr);
+            } else if existing.insert(t.addr) {
                 if let Some(name) = names.get_name(&t.addr) {
                     t.set_name(name);
                 }
@@ -288,7 +310,11 @@ impl AppState {
             self.logger
                 .notice(format!("skipped {skipped} duplicate target(s)"));
         }
-        (added, skipped)
+        if !unsupported.is_empty() {
+            self.logger
+                .warn(templater!(WARN_NO_CLIENT, unsupported.len()));
+        }
+        (added, skipped, unsupported)
     }
 
     /// Pause pinging for the target at the specified index.

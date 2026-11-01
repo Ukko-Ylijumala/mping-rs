@@ -85,6 +85,7 @@ pub static SUMMARY_SKIPPED: &str = "skipped (already pinged)";
 pub static SUMMARY_RESOLVED: &str = "resolved";
 pub static SUMMARY_UNRESOLVED: &str = "unresolved";
 pub static SUMMARY_EXCLUDED: &str = "excluded";
+pub static SUMMARY_UNSUPPORTED: &str = "unsupported (no ICMP client)";
 pub static SUMMARY_AND_MORE: &str = "…and {} more";
 
 // tui.rs
@@ -235,6 +236,8 @@ pub static ERR_CAPS_MACOS: &str = "Run it with sudo - raw ICMP sockets on macOS 
 pub static INFO_STATE_INIT: &str = "application state initialized";
 pub static INFO_PERF: &str = "performance mode {}";
 pub static INFO_NEW: &str = "{} new target(s) added ({} -> {})";
+pub static WARN_NO_V6: &str = "IPv6 targets will be skipped";
+pub static WARN_NO_CLIENT: &str = "skipped {} target(s): no ICMP client for their IP version";
 pub static INFO_PING: &str = "pinging for '{}' {}";
 pub static INFO_P_ALL: &str = "pausing all targets";
 pub static INFO_R_ALL: &str = "resuming all targets";
