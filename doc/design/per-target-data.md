@@ -164,7 +164,9 @@ The Loss column masks probes still in flight without hiding real loss:
 undo `sent` instead), so `sent - recv - lost` is exactly the number in
 flight. While the latest probe is within its timeout `loss()` is
 `lost / sent`; past it nothing can still be in flight, so it falls back to
-`(sent - recv) / sent`. The Loss sort key uses `lost / sent` too. Basing
+`(sent - recv) / sent`. Both the column and its sort key go through the
+same `loss_fraction` helper, so they never disagree (e.g. for a stopped
+target whose last probes never produced a result). Basing
 this on time alone (the old "one missing reply and the latest probe is
 young" rule) was always true at the default 1 s interval / 2 s timeout, so
 a single genuine loss read as 0.0% forever.
