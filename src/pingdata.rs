@@ -10,7 +10,9 @@ use crate::{
     strings::*,
     structs::QueryResponse,
     traceroute::{HopKind, TraceEnd, TraceHop},
-    utils::{HistogramBucket, human_duration, make_histogram_buckets, reverse_name},
+    utils::{
+        HistogramBucket, human_duration, make_histogram_buckets, reverse_name, truncate_chars,
+    },
 };
 use hickory_resolver::{Resolver, name_server::TokioConnectionProvider};
 use itertools::Itertools;
@@ -93,15 +95,25 @@ impl fmt::Display for PingStatus {
 pub(crate) struct PingTargetInner {
     pub sent: u64,
     pub recv: u64,
+    /**
+    Probes that timed out. Kept apart from `sent - recv`, which also counts
+    probes still in flight: only this lets the loss display tell a genuine
+    loss from a reply that simply hasn't arrived yet.
+    */
+    pub lost: u64,
     /// RTTs in microseconds (rolling window)
     pub rtts: LatencyWindow,
     /// Detailed history of recent sent/received packets
     pub recent: PacketHistory,
     /**
-    Raw last known status from pinging. Can only be one of:
+    Raw last known status from pinging. Set by [PingTarget::update_stats] to:
     - [PingStatus::Ok]
     - [PingStatus::Timeout]
     - [PingStatus::Error]
+
+    and by the pause/resume/stop/reset paths to [PingStatus::Paused],
+    [PingStatus::Resuming], [PingStatus::Stopped] or [PingStatus::None].
+    Results for probes outside the current monitored epoch don't overwrite it.
 
     For derived statuses like [PingStatus::Laggy], [PingStatus::Lossy],
     etc, use [PingTarget::effective_status] instead.
@@ -300,7 +312,7 @@ impl PingTarget {
             return; // probe predates the last stats reset
         }
         let mut ttl_update = TtlUpdate::None;
-        inner.raw_status = match res {
+        let status: PingStatus = match res {
             Ok((pkt, dur)) => {
                 inner.recv += 1;
                 inner.rtts.push(dur.as_micros() as u32);
@@ -320,6 +332,7 @@ impl PingTarget {
             }
             Err(e) => match e {
                 SurgeError::Timeout { .. } => {
+                    inner.lost += 1;
                     inner.tracker.record_miss(rec.sent);
                     PingStatus::Timeout
                 }
@@ -340,6 +353,15 @@ impl PingTarget {
                 }
             },
         };
+        /*
+        Counters and history take every result, but the status only follows
+        probes of the current monitored epoch: one still in flight across a
+        pause/stop (or sent before the last resume) would otherwise replace
+        `Paused` / `Stopped` / `Resuming` with a stale `Ok` / `Timeout`.
+        */
+        if inner.tracker.is_current(rec.sent) {
+            inner.raw_status = status;
+        }
         inner.recent.push(rec);
         drop(inner);
 
@@ -484,10 +506,11 @@ impl PingTarget {
             .map(|a| a.to_string().len())
             .max()
             .unwrap_or(1);
+        // in chars, not bytes: `{:<w$}` pads by char count, and PTR names may be non-ASCII
         let name_w: usize = trace
             .hops
             .iter()
-            .map(|h| h.name_str().len())
+            .map(|h| h.name_str().chars().count())
             .max()
             .unwrap_or(1)
             .min(TRACE_NAME_MAX);
@@ -504,7 +527,7 @@ impl PingTarget {
                 .map_or_else(String::new, |d| format!("{:>9.3} ms", d.as_secs_f64() * 1e3));
             let addr: String = h.hop.addr.map_or_else(String::new, |a| a.to_string());
             let mut name: String = h.name_str().to_string();
-            name.truncate(TRACE_NAME_MAX);
+            truncate_chars(&mut name, TRACE_NAME_MAX);
             let fixed: String = format!("{ttl}{rtt}  {addr:<addr_w$}  {name:<name_w$}  ");
             let asn: Span<'static> = match &h.asinfo {
                 QueryResponse::As(a) => Span::raw(a.short()).cyan(),
@@ -625,6 +648,7 @@ impl PingTarget {
         let mut data = self.data.write();
         data.sent = 0;
         data.recv = 0;
+        data.lost = 0;
         data.rtts.clear();
         data.recent.clear();
         data.raw_status = PingStatus::None;
@@ -741,13 +765,13 @@ impl PingTarget {
     /**
     Whether this target is (currently) considered unreachable.
 
-    NOTE: a stopped target is never "unreachable" in this context.
+    NOTE: a stopped or paused target is never "unreachable" in this context.
 
     NOTE: may lock the inner `data` for reading.
     */
     #[inline]
     pub fn is_unreachable(&self) -> bool {
-        if self.is_stopped() {
+        if self.is_stopped() || self.is_paused() {
             return false;
         }
         self.data.read().is_unreachable()
@@ -1747,12 +1771,15 @@ microseconds and displayed as milliseconds.
 pub(crate) struct StatsSnapshot {
     pub sent: u64,
     pub recv: u64,
+    /// Probes that timed out (`sent - recv - lost` are still in flight).
+    pub lost: u64,
     pub min: Option<u32>,
     pub max: Option<u32>,
     pub mean: Option<f64>,
     pub last: Option<u32>,
     pub stdev: Option<f64>,
-    /// Current effective status of the target. DOES NOT contain "paused" or "stopped" states.
+    /// Current effective status of the target, `Stopped` / `Paused` layered on top
+    /// as in [PingTarget::effective_status].
     pub status: PingStatus,
     /// History of recent sent/received packets. Only built by
     /// [StatsSnapshot::new_from_detailed] - it's ~6 passes over the history.
@@ -1788,16 +1815,25 @@ impl StatsSnapshot {
             Ok((mean, mi, ma)) => (Some(mean), Some(mi), Some(ma)),
             Err(_) => (None, None, None),
         };
+        // the outer flags are atomics: [PingTarget::effective_status] would re-take `data`
+        let status: PingStatus = if tgt.is_stopped() {
+            PingStatus::Stopped
+        } else if tgt.is_paused() {
+            PingStatus::Paused
+        } else {
+            data.effective_status()
+        };
         Self {
             when: now,
             sent: data.sent,
             recv: data.recv,
+            lost: data.lost,
             mean,
             min,
             max,
             last: data.rtts.last().ok(),
             stdev: data.rtts.stdev().ok(),
-            status: data.effective_status(),
+            status,
             hist: detailed.then(|| HistorySnapshot::new_from(&data.recent)),
             latest_seq: data.last_seq,
             latest_sent: data.last_sent.unwrap_or(now),
@@ -1805,14 +1841,24 @@ impl StatsSnapshot {
         }
     }
 
-    /// Packet loss percentage as a float `[0.0 .. 1.0]`.
+    /**
+    Packet loss percentage as a float `[0.0 .. 1.0]`.
+
+    Probes still in flight are not losses: only timed-out ones count while
+    the latest probe is within its timeout. Past that nothing can still be
+    in flight, so every probe without a reply counts.
+    */
     pub fn loss(&self) -> f64 {
         if self.sent == 0 {
-            0.0
+            return 0.0;
+        }
+        let lost: u64 = if self.is_latest_inflight() {
+            self.lost
         } else {
             // Saturating: a stats reset racing an in-flight reply can leave recv > sent.
-            self.sent.saturating_sub(self.recv) as f64 / self.sent as f64
-        }
+            self.sent.saturating_sub(self.recv).max(self.lost)
+        };
+        lost.min(self.sent) as f64 / self.sent as f64
     }
 
     /**
@@ -1826,14 +1872,11 @@ impl StatsSnapshot {
         self.timeout > self.when.duration_since(self.latest_sent)
     }
 
-    /// Packet loss as formatted string.
+    /// Packet loss as formatted string. In-flight probes are masked, see [Self::loss].
     #[inline]
     pub fn loss_str(&self) -> String {
         if self.sent == 0 {
             MISSING.to_string()
-        } else if (self.sent.saturating_sub(self.recv) == 1) && self.is_latest_inflight() {
-            // catch the common case of one receive missing (still in transit)
-            "0.0%".to_string()
         } else {
             format!("{:.1}%", 1e2 * self.loss())
         }
@@ -2082,6 +2125,119 @@ mod target_tests {
         // a new run discards the old one
         assert!(tgt.trace_begin());
         assert!(tgt.trace().hops.is_empty());
+    }
+
+    #[test]
+    fn trace_lines_truncate_non_ascii_names() {
+        let tgt = PingTarget::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 60, 10, false);
+        assert!(tgt.trace_begin());
+        for ttl in 1..=2 {
+            tgt.trace_push(TraceHop {
+                ttl,
+                addr: Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, ttl))),
+                rtt: Some(Duration::from_millis(1)),
+                kind: HopKind::Router,
+            });
+        }
+        // a multi-byte char straddles byte TRACE_NAME_MAX: byte truncation would panic
+        let long: String = format!("{}ü.example", "a".repeat(TRACE_NAME_MAX - 1));
+        tgt.trace_annotate(1, QueryResponse::Text(long), QueryResponse::Empty);
+        tgt.trace_annotate(2, QueryResponse::Text("ä.lan".into()), QueryResponse::Empty);
+
+        let text: Vec<String> = tgt.trace_lines().iter().map(|l| l.to_string()).collect();
+        let want: String = format!("{}ü", "a".repeat(TRACE_NAME_MAX - 1));
+        assert!(text[3].contains(&want), "{}", text[3]);
+        assert!(!text[3].contains(".example"), "{}", text[3]);
+        // the AS column starts at the same char offset on both lines
+        let as_col = |s: &str| s.chars().count() - 1; // both end in the one-char "-"
+        assert_eq!(as_col(&text[3]), as_col(&text[4]), "{text:?}");
+
+        let mut s: String = "äöü".into();
+        truncate_chars(&mut s, 2);
+        assert_eq!(s, "äö");
+        truncate_chars(&mut s, 5);
+        assert_eq!(s, "äö");
+    }
+
+    #[test]
+    fn stale_results_keep_paused_and_stopped_status() {
+        let seq = PingSequence(0);
+        let timeout = || SurgeError::Timeout { seq };
+        let wait: Duration = Duration::from_secs(2);
+        let status = |t: &Arc<PingTarget>| StatsSnapshot::new_from(t, wait).status;
+
+        // a target that never answers, past the unreachable threshold
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let tgt = Arc::new(PingTarget::new(addr, 60, 100, false));
+        for seq in 0..=DEFAULT_WIN as u16 {
+            tgt.data.write().sent += 1;
+            block_on(tgt.update_stats(Err(timeout()), PacketRecord::new(seq)));
+        }
+        assert!(tgt.is_unreachable());
+        assert_eq!(status(&tgt), PingStatus::NotReachable);
+
+        // a probe in flight across the pause times out afterwards
+        let inflight: PacketRecord = PacketRecord::new(99);
+        tgt.pause();
+        tgt.data.write().sent += 1;
+        block_on(tgt.update_stats(Err(timeout()), inflight.clone()));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Paused);
+        assert_eq!(status(&tgt), PingStatus::Paused);
+        assert!(!tgt.is_unreachable(), "paused: not removable");
+        assert!(!tgt.data.read().is_unreachable());
+
+        // ...or after the resume: still not allowed to clobber `Resuming`
+        tgt.resume();
+        block_on(tgt.update_stats(Err(timeout()), inflight.clone()));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Resuming);
+
+        // fresh probes drive the status again
+        thread::sleep(Duration::from_millis(1));
+        block_on(tgt.update_stats(Err(timeout()), PacketRecord::new(100)));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Timeout);
+
+        // stopped: a late result neither changes the status nor its display
+        let inflight: PacketRecord = PacketRecord::new(101);
+        tgt.stop();
+        block_on(tgt.update_stats(Err(timeout()), inflight));
+        assert_eq!(tgt.data.read().raw_status, PingStatus::Stopped);
+        assert_eq!(status(&tgt), PingStatus::Stopped);
+        assert!(!tgt.is_unreachable());
+    }
+
+    #[test]
+    fn loss_masks_only_in_flight_probes() {
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let tgt = Arc::new(PingTarget::new(addr, 60, 10, false));
+        let wait: Duration = Duration::from_secs(2);
+        let set = |sent: u64, recv: u64, lost: u64, ago: Duration| {
+            let mut d = tgt.data.write();
+            (d.sent, d.recv, d.lost) = (sent, recv, lost);
+            d.last_sent = Some(Instant::now() - ago);
+        };
+        let loss = || StatsSnapshot::new_from(&tgt, wait).loss_str();
+
+        assert_eq!(loss(), MISSING);
+        // one genuine loss long ago, the latest probe just sent
+        set(1000, 999, 1, Duration::ZERO);
+        assert_eq!(loss(), "0.1%");
+        // the missing reply is just in flight
+        set(1000, 999, 0, Duration::ZERO);
+        assert_eq!(loss(), "0.0%");
+        // perf mode: several in flight at once are all masked
+        set(1000, 997, 1, Duration::ZERO);
+        assert_eq!(loss(), "0.1%");
+        // past the timeout nothing is in flight: unanswered means lost
+        set(1000, 997, 1, wait * 2);
+        assert_eq!(loss(), "0.3%");
+
+        // a timeout result counts as lost, a reset clears it
+        tgt.data.write().sent += 1;
+        let seq = PingSequence(0);
+        block_on(tgt.update_stats(Err(SurgeError::Timeout { seq }), PacketRecord::new(0)));
+        assert_eq!(tgt.data.read().lost, 2);
+        tgt.reset_stats();
+        assert_eq!(tgt.data.read().lost, 0);
     }
 
     #[test]

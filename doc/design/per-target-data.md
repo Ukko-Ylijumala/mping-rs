@@ -22,9 +22,11 @@ PingTarget (immutable shape)
 └── data: RwLock<PingTargetInner>
         ├── sent: u64
         ├── recv: u64
+        ├── lost: u64              ── timed-out probes (sent - recv - lost = in flight)
         ├── rtts: LatencyWindow    ── rolling RTT window (µs), see latency-window.md
         ├── recent: PacketHistory  ── short detailed history (default 100 packets)
-        ├── raw_status: PingStatus ── only Ok / Timeout / Error(_) live here
+        ├── raw_status: PingStatus ── Ok / Timeout / Error(_) from results;
+        │                             Paused / Resuming / Stopped / None from controls
         ├── last_seq: u16          ── most recent sent sequence number
         ├── last_sent: Option<Instant>
         └── tracker: EventTracker  ── outage accounting + event timeline
@@ -70,12 +72,21 @@ tracker alike.
 
 ## Three tiers of status
 
-The displayed status is computed in three layers. The raw status stored in
-`PingTargetInner.raw_status` only ever takes one of:
+The displayed status is computed in three layers. `update_stats` sets the
+raw status stored in `PingTargetInner.raw_status` to one of:
 
 - `PingStatus::Ok` — last reply received
 - `PingStatus::Timeout` — last call returned `SurgeError::Timeout`
 - `PingStatus::Error(String)` — any other surge error
+
+The pause / resume / stop / reset paths set it to `Paused`, `Resuming`,
+`Stopped` or `None`. `update_stats` only stores a result's status when the
+probe belongs to the current monitored epoch (`EventTracker::is_current`:
+not paused/stopped, sent after the last resume or reset; see
+[outage-tracking](outage-tracking.md)). A probe still in flight when the
+target was paused or stopped therefore can't replace `Paused` / `Stopped`
+(or, after a resume, `Resuming`) with a stale `Timeout` / `Ok`; its
+counters and history entry are still recorded.
 
 The **effective status** is derived from `raw_status` plus recent history
 analysis in `PingTargetInner::effective_status` (`pingdata.rs:148`):
@@ -112,7 +123,10 @@ All four constants live in `pingdata.rs:30-37` if you need to tune them.
 
 `Error` / `Paused` / `Resuming` raw statuses are explicitly *not* treated as
 unreachable (we don't know that the network is broken, only that something
-about the local socket call failed, or the user paused us).
+about the local socket call failed, or the user paused us). The outer
+`PingTarget::is_unreachable` additionally returns false for any stopped or
+paused target, so `Ctrl-Delete` never removes a target the user merely
+paused.
 
 Unreachable targets get a distinctive `light_red` row style in the TUI and
 are the target of `Ctrl-Delete` (`Command::RemoveAllUnreach`).
@@ -140,6 +154,20 @@ graphing / min / max / stdev is the separate `LatencyWindow` — see
 `StatsSnapshot::new_from(&tgt, timeout)` (called from `format_row` at
 `main.rs:58`) grabs a single short read lock and copies out the data the
 renderer needs: sent/recv counts, latency window summary, effective status.
+The snapshot's `status` layers `Stopped` / `Paused` over the inner effective
+status just like `PingTarget::effective_status`, reading the outer atomics
+directly (the outer method would re-take the `data` lock already held), so
+the Status column always agrees with the row's paused/stopped styling.
+
+The Loss column masks probes still in flight without hiding real loss:
+`update_stats` counts each `SurgeError::Timeout` in `lost` (other errors
+undo `sent` instead), so `sent - recv - lost` is exactly the number in
+flight. While the latest probe is within its timeout `loss()` is
+`lost / sent`; past it nothing can still be in flight, so it falls back to
+`(sent - recv) / sent`. The Loss sort key uses `lost / sent` too. Basing
+this on time alone (the old "one missing reply and the latest probe is
+young" rule) was always true at the default 1 s interval / 2 s timeout, so
+a single genuine loss read as 0.0% forever.
 The `HistorySnapshot` (sequence gaps, reordering, detailed-window stats) is
 several passes over the detailed history and nothing on the render path
 reads it, so it's only built by `StatsSnapshot::new_from_detailed`;

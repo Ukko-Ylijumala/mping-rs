@@ -135,9 +135,15 @@ perf-mode completions. [MissedTickBehavior::Skip] drops ticks missed during
 a stall instead of bursting catch-up pings.
 */
 pub(crate) async fn ping_loop(tgt: Arc<PingTarget>, app: Arc<AppState>) {
-    let client = match tgt.addr {
-        IpAddr::V4(_) => app.c_v4.as_ref().expect(ERR_V4_MISSING),
-        IpAddr::V6(_) => app.c_v6.as_ref().expect(ERR_V6_MISSING),
+    // `add_targets` never admits a target without a client; don't panic the task if one slips by.
+    let Some(client) = app.client_for(&tgt.addr) else {
+        let missing: &str = match tgt.addr {
+            IpAddr::V4(_) => ERR_V4_MISSING,
+            IpAddr::V6(_) => ERR_V6_MISSING,
+        };
+        app.logger.error(format!("{missing}: {tgt}"));
+        tgt.stop();
+        return;
     };
     let id: PingIdentifier = PingIdentifier(random());
     let mut ticker: Interval = time::interval(app.defaults.interval);
@@ -206,8 +212,9 @@ pub(crate) fn spawn_ping_loops(app: &Arc<AppState>, new_targets: &[Arc<PingTarge
 
 /**
 Outcome of a single "add target(s)" submission: the raw [CollectedTargets] from
-the parse+resolve pipeline plus the actual handles to newly-added targets and
-the count of duplicates that were skipped.
+the parse+resolve pipeline plus the actual handles to newly-added targets, the
+count of duplicates that were skipped, and the addresses skipped because their
+IP version has no ICMP client.
 
 Used by the add-target dialog to populate its post-submit feedback area.
 */
@@ -216,6 +223,7 @@ pub(crate) struct AddOutcome {
     pub collected: CollectedTargets,
     pub added: Vec<Arc<PingTarget>>,
     pub skipped: usize,
+    pub unsupported: Vec<IpAddr>,
 }
 
 /**
@@ -253,10 +261,15 @@ pub(crate) async fn collect_and_spawn(
         .map(|addr| PingTarget::new(*addr, app.defaults.histsize, app.defaults.detailed, paused))
         .collect();
 
-    let (added, skipped) = app.add_targets(new_targets);
+    let (added, skipped, unsupported) = app.add_targets(new_targets);
     spawn_ping_loops(app, &added);
 
-    AddOutcome { collected, added, skipped }
+    AddOutcome {
+        collected,
+        added,
+        skipped,
+        unsupported,
+    }
 }
 
 /* -------------------------------------------------------------------------- */

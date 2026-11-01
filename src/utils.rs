@@ -119,11 +119,15 @@ Parse and expand a list of space separated IPv4/v6 addresses
 
 Removes duplicates and preserves order of first occurrence.
 
+Tokens are whitespace-trimmed and empty ones skipped, so a CLI value like
+`--exclude="a, b"` (clap splits on `,` only) parses the same as in the dialog.
+
 ### Returns a tuple of:
 - Vec of parsed IP addresses
 - Set of seen IP addresses (so that the caller doesn't need to re-derive it)
-- Set of excluded IP addresses (parsed)
-- Set of strings that failed to parse
+- Set of addresses actually removed by the exclusions (a subset of the input,
+  not the whole expanded exclusion list)
+- Set of (trimmed) strings that failed to parse
 */
 pub fn parse_ip_addresses<T>(
     targets: &[String],
@@ -143,7 +147,7 @@ where
     let mut failed: HashSet<String> = HashSet::new();
 
     // Parse all targets and expand them into individual IPs
-    for target in targets {
+    for target in targets.iter().map(|t| t.trim()).filter(|t| !t.is_empty()) {
         match parse_ip_or_range(target) {
             Ok(mut ips) => {
                 if ips.len() > 1 {
@@ -153,7 +157,7 @@ where
             }
             Err(e) => {
                 logger.warn(format!("{ERR_PARSE_IP}: {e}"));
-                failed.insert(target.clone());
+                failed.insert(target.to_string());
             }
         }
     }
@@ -163,8 +167,9 @@ where
 
     // Parse exclusions and expand them into individual IPs
     let mut exclusions: HashSet<IpAddr> = HashSet::new();
+    let mut removed: HashSet<IpAddr> = HashSet::new();
     if let Some(exclude) = exclude {
-        for exc in exclude {
+        for exc in exclude.iter().map(|e| e.trim()).filter(|e| !e.is_empty()) {
             match parse_ip_or_range(exc) {
                 Ok(mut ips) => {
                     if ips.len() > 1 {
@@ -184,27 +189,24 @@ where
         // Apply exclusions if needed
         if !exclusions.is_empty() {
             // let's see if we actually exclude anything
-            let remainder: HashSet<IpAddr> = &seen - &exclusions;
-            if remainder == seen {
+            removed = &seen & &exclusions;
+            if removed.is_empty() {
                 logger.notice(WARN_NO_MATCHES);
             } else {
-                if remainder.is_empty() {
+                if removed.len() == seen.len() {
                     logger.warn(WARN_ALL_EXCLUDED);
                 } else {
-                    logger.log(format!(
-                        "{INFO_EXCLUDE}: {}",
-                        (seen.len() - remainder.len())
-                    ));
+                    logger.log(format!("{INFO_EXCLUDE}: {}", removed.len()));
                 }
                 // Exclusions are honored even when they remove everything,
                 // and `seen` must keep mirroring `all_addrs` membership.
-                all_addrs.retain(|ip: &IpAddr| !exclusions.contains(ip));
-                seen = remainder;
+                all_addrs.retain(|ip: &IpAddr| !removed.contains(ip));
+                seen.retain(|ip: &IpAddr| !removed.contains(ip));
             }
         };
     }
 
-    (all_addrs, seen, exclusions, failed)
+    (all_addrs, seen, removed, failed)
 }
 
 /* -------------------------------------------------------------------------- */
@@ -412,6 +414,17 @@ pub fn human_rate(bytes_per_sec: f64) -> String {
     }
 }
 
+/**
+Shorten `s` to at most `max` chars, cutting on a char boundary.
+[String::truncate] takes a byte index and panics mid-char, which untrusted
+non-ASCII text (e.g. IDNA-decoded PTR names) can trigger.
+*/
+pub fn truncate_chars(s: &mut String, max: usize) {
+    if let Some((i, _)) = s.char_indices().nth(max) {
+        s.truncate(i);
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 
 /// A single histogram bucket for data distribution.
@@ -459,4 +472,55 @@ pub fn make_histogram_buckets(data: Vec<f64>, bins: usize) -> Vec<HistogramBucke
             HistogramBucket { low, high, count }
         })
         .collect()
+}
+
+/* ===== tests ===== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::logging::MessageBuffer;
+
+    fn strs(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn excluded_is_only_what_was_removed() {
+        let log = MessageBuffer::default();
+        let targets = strs(&["10.0.0.1", "10.0.0.2", "1.1.1.1"]);
+        let exclude = strs(&["10.0.0.0/16"]);
+        let (addrs, seen, excluded, failed) = parse_ip_addresses(&targets, Some(&exclude), &log);
+        assert_eq!(addrs, vec![ip("1.1.1.1")]);
+        assert_eq!(seen, HashSet::from([ip("1.1.1.1")]));
+        assert_eq!(excluded, HashSet::from([ip("10.0.0.1"), ip("10.0.0.2")]));
+        assert!(failed.is_empty());
+    }
+
+    #[test]
+    fn excluded_empty_when_nothing_matches() {
+        let log = MessageBuffer::default();
+        let targets = strs(&["1.1.1.1"]);
+        let exclude = strs(&["10.0.0.0/24"]);
+        let (addrs, _, excluded, _) = parse_ip_addresses(&targets, Some(&exclude), &log);
+        assert_eq!(addrs, vec![ip("1.1.1.1")]);
+        assert!(excluded.is_empty());
+    }
+
+    #[test]
+    fn tokens_are_trimmed() {
+        let log = MessageBuffer::default();
+        // what clap yields for e.g. `--exclude="10.0.0.1, 10.0.0.2,"`
+        let targets = strs(&["10.0.0.1", " 10.0.0.2", "10.0.0.3 ", " some.name "]);
+        let exclude = strs(&["10.0.0.1", " 10.0.0.2", ""]);
+        let (addrs, seen, excluded, failed) = parse_ip_addresses(&targets, Some(&exclude), &log);
+        assert_eq!(addrs, vec![ip("10.0.0.3")]);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(excluded, HashSet::from([ip("10.0.0.1"), ip("10.0.0.2")]));
+        assert_eq!(failed, HashSet::from(["some.name".to_string()]));
+    }
 }
