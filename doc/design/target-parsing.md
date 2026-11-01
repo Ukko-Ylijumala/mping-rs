@@ -116,6 +116,15 @@ combines `--dns-servers` and `--dns-timeout` with `hickory-resolver`'s
 | set | default | custom servers + default options |
 | set | custom | custom servers + custom timeout |
 
+"System config" goes through `system_conf_or_fallback`: if
+`read_system_conf()` fails (no `/etc/resolv.conf`, or one with no
+`nameserver` lines — common in minimal containers), it logs a warning
+and falls back to `127.0.0.1` / `::1` port 53 with default options,
+like glibc does. Startup must not fail over DNS config when the targets
+are plain IPs; the warning points at `--dns-servers` for anyone who
+needs names resolved. Localhost was chosen over a public resolver so
+queries never silently go to a third party.
+
 The DNS timeout is clamped to `[1s, 10s]` (`args.rs:201-205`). The
 resolver is **also** used at runtime for PTR lookups when the user
 hits Enter on a target — see

@@ -201,6 +201,9 @@ pub static INFO_ADJUST: &str = "adjusting timeout to avoid excessive concurrent 
 pub static INFO_DNS: &str = "using system DNS configuration";
 pub static INFO_DNS_TIMEO: &str = "setting custom DNS timeout";
 pub static INFO_DNS_CUSTOM: &str = "using custom DNS server(s)";
+pub static WARN_DNS_SYSCONF: &str = "cannot read system DNS configuration";
+pub static WARN_DNS_FALLBACK: &str =
+    "falling back to localhost:53 (use --dns-servers=IP1[,IP2...] to override)";
 
 // Clap cmdline args help texts
 pub static HELP_TARGETS: &str = "Space separated list of IP addresses or ranges to monitor";
