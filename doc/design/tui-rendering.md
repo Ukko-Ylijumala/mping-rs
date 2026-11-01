@@ -103,6 +103,16 @@ have changed. When something does change:
 - A frame-size change forces a full `update()` and recomputes every area.
 - A column-width change recomputes the middle and info areas only.
 
+`maybe_update` runs inside `draw`, i.e. *after* the row data has been
+gathered against the layout's table height. So the layout is also sized
+ahead of time wherever the size is known before a draw: `main` calls
+`update()` with the terminal size right after creating the
+`TerminalGuard` (otherwise the first frame would gather zero visible rows
+and render a blank table until the next refresh), and the keyboard thread
+calls it on crossterm's `Event::Resize` and requests an immediate redraw
+(otherwise a resize would sit unrendered until the next scheduled refresh,
+and that frame would format the old viewport).
+
 ### Non-shrinking columns
 
 `update_col_widths` (`tui.rs:308`) takes the max of (header width, every

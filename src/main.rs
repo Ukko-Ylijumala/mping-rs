@@ -576,6 +576,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_signal_handler(quit_app.clone());
     let mut guard: TerminalGuard =
         TerminalGuard::new(tui.ui_interval, app.logger.clone(), quit_app)?;
+    // Size the layout before the first gather: with no table height yet, every
+    // row would be formatted as padding and the first frame would come up blank.
+    tui.layout
+        .write()
+        .update(Rect::from((Position::ORIGIN, guard.term.size()?)));
     // The tick gates how often the select! loop re-evaluates the refresh
     // deadline, so it must not be coarser than the UI refresh interval.
     let mut tick: Interval = time::interval(app.internal_tick.min(tui.ui_interval));

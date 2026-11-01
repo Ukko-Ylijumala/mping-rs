@@ -9,6 +9,7 @@ use crate::{
 };
 use tui_input::Input;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::Rect;
 use std::{io::Result, sync::Arc, time::Duration};
 
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
@@ -37,7 +38,8 @@ Crossterm key event polling helper
 */
 fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Result<bool> {
     if event::poll(Duration::from_millis(wait_ms))? {
-        if let Event::Key(e) = event::read()? {
+        let ev: Event = event::read()?;
+        if let Event::Key(e) = ev {
             let (input_visible, popup_visible) = {
                 let lo = tui.layout.read();
                 (lo.input_visible, lo.popup_visible)
@@ -257,6 +259,16 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
             }
 
             // since we're here, a key event was handled
+            Ok(true)
+        } else if let Event::Resize(w, h) = ev {
+            /*
+            Ratatui only autoresizes inside `draw`, and the row data is gathered
+            against the layout before that: update it now and redraw right away,
+            so the frame doesn't wait for the next refresh or format a stale
+            viewport. No queue drain here - that would eat keystrokes, and the
+            `Notify` coalesces a burst of resizes anyway.
+            */
+            tui.layout.write().update(Rect::new(0, 0, w, h));
             Ok(true)
         } else {
             // wasn't a key event

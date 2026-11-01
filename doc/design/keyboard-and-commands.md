@@ -109,6 +109,11 @@ the loop drains any backed-up events with `event::poll(0)`
 (`keyboard.rs:221`) so a held-down key doesn't queue dozens of redundant
 notifies.
 
+`Event::Resize(w, h)` is handled here too: it updates `AppLayout` to the
+new size and returns `Ok(true)` for an immediate redraw (no queue drain,
+which would discard keystrokes; the `Notify` coalesces resize bursts).
+See [tui-rendering](tui-rendering.md#applayout-and-maybe_update).
+
 ## Column sorting
 
 Sorting is a **physical, one-shot** reorder of the `targets` vec
