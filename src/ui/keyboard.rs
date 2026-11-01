@@ -5,10 +5,11 @@
 use crate::{
     pinger,
     structs::{AppState, Command, CmdResult},
-    ui::*,
+    ui::{tui::AppLayout, *},
 };
 use tui_input::Input;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::widgets::ListState;
 use std::{io::Result, sync::Arc, time::Duration};
 
 const SHIFT_PAGE_ROWS: u16 = 10; // rows to shift on page up/down
@@ -81,8 +82,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 (KeyCode::PageUp, m) => {
                     let mut lo = tui.layout.write();
                     if lo.popup_visible && m != KeyModifiers::SHIFT {
-                        let step: u16 = (lo.popup_usable_rows() as u16 * 2).saturating_sub(1);
-                        lo.liststate.scroll_up_by(step);
+                        scroll_popup(tui, &mut lo, false);
                     } else {
                         let step: u16 = match m {
                             KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
@@ -94,8 +94,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                 (KeyCode::PageDown, m) => {
                     let mut lo = tui.layout.write();
                     if lo.popup_visible && m != KeyModifiers::SHIFT {
-                        let step: u16 = (lo.popup_usable_rows() as u16 * 2).saturating_sub(1);
-                        lo.liststate.scroll_down_by(step);
+                        scroll_popup(tui, &mut lo, true);
                     } else {
                         let step: u16 = match m {
                             KeyModifiers::SHIFT => SHIFT_PAGE_ROWS,
@@ -176,7 +175,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                         *tui.popup_contents.write() = events_popup(name, &events);
                         let mut lo = tui.layout.write();
                         lo.popup_visible = true;
-                        lo.liststate.select(None);
+                        lo.liststate = ListState::default(); // new contents start at the top
                     }
                 }
 
@@ -191,7 +190,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                             *tui.popup_contents.write() = PopupContents::Trace(tgt);
                             let mut lo = tui.layout.write();
                             lo.popup_visible = true;
-                            lo.liststate.select(None);
+                            lo.liststate = ListState::default(); // new contents start at the top
                         }
                     }
                 }
@@ -264,6 +263,7 @@ fn key_event_poll(wait_ms: u64, app: &Arc<AppState>, tui: &Arc<TuiState>) -> Res
                         false => {
                             *tui.popup_contents.write() = PopupContents::Buffer(app.logger.clone());
                             lo.popup_visible = true;
+                            lo.liststate = ListState::default();
                         }
                         true => {
                             *tui.popup_contents.write() = PopupContents::None;
@@ -308,11 +308,38 @@ fn close_top_overlay(tui: &TuiState) -> bool {
     } else if lo.popup_visible {
         *tui.popup_contents.write() = PopupContents::None;
         lo.popup_visible = false;
-        lo.liststate.select(None);
+        lo.liststate = ListState::default(); // next popup starts at the top
     } else {
         return false;
     }
     true
+}
+
+/**
+Scroll the text popup by one page (minus a line of overlap) via the list
+offset. The selection stays `None`, so ratatui honours the offset as-is;
+scrolling by selection instead would land it at the bottom edge and skip
+most of a page on every press after the first.
+
+NOTE: lock-order - caller holds `layout`, `popup_contents` is taken after
+it, same as render.
+*/
+fn scroll_popup(tui: &TuiState, lo: &mut AppLayout, down: bool) {
+    let len: usize = tui.popup_contents.read().len();
+    let rows: usize = lo.popup_usable_rows();
+    let offset: &mut usize = lo.liststate.offset_mut();
+    *offset = popup_page_offset(*offset, rows, len, down);
+}
+
+/// New popup list offset after paging up/down, clamped so the last page stays full.
+fn popup_page_offset(offset: usize, rows: usize, len: usize, down: bool) -> usize {
+    let step: usize = rows.saturating_sub(1).max(1);
+    let max_offset: usize = len.saturating_sub(rows);
+    match down {
+        true => offset.saturating_add(step),
+        false => offset.saturating_sub(step),
+    }
+    .min(max_offset)
 }
 
 /**
@@ -426,4 +453,36 @@ fn split_dialog_input(s: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(String::from)
         .collect()
+}
+
+/* ===== tests ===== */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popup_paging_is_contiguous_and_symmetric() {
+        // 100 lines, 20 visible rows -> pages of 19 with one line of overlap
+        let (rows, len) = (20, 100);
+        let mut off: usize = 0;
+        let mut downs: Vec<usize> = Vec::new();
+        for _ in 0..6 {
+            off = popup_page_offset(off, rows, len, true);
+            downs.push(off);
+        }
+        // no skipped lines, clamped to the last full page
+        assert_eq!(downs, [19, 38, 57, 76, 80, 80]);
+        assert_eq!(popup_page_offset(80, rows, len, false), 61);
+        assert_eq!(popup_page_offset(61, rows, len, false), 42);
+        assert_eq!(popup_page_offset(5, rows, len, false), 0, "saturates");
+    }
+
+    #[test]
+    fn popup_paging_degenerate_sizes() {
+        assert_eq!(popup_page_offset(0, 20, 10, true), 0, "content fits");
+        assert_eq!(popup_page_offset(50, 20, 10, false), 0, "stale offset");
+        assert_eq!(popup_page_offset(0, 1, 5, true), 1, "one-row popup");
+        assert_eq!(popup_page_offset(0, 0, 5, true), 1, "zero-row popup");
+    }
 }

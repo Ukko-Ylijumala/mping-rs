@@ -85,7 +85,7 @@ It is synchronous — anything async-y inside individual handlers happens via
 | ↑ / ↓ | Move row selection |
 | ← / → | Move column selection |
 | Shift+↑ / Shift+↓ | Sort by selected column (asc / desc); same direction again resets to original order |
-| PageUp / PageDown | Scroll one viewport (or scroll popup if visible) |
+| PageUp / PageDown | Scroll one viewport (or scroll popup if visible: by list offset with the selection left at `None`, one line of overlap, clamped to the last full page) |
 | Shift+PageUp/Down | Scroll 10 rows |
 | Home / End | First / last row |
 | Backspace | Clear table selection and sorting |
