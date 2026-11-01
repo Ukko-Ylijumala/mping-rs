@@ -35,13 +35,16 @@ hopcount and PMTU probes, and — the new case — **other traceroutes running
 at the same time**, whose routers send Time Exceeded messages of exactly
 the same shape. The tests in `traceroute.rs` pin down the filter:
 
-- The identifier is **random per run** (`rand::random`), not a fixed
-  constant like hopcount's `0xb00b` or PMTU's `0x4d54`.
+- The identifier is **random per run** (`rand::random`), like hopcount's
+  and PMTU's.
 - The sequence number is the TTL, and an error must quote the current one.
 - An error must also quote **our target as the destination** of the
   embedded packet (`embedded_dst_v4/v6`, offset 16 / 24 of the quoted IP
   header). Two runs with the same TTL in flight can then never accept
-  each other's Time Exceeded even if their random idents collided.
+  each other's Time Exceeded even if their random idents collided. The
+  whole check is `quotes_probe_v4/v6` in `hopcount/mod.rs`, shared with
+  hopcount and PMTU; it also requires the quoted packet to be an ICMP
+  Echo Request.
 - An Echo Reply counts only from the target's own address.
 
 ### Paris-style constant checksum
@@ -144,7 +147,10 @@ path needs raw sockets: run `mping 8.8.8.8`, select it, press `T`.
 ## File map
 
 - `src/traceroute.rs` — `trace_route`, `TraceHop`, `HopKind`, `TraceEnd`,
-  `build_probe`, `classify_v4/v6`, `embedded_dst_v4/v6`, `Prober`, tests.
+  `build_probe`, `classify_v4/v6`, `Prober`, tests.
+- `src/hopcount/mod.rs` — the shared `quotes_probe_v4/v6` (with
+  `embedded_echo_v4/v6`, `embedded_dst_v4/v6`), raw-socket helpers and
+  test packet fixtures.
 - `src/pingdata.rs` — `TraceState`, `TraceStatus`, `TraceHopInfo`,
   `PingTarget::trace_*`, `trace_lines`.
 - `src/structs.rs` — `Command::Traceroute`, `traceroute_target`,

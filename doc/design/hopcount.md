@@ -30,8 +30,11 @@ the receive side differs fundamentally between the two:
 
 Common shape of both paths:
 
-1. Build an Echo Request (id `0xb00b`, seq `1`, 48-byte default
-   payload).
+1. Build an Echo Request (random identifier per call with the top bit
+   clear, seq `1`, 48-byte default payload). PMTU probes use random
+   identifiers with the top bit *set* (`IDENT_PMTU_BIT`): Enter fires both
+   at once towards the same target, both starting at seq 1, so the two
+   must never collide.
 2. Open a raw ICMP socket via `socket2` (`Type::RAW`, `Protocol::ICMPV4`
    or `ICMPV6`) and bind the unspecified address. Requires `CAP_NET_RAW`
    or root.
@@ -42,9 +45,19 @@ Common shape of both paths:
    sequence number match ours is accepted; everything else is skipped.
    The read timeout is re-armed with the remaining time each iteration.
 4. A `DestinationUnreachable` is only treated as our failure if the
-   original packet embedded in the error message carries our identifier
-   (`embedded_echo_v4` / `embedded_echo_v6`, which return the quoted
-   identifier and sequence number; hopcount checks only the identifier).
+   original packet embedded in the error message is *our probe to our
+   target*: `quotes_probe_v4` / `quotes_probe_v6` require the quoted
+   packet to be an ICMP Echo Request (inner IPv4 protocol 1 / IPv6 next
+   header 58, type 8 / 128 — checked by `embedded_echo_v4/v6`) carrying
+   our identifier and sequence number, *and* its destination address
+   (`embedded_dst_v4/v6`, offset 16 / 24 of the quoted IP header) to be
+   `target`. Every raw ICMP socket on the host receives every error, so
+   without the destination check a Destination Unreachable for another
+   target's concurrent or just-finished probe (the usual case in a CIDR
+   sweep with dead hosts) would be taken for ours; without the protocol
+   check, an error quoting a TCP segment or UDP datagram whose bytes 4..8
+   happen to match would be too. The same helpers back
+   [pmtu.rs](pmtu.md) and [traceroute.rs](traceroute.md).
 5. Estimate the original TTL by bucketing the received value
    (`estimate_hops`, `pub(crate)` — also used by the reply-TTL
    route-change tracking in `pingdata.rs`):
@@ -127,9 +140,12 @@ denied.
 
 - `src/hopcount/mod.rs` — `determine_hops` (v4/v6 split, filtering
   receive loops, `recvmsg_v6`) and the AI-slop comment. `make_socket`,
-  `time_left`, `set_sockopt_int`, `embedded_echo_v4/v6` and the header
-  size constants are `pub(crate)` for [pmtu.rs](pmtu.md) and
-  [traceroute.rs](traceroute.md).
+  `time_left`, `set_sockopt_int`, `embedded_echo_v4/v6`,
+  `quotes_probe_v4/v6` (built on the private `embedded_dst_v4/v6`),
+  `IDENT_PMTU_BIT` and the header size / offset constants are
+  `pub(crate)` for [pmtu.rs](pmtu.md) and [traceroute.rs](traceroute.md).
+  The `#[cfg(test)]` module `test_packets` holds the hand-built
+  header/error fixtures all three modules' tests use.
 - `src/hopcount/main.rs` — the standalone binary.
 - `src/pingdata.rs:275-288` — `PingTarget::determine_hops` /
   `PingTarget::hops`.
