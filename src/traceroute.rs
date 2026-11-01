@@ -15,7 +15,7 @@ keep all probes on one path. See `doc/design/traceroute.md`.
 
 use crate::{
     hopcount::{
-        ICMP_HEADER_SIZE, IPV4_HEADER_MIN, embedded_echo_v4, embedded_echo_v6, make_socket,
+        ICMP_HEADER_SIZE, IPV4_HEADER_MIN, make_socket, quotes_probe_v4, quotes_probe_v6,
         set_sockopt_int, time_left,
     },
     strings::*,
@@ -45,8 +45,6 @@ use std::{
 
 const MAX_SILENT: u8 = 10; // consecutive unanswered TTLs before giving up
 const RECV_BUF_SIZE: usize = 1500; // ICMP errors quote only the head of our probe
-const INNER_V4_DST: usize = 16; // destination address offset in an IPv4 header
-const INNER_V6_DST: usize = 24; // destination address offset in an IPv6 header
 
 /// What answered a probe of a given TTL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,20 +167,6 @@ fn build_probe(v4: bool, ident: u16, seq: u16) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
-/// Destination of the IPv4 packet quoted in an ICMPv4 error message.
-fn embedded_dst_v4(icmp_msg: &[u8]) -> Option<Ipv4Addr> {
-    let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
-    let bytes: &[u8] = inner_ip.get(INNER_V4_DST..INNER_V4_DST + 4)?;
-    Some(Ipv4Addr::from(<[u8; 4]>::try_from(bytes).ok()?))
-}
-
-/// Destination of the IPv6 packet quoted in an ICMPv6 error message.
-fn embedded_dst_v6(icmp_msg: &[u8]) -> Option<Ipv6Addr> {
-    let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
-    let bytes: &[u8] = inner_ip.get(INNER_V6_DST..INNER_V6_DST + 16)?;
-    Some(Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?))
-}
-
 /**
 Is this raw-socket datagram an answer to probe `seq` of run `ident` towards
 `target`? IPv4 raw sockets deliver the IP header too; honor the IHL field.
@@ -204,8 +188,7 @@ fn classify_v4(
     }
     let msg: &[u8] = &data[ihl..];
     let resp = IcmpPacket::new(msg)?;
-    let ours =
-        || embedded_echo_v4(msg) == Some((ident, seq)) && embedded_dst_v4(msg) == Some(target);
+    let ours = || quotes_probe_v4(msg, target, ident, seq);
     match resp.get_icmp_type() {
         IcmpTypes::EchoReply => {
             let reply = EchoReplyPacket::new(msg)?;
@@ -232,8 +215,7 @@ fn classify_v6(
         return None;
     }
     let resp = Icmpv6Packet::new(data)?;
-    let ours =
-        || embedded_echo_v6(data) == Some((ident, seq)) && embedded_dst_v6(data) == Some(target);
+    let ours = || quotes_probe_v6(data, target, ident, seq);
     match resp.get_icmpv6_type() {
         Icmpv6Types::EchoReply => {
             let reply = EchoReplyPacketV6::new(data)?;
@@ -343,7 +325,7 @@ impl Prober {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hopcount::IPV6_HEADER_SIZE;
+    use crate::hopcount::test_packets::{echo, ip4_header, v4_error_msg, v6_error_msg};
 
     const IDENT: u16 = 0x1234;
     const T4: Ipv4Addr = Ipv4Addr::new(8, 8, 8, 8);
@@ -351,43 +333,16 @@ mod tests {
     const ROUTER4: IpAddr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
     const ROUTER6: IpAddr = IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1));
 
-    /// An IPv4 header (no options) with the given destination.
-    fn ip4_header(dst: Ipv4Addr) -> Vec<u8> {
-        let mut h = vec![0u8; IPV4_HEADER_MIN];
-        h[0] = 0x45;
-        h[INNER_V4_DST..INNER_V4_DST + 4].copy_from_slice(&dst.octets());
-        h
-    }
-
-    /// An IPv6 header with the given destination.
-    fn ip6_header(dst: Ipv6Addr) -> Vec<u8> {
-        let mut h = vec![0u8; IPV6_HEADER_SIZE];
-        h[INNER_V6_DST..INNER_V6_DST + 16].copy_from_slice(&dst.octets());
-        h
-    }
-
-    fn echo(kind: u8, ident: u16, seq: u16) -> Vec<u8> {
-        let mut m = vec![kind, 0, 0, 0];
-        m.extend_from_slice(&ident.to_be_bytes());
-        m.extend_from_slice(&seq.to_be_bytes());
-        m
-    }
-
     /// ICMPv4 `[type, code, csum, unused]` quoting a probe to `dst` (with its IP header).
     fn v4_error(kind: u8, dst: Ipv4Addr, ident: u16, seq: u16) -> Vec<u8> {
         let mut d = ip4_header(Ipv4Addr::UNSPECIFIED); // outer header, from the router
-        d.extend_from_slice(&[kind, 0, 0, 0, 0, 0, 0, 0]);
-        d.extend(ip4_header(dst));
-        d.extend(echo(8, ident, seq));
+        d.extend(v4_error_msg(kind, 0, 0, dst, &echo(8, ident, seq)));
         d
     }
 
     /// ICMPv6 `[type, code, csum, unused]` quoting a probe to `dst`.
     fn v6_error(kind: u8, dst: Ipv6Addr, ident: u16, seq: u16) -> Vec<u8> {
-        let mut m = vec![kind, 0, 0, 0, 0, 0, 0, 0];
-        m.extend(ip6_header(dst));
-        m.extend(echo(128, ident, seq));
-        m
+        v6_error_msg(kind, 0, 0, dst, &echo(128, ident, seq))
     }
 
     #[test]

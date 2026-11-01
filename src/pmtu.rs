@@ -442,6 +442,7 @@ mod tests {
     fn v4_datagram(icmp: &[u8]) -> Vec<u8> {
         let mut d = vec![0u8; IPV4_HEADER_MIN];
         d[0] = 0x45;
+        d[9] = 1; // protocol ICMP
         d.extend_from_slice(icmp);
         d
     }
@@ -466,7 +467,9 @@ mod tests {
     fn v6_error(kind: u8, word: u32, ident: u16, seq: u16) -> Vec<u8> {
         let mut m = vec![kind, 0, 0, 0];
         m.extend_from_slice(&word.to_be_bytes());
-        m.extend_from_slice(&[0u8; IPV6_HEADER_SIZE]);
+        let mut ip6 = [0u8; IPV6_HEADER_SIZE];
+        ip6[6] = 58; // next header ICMPv6
+        m.extend_from_slice(&ip6);
         m.extend_from_slice(&echo(128, ident, seq));
         m
     }

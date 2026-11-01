@@ -13,7 +13,9 @@ use pnet_packet::{
         Icmpv6Packet, Icmpv6Types, echo_reply::EchoReplyPacket as EchoReplyPacketV6,
         echo_request::MutableEchoRequestPacket as MutableEchoRequestPacketV6,
     },
+    ip::IpNextHeaderProtocols,
 };
+use rand::random;
 use socket2::{self, Domain, Protocol, Socket, Type};
 use std::{
     io::ErrorKind,
@@ -23,11 +25,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ID_VALUE: u16 = 0xb00b; // (very!) arbitrary identifier
 const SEQ_VALUE: u16 = 1; // sequence number for the single probe
+/**
+Top bit of the (otherwise random) Echo identifier: clear on hopcount probes,
+set on path MTU probes. Enter fires both at once towards the same target and
+both start at sequence 1, so their identifiers must never collide.
+*/
+pub(crate) const IDENT_PMTU_BIT: u16 = 0x8000;
 pub(crate) const ICMP_HEADER_SIZE: usize = 8; // ICMP(v4/v6) header size
 pub(crate) const IPV4_HEADER_MIN: usize = 20; // IPv4 header size without options
 pub(crate) const IPV6_HEADER_SIZE: usize = 40; // IPv6 header size (fixed)
+const INNER_V4_PROTO: usize = 9; // protocol field offset in an IPv4 header
+pub(crate) const INNER_V4_DST: usize = 16; // destination address offset in an IPv4 header
+const INNER_V6_NEXT: usize = 6; // next header field offset in an IPv6 header
+pub(crate) const INNER_V6_DST: usize = 24; // destination address offset in an IPv6 header
 const RECV_BUF_SIZE: usize = 1500;
 /// Shortest read timeout we hand to the socket. Anything under 1 µs becomes
 /// `timeval {0, 0}`, which `SO_RCVTIMEO` treats as "block forever".
@@ -38,8 +49,10 @@ Estimate hop count for a single target using one ICMP Echo Request/Reply.
 Returns `(estimated_hops, received_ttl)` on success.
 
 A raw ICMP socket receives *all* inbound ICMP traffic, so replies are
-filtered: only an Echo Reply from `target` carrying our identifier and
-sequence number is accepted (other packets are skipped until `timeout`).
+filtered: only an Echo Reply from `target` carrying our (random per call)
+identifier and sequence number is accepted, and a Destination Unreachable
+only when it quotes that probe towards `target` (other packets are skipped
+until `timeout`).
 
 NOTE: IPv4 reads the TTL from the included IP header; IPv6 raw sockets do
 not include the IP header in received data, so the hop limit is obtained
@@ -108,28 +121,53 @@ pub(crate) fn make_socket(v4: bool, debug: bool) -> Result<Socket, String> {
 
 /* -------------------------------- IPv4 ----------------------------------- */
 
-/// Identifier and sequence number of the ICMP Echo Request embedded in an
-/// ICMPv4 error message (`[8B ICMP error hdr][inner IPv4 hdr][inner ICMP hdr...]`),
-/// if parseable. Shared with the path MTU prober.
+/**
+Identifier and sequence number of the ICMP Echo Request embedded in an
+ICMPv4 error message (`[8B ICMP error hdr][inner IPv4 hdr][inner ICMP hdr...]`),
+if parseable. `None` when the quoted packet is not an ICMP Echo Request at
+all (e.g. TCP or UDP, whose bytes 4..8 would otherwise pass for an ident).
+*/
 pub(crate) fn embedded_echo_v4(icmp_msg: &[u8]) -> Option<(u16, u16)> {
     let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
     let ihl: usize = ((*inner_ip.first()? & 0x0f) as usize) * 4;
-    if ihl < IPV4_HEADER_MIN {
+    if ihl < IPV4_HEADER_MIN || *inner_ip.get(INNER_V4_PROTO)? != IpNextHeaderProtocols::Icmp.0 {
         return None;
     }
     let inner_icmp: &[u8] = inner_ip.get(ihl..ihl + ICMP_HEADER_SIZE)?;
+    if inner_icmp[0] != IcmpTypes::EchoRequest.0 {
+        return None;
+    }
     Some((
         u16::from_be_bytes([inner_icmp[4], inner_icmp[5]]),
         u16::from_be_bytes([inner_icmp[6], inner_icmp[7]]),
     ))
 }
 
+/// Destination of the IPv4 packet quoted in an ICMPv4 error message.
+fn embedded_dst_v4(icmp_msg: &[u8]) -> Option<Ipv4Addr> {
+    let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
+    let bytes: &[u8] = inner_ip.get(INNER_V4_DST..INNER_V4_DST + 4)?;
+    Some(Ipv4Addr::from(<[u8; 4]>::try_from(bytes).ok()?))
+}
+
+/**
+Does this ICMPv4 error message quote our Echo Request `(ident, seq)` towards
+`target`? A raw socket sees every ICMP error on the host, including those for
+other targets' probes with the same identifier and sequence number, so the
+quoted destination must match too. Shared with the PMTU prober and traceroute.
+*/
+pub(crate) fn quotes_probe_v4(icmp_msg: &[u8], target: Ipv4Addr, ident: u16, seq: u16) -> bool {
+    embedded_echo_v4(icmp_msg) == Some((ident, seq)) && embedded_dst_v4(icmp_msg) == Some(target)
+}
+
 fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result<(u8, u8), String> {
+    let ident: u16 = random::<u16>() & !IDENT_PMTU_BIT;
+
     // Build an ICMP Echo Request packet in a stack buffer
     let mut icmp_buffer = [0u8; ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE];
     let mut echo_packet = MutableEchoRequestPacket::new(&mut icmp_buffer).ok_or(ERR_PACKET)?;
     echo_packet.set_icmp_type(IcmpTypes::EchoRequest);
-    echo_packet.set_identifier(ID_VALUE);
+    echo_packet.set_identifier(ident);
     echo_packet.set_sequence_number(SEQ_VALUE);
 
     // pnet's checksum expects an IcmpPacket wrapper, so build one from the echo packet bytes
@@ -185,7 +223,7 @@ fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result
                     .as_socket()
                     .is_some_and(|sa| sa.ip() == IpAddr::V4(target));
                 if !from_target
-                    || reply.get_identifier() != ID_VALUE
+                    || reply.get_identifier() != ident
                     || reply.get_sequence_number() != SEQ_VALUE
                 {
                     if debug {
@@ -200,8 +238,8 @@ fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result
                 return Ok((estimate_hops(received_ttl), received_ttl));
             }
             IcmpTypes::DestinationUnreachable => {
-                // Only ours if the embedded original packet carries our identifier
-                if matches!(embedded_echo_v4(icmp_msg), Some((ID_VALUE, _))) {
+                // Only ours if the embedded original packet is our probe to our target
+                if quotes_probe_v4(icmp_msg, target, ident, SEQ_VALUE) {
                     return Err(ERR_UNREACH.to_string());
                 }
             }
@@ -216,16 +254,37 @@ fn determine_hops_v4(target: Ipv4Addr, timeout: Duration, debug: bool) -> Result
 
 /* -------------------------------- IPv6 ----------------------------------- */
 
-/// Identifier and sequence number of the ICMPv6 Echo Request embedded in an
-/// ICMPv6 error message (`[8B ICMPv6 error hdr][inner IPv6 hdr][inner ICMPv6 hdr...]`),
-/// if parseable. Shared with the path MTU prober.
+/**
+Identifier and sequence number of the ICMPv6 Echo Request embedded in an
+ICMPv6 error message (`[8B ICMPv6 error hdr][inner IPv6 hdr][inner ICMPv6 hdr...]`),
+if parseable. `None` when the quoted packet is not an ICMPv6 Echo Request
+directly after the IPv6 header (our probes carry no extension headers).
+*/
 pub(crate) fn embedded_echo_v6(icmp_msg: &[u8]) -> Option<(u16, u16)> {
-    let inner_icmp: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE + IPV6_HEADER_SIZE..)?;
-    let bytes: &[u8] = inner_icmp.get(4..8)?;
+    let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
+    if *inner_ip.get(INNER_V6_NEXT)? != IpNextHeaderProtocols::Icmpv6.0 {
+        return None;
+    }
+    let inner_icmp: &[u8] = inner_ip.get(IPV6_HEADER_SIZE..IPV6_HEADER_SIZE + ICMP_HEADER_SIZE)?;
+    if inner_icmp[0] != Icmpv6Types::EchoRequest.0 {
+        return None;
+    }
     Some((
-        u16::from_be_bytes([bytes[0], bytes[1]]),
-        u16::from_be_bytes([bytes[2], bytes[3]]),
+        u16::from_be_bytes([inner_icmp[4], inner_icmp[5]]),
+        u16::from_be_bytes([inner_icmp[6], inner_icmp[7]]),
     ))
+}
+
+/// Destination of the IPv6 packet quoted in an ICMPv6 error message.
+fn embedded_dst_v6(icmp_msg: &[u8]) -> Option<Ipv6Addr> {
+    let inner_ip: &[u8] = icmp_msg.get(ICMP_HEADER_SIZE..)?;
+    let bytes: &[u8] = inner_ip.get(INNER_V6_DST..INNER_V6_DST + 16)?;
+    Some(Ipv6Addr::from(<[u8; 16]>::try_from(bytes).ok()?))
+}
+
+/// Same as [quotes_probe_v4] for an ICMPv6 error message.
+pub(crate) fn quotes_probe_v6(icmp_msg: &[u8], target: Ipv6Addr, ident: u16, seq: u16) -> bool {
+    embedded_echo_v6(icmp_msg) == Some((ident, seq)) && embedded_dst_v6(icmp_msg) == Some(target)
 }
 
 /// `setsockopt` with an `int` value, error text included. Shared with the
@@ -314,10 +373,11 @@ fn determine_hops_v6(target: Ipv6Addr, timeout: Duration, debug: bool) -> Result
     it covers an IPv6 pseudo-header we don't know yet, and the kernel always
     computes/inserts it for ICMPv6 raw sockets (RFC 3542).
     */
+    let ident: u16 = random::<u16>() & !IDENT_PMTU_BIT;
     let mut icmp_buffer = [0u8; ICMP_HEADER_SIZE + DEFAULT_PAYLOAD_SIZE];
     let mut echo_packet = MutableEchoRequestPacketV6::new(&mut icmp_buffer).ok_or(ERR_PACKET)?;
     echo_packet.set_icmpv6_type(Icmpv6Types::EchoRequest);
-    echo_packet.set_identifier(ID_VALUE);
+    echo_packet.set_identifier(ident);
     echo_packet.set_sequence_number(SEQ_VALUE);
     drop(echo_packet); // drop the wrapper
 
@@ -358,7 +418,7 @@ fn determine_hops_v6(target: Ipv6Addr, timeout: Duration, debug: bool) -> Result
                     continue;
                 };
                 if src != Some(target)
-                    || reply.get_identifier() != ID_VALUE
+                    || reply.get_identifier() != ident
                     || reply.get_sequence_number() != SEQ_VALUE
                 {
                     if debug {
@@ -373,8 +433,8 @@ fn determine_hops_v6(target: Ipv6Addr, timeout: Duration, debug: bool) -> Result
                 return Ok((estimate_hops(received_ttl), received_ttl));
             }
             Icmpv6Types::DestinationUnreachable => {
-                // Only ours if the embedded original packet carries our identifier
-                if matches!(embedded_echo_v6(icmp_msg), Some((ID_VALUE, _))) {
+                // Only ours if the embedded original packet is our probe to our target
+                if quotes_probe_v6(icmp_msg, target, ident, SEQ_VALUE) {
                     return Err(ERR_UNREACH.to_string());
                 }
             }
@@ -439,3 +499,120 @@ const IP_PACKET_SIZE: usize = IP_HEADER_SIZE + ICMP_HEADER_SIZE + DEFAULT_PAYLOA
         icmp_buffer.to_vec()
     };
     */
+
+/* ================================= tests ================================== */
+
+/// Hand-built packet fixtures, shared with the PMTU and traceroute tests.
+#[cfg(test)]
+pub(crate) mod test_packets {
+    use super::*;
+
+    /// An IPv4 header (no options) carrying ICMP, with the given destination.
+    pub(crate) fn ip4_header(dst: Ipv4Addr) -> Vec<u8> {
+        let mut h = vec![0u8; IPV4_HEADER_MIN];
+        h[0] = 0x45;
+        h[INNER_V4_PROTO] = IpNextHeaderProtocols::Icmp.0;
+        h[INNER_V4_DST..INNER_V4_DST + 4].copy_from_slice(&dst.octets());
+        h
+    }
+
+    /// An IPv6 header carrying ICMPv6, with the given destination.
+    pub(crate) fn ip6_header(dst: Ipv6Addr) -> Vec<u8> {
+        let mut h = vec![0u8; IPV6_HEADER_SIZE];
+        h[0] = 0x60;
+        h[INNER_V6_NEXT] = IpNextHeaderProtocols::Icmpv6.0;
+        h[INNER_V6_DST..INNER_V6_DST + 16].copy_from_slice(&dst.octets());
+        h
+    }
+
+    /// An ICMP(v6) echo header `[type, 0, csum, ident, seq]`.
+    pub(crate) fn echo(kind: u8, ident: u16, seq: u16) -> Vec<u8> {
+        let mut m = vec![kind, 0, 0, 0];
+        m.extend_from_slice(&ident.to_be_bytes());
+        m.extend_from_slice(&seq.to_be_bytes());
+        m
+    }
+
+    /// ICMPv4 error message `[type, code, csum, word]` quoting `inner` behind
+    /// an IPv4 header to `dst` (no outer IP header).
+    pub(crate) fn v4_error_msg(
+        kind: u8,
+        code: u8,
+        word: u32,
+        dst: Ipv4Addr,
+        inner: &[u8],
+    ) -> Vec<u8> {
+        let mut m = vec![kind, code, 0, 0];
+        m.extend_from_slice(&word.to_be_bytes());
+        m.extend(ip4_header(dst));
+        m.extend_from_slice(inner);
+        m
+    }
+
+    /// ICMPv6 error message `[type, code, csum, word]` quoting `inner` behind
+    /// an IPv6 header to `dst`.
+    pub(crate) fn v6_error_msg(
+        kind: u8,
+        code: u8,
+        word: u32,
+        dst: Ipv6Addr,
+        inner: &[u8],
+    ) -> Vec<u8> {
+        let mut m = vec![kind, code, 0, 0];
+        m.extend_from_slice(&word.to_be_bytes());
+        m.extend(ip6_header(dst));
+        m.extend_from_slice(inner);
+        m
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{test_packets::*, *};
+
+    const IDENT: u16 = 0x1234;
+    const T4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+    const T6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+
+    #[test]
+    fn embedded_v4_quotes_and_destination() {
+        let msg = v4_error_msg(3, 1, 0, T4, &echo(8, IDENT, 5));
+        assert_eq!(embedded_echo_v4(&msg), Some((IDENT, 5)));
+        assert_eq!(embedded_dst_v4(&msg), Some(T4));
+        assert!(quotes_probe_v4(&msg, T4, IDENT, 5));
+        assert!(!quotes_probe_v4(&msg, T4, IDENT, 6), "other seq");
+        assert!(!quotes_probe_v4(&msg, T4, IDENT + 1, 5), "other ident");
+        let other = v4_error_msg(3, 1, 0, Ipv4Addr::new(192, 0, 2, 2), &echo(8, IDENT, 5));
+        assert!(!quotes_probe_v4(&other, T4, IDENT, 5), "other target");
+
+        // the quoted packet must be an ICMP Echo Request
+        let reply = v4_error_msg(3, 1, 0, T4, &echo(0, IDENT, 5));
+        assert_eq!(embedded_echo_v4(&reply), None, "quoted echo reply");
+        let mut tcp = v4_error_msg(3, 1, 0, T4, &echo(8, IDENT, 5));
+        tcp[ICMP_HEADER_SIZE + INNER_V4_PROTO] = IpNextHeaderProtocols::Tcp.0;
+        assert_eq!(embedded_echo_v4(&tcp), None, "quoted TCP segment");
+        assert!(!quotes_probe_v4(&tcp, T4, IDENT, 5));
+
+        assert_eq!(embedded_echo_v4(&msg[..msg.len() - 1]), None, "truncated");
+        assert_eq!(embedded_dst_v4(&msg[..ICMP_HEADER_SIZE + 4]), None);
+    }
+
+    #[test]
+    fn embedded_v6_quotes_and_destination() {
+        let msg = v6_error_msg(1, 0, 0, T6, &echo(128, IDENT, 5));
+        assert_eq!(embedded_echo_v6(&msg), Some((IDENT, 5)));
+        assert_eq!(embedded_dst_v6(&msg), Some(T6));
+        assert!(quotes_probe_v6(&msg, T6, IDENT, 5));
+        assert!(!quotes_probe_v6(&msg, T6, IDENT, 6), "other seq");
+        let other = v6_error_msg(1, 0, 0, Ipv6Addr::LOCALHOST, &echo(128, IDENT, 5));
+        assert!(!quotes_probe_v6(&other, T6, IDENT, 5), "other target");
+
+        let reply = v6_error_msg(1, 0, 0, T6, &echo(129, IDENT, 5));
+        assert_eq!(embedded_echo_v6(&reply), None, "quoted echo reply");
+        let mut udp = v6_error_msg(1, 0, 0, T6, &echo(128, IDENT, 5));
+        udp[ICMP_HEADER_SIZE + INNER_V6_NEXT] = IpNextHeaderProtocols::Udp.0;
+        assert_eq!(embedded_echo_v6(&udp), None, "quoted UDP datagram");
+
+        assert_eq!(embedded_echo_v6(&msg[..msg.len() - 1]), None, "truncated");
+    }
+}
