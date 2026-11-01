@@ -30,7 +30,7 @@ use hickory_resolver::{
     ResolveError, Resolver, lookup::TxtLookup, name_server::TokioConnectionProvider,
 };
 use itertools::Itertools;
-use std::{fmt, net::IpAddr};
+use std::{cmp::Reverse, fmt, net::IpAddr};
 
 const FIELD_SEP: char = '|';
 const ORIGIN_MIN_FIELDS: usize = 4; // asn | prefix | cc | rir [| date]
@@ -65,8 +65,19 @@ impl AsInfo {
         }
     }
 
-    /// Fold another origin record into this one (multiple announcements
-    /// covering the same address): union of ASNs, first record wins the rest.
+    /// Prefix length of [Self::prefix] (`8.8.8.0/24` -> 24); 0 if unparseable.
+    fn prefix_len(&self) -> u8 {
+        self.prefix
+            .rsplit_once('/')
+            .and_then(|(_, len)| len.parse().ok())
+            .unwrap_or(0)
+    }
+
+    /**
+    Fold another origin record into this one (multiple announcements
+    covering the same address): union of ASNs, `self` wins the rest.
+    Callers order the records most specific first, see [fold_origins].
+    */
     fn merge(mut self, other: AsInfo) -> AsInfo {
         for asn in other.asns {
             if !self.asns.contains(&asn) {
@@ -106,10 +117,7 @@ pub async fn lookup_as(res: &Resolver<TokioConnectionProvider>, addr: IpAddr) ->
         IpAddr::V6(_) => CYMRU_ORIGIN6,
     };
     let mut info: AsInfo = match res.txt_lookup(reversed_addr(&addr) + zone).await {
-        Ok(resp) => match txt_strings(&resp)
-            .filter_map(|t| parse_origin(&t))
-            .reduce(AsInfo::merge)
-        {
+        Ok(resp) => match fold_origins(txt_strings(&resp).filter_map(|t| parse_origin(&t))) {
             Some(info) => info,
             None => return QueryResponse::ErrorStr(ERR_AS_PARSE),
         },
@@ -125,6 +133,22 @@ pub async fn lookup_as(res: &Resolver<TokioConnectionProvider>, addr: IpAddr) ->
         info.names.push(name);
     }
     QueryResponse::As(info)
+}
+
+/**
+Fold several origin records into one, independent of the (arbitrary,
+resolver-rotated) RRset order: the most specific prefix supplies prefix /
+country / RIR / date and its ASN(s) come first; equal-length prefixes are
+tie-broken by ASN list so the result is fully deterministic.
+*/
+fn fold_origins(records: impl Iterator<Item = AsInfo>) -> Option<AsInfo> {
+    let mut records: Vec<AsInfo> = records.collect();
+    records.sort_by(|a, b| {
+        Reverse(a.prefix_len())
+            .cmp(&Reverse(b.prefix_len()))
+            .then_with(|| a.asns.cmp(&b.asns))
+    });
+    records.into_iter().reduce(AsInfo::merge)
 }
 
 /// Each TXT record as one string (character-strings concatenated).
@@ -186,7 +210,10 @@ fn parse_asname(txt: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::{
+        iter,
+        net::{Ipv4Addr, Ipv6Addr},
+    };
 
     #[test]
     fn origin_record_parses() {
@@ -231,6 +258,29 @@ mod tests {
         let m = a.merge(b);
         assert_eq!(m.asns, vec![15169, 3356]);
         assert_eq!(m.prefix, "8.8.8.0/24");
+    }
+
+    #[test]
+    fn fold_most_specific_wins() {
+        let wide = "3356 15169 | 8.8.0.0/16 | US | arin | 1992-12-01";
+        let narrow = "15169 | 8.8.8.0/24 | US | arin | 2023-12-28";
+        for order in [[wide, narrow], [narrow, wide]] {
+            let m = fold_origins(order.iter().filter_map(|t| parse_origin(t))).unwrap();
+            assert_eq!(m.asns, vec![15169, 3356]);
+            assert_eq!(m.prefix, "8.8.8.0/24");
+            assert_eq!(m.allocated, "2023-12-28");
+        }
+        assert!(fold_origins(iter::empty()).is_none());
+    }
+
+    #[test]
+    fn prefix_len_parses() {
+        let mut info = AsInfo::default();
+        assert_eq!(info.prefix_len(), 0);
+        info.prefix = "2001:4860::/32".to_string();
+        assert_eq!(info.prefix_len(), 32);
+        info.prefix = "8.8.8.0/x".to_string();
+        assert_eq!(info.prefix_len(), 0);
     }
 
     #[test]
