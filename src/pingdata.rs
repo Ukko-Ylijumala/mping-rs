@@ -1761,6 +1761,27 @@ impl HistorySnapshot {
 /* -------------------------------------------------------------------------- */
 
 /**
+Packet loss as a float `[0.0 .. 1.0]`, shared by the Loss column and its
+sort key so the two always agree.
+
+Probes still in flight are not losses: while the latest probe is within its
+timeout (`latest_inflight`) only timed-out ones (`lost`) count. Past that
+nothing can still be in flight, so every probe without a reply counts.
+*/
+pub(crate) fn loss_fraction(sent: u64, recv: u64, lost: u64, latest_inflight: bool) -> f64 {
+    if sent == 0 {
+        return 0.0;
+    }
+    let lost: u64 = if latest_inflight {
+        lost
+    } else {
+        // Saturating: a stats reset racing an in-flight reply can leave recv > sent.
+        sent.saturating_sub(recv).max(lost)
+    };
+    lost.min(sent) as f64 / sent as f64
+}
+
+/**
 Snapshot of ping statistics at a point in time.
 
 Includes stringifying methods for display purposes.
@@ -1849,16 +1870,7 @@ impl StatsSnapshot {
     in flight, so every probe without a reply counts.
     */
     pub fn loss(&self) -> f64 {
-        if self.sent == 0 {
-            return 0.0;
-        }
-        let lost: u64 = if self.is_latest_inflight() {
-            self.lost
-        } else {
-            // Saturating: a stats reset racing an in-flight reply can leave recv > sent.
-            self.sent.saturating_sub(self.recv).max(self.lost)
-        };
-        lost.min(self.sent) as f64 / self.sent as f64
+        loss_fraction(self.sent, self.recv, self.lost, self.is_latest_inflight())
     }
 
     /**
