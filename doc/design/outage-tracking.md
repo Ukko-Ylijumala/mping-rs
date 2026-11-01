@@ -24,6 +24,9 @@ hold — the tracker adds no new locking.
   reset). Pings still in flight across a pause/stop/reset would otherwise
   open outages (and "DOWN for X" counters) for time nobody is monitoring.
   Packet counters (sent/recv/loss) are unaffected — a reply is a reply.
+  `update_stats` uses the same predicate (`EventTracker::is_current`) to
+  decide whether a result may set the target's `raw_status`, so a stale
+  result can't overwrite `Paused` / `Stopped` / `Resuming` either.
 - A send the OS refuses (`SurgeError::IOError`: no route, network down)
   counts as a miss, so a dead uplink shows up as an outage. Other errors
   (`IdenticalRequests` etc.) are internal and ignored here, so they can't

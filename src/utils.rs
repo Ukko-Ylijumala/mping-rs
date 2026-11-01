@@ -412,6 +412,17 @@ pub fn human_rate(bytes_per_sec: f64) -> String {
     }
 }
 
+/**
+Shorten `s` to at most `max` chars, cutting on a char boundary.
+[String::truncate] takes a byte index and panics mid-char, which untrusted
+non-ASCII text (e.g. IDNA-decoded PTR names) can trigger.
+*/
+pub fn truncate_chars(s: &mut String, max: usize) {
+    if let Some((i, _)) = s.char_indices().nth(max) {
+        s.truncate(i);
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 
 /// A single histogram bucket for data distribution.

@@ -630,7 +630,8 @@ fn sort_key(tgt: &Arc<PingTarget>, col: usize) -> (bool, SortVal) {
         COL_RECV => (false, Num(data.recv as f64)),
         COL_LOSS => match data.sent {
             0 => (true, Num(0.0)),
-            s => (false, Num(s.saturating_sub(data.recv) as f64 / s as f64)),
+            // timed-out probes only, like the Loss column: in-flight ones aren't lost
+            s => (false, Num(data.lost.min(s) as f64 / s as f64)),
         },
         COL_LAST => opt(data.rtts.last().ok().map(|v| v as f64)),
         COL_MEAN => opt(data.rtts.mean().ok()),
