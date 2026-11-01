@@ -79,6 +79,12 @@ The AS name from Cymru already ends in the AS's own country; the bracketed
 country is the *prefix* registration country, which can legitimately
 differ (Cloudflare's 1.1.1.0/24 is APNIC/AU space).
 
+Names stay positionally paired with the ASN list (`AsInfo::names_aligned`,
+shared by `short()` and `Display`): when only some names are known, each
+missing one renders as `?` (`AS15169, AS3356 ? / LEVEL3, US`) so a later
+name never appears attributed to an earlier ASN. With no names at all only
+the ASN list is shown.
+
 ## When it runs
 
 Also per hop of a [traceroute](traceroute.md): every answering hop gets

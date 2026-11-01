@@ -102,6 +102,7 @@ pub static WARN_PTR_MANY: &str = "Multiple PTRs";
 pub static ERR_PTR_FAILED: &str = "PTR lookup failed";
 pub static WARN_AS_NONE: &str = "Not announced (no origin AS)";
 pub static ERR_AS_PARSE: &str = "Unparseable origin AS answer";
+pub static AS_NAME_UNKNOWN: &str = "?";
 pub static ERR_NO_RESP: &str = "No Response";
 pub static ERR_NORECORDS: &str = "No records";
 pub static ERR_NOTENOUGH: &str = "Not enough records";
