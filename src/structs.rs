@@ -6,7 +6,7 @@ use crate::{
     asinfo::{AsInfo, lookup_as},
     args::MpConfig,
     logging::{Logger, MessageBuffer},
-    pingdata::{PingStatus, PingTarget},
+    pingdata::{PingStatus, PingTarget, loss_fraction},
     strings::*,
     traceroute::trace_route,
     utils::{lookup_ptr, nice_permission_error},
@@ -563,7 +563,7 @@ impl AppState {
         let mut targets = self.targets.write();
         let mut keyed: Vec<((bool, SortVal), Arc<PingTarget>)> = targets
             .iter()
-            .map(|t| (sort_key(t, col), t.clone()))
+            .map(|t| (sort_key(t, col, self.defaults.timeout), t.clone()))
             .collect();
         keyed.sort_by(|(a, _), (b, _)| {
             // missing-data flag first (always ascending), then the value
@@ -634,7 +634,7 @@ fn status_rank(s: &PingStatus) -> f64 {
 /// `missing` entries are sorted last by [AppState::sort_targets].
 ///
 /// NOTE: may lock the target's inner `data` for reading.
-fn sort_key(tgt: &Arc<PingTarget>, col: usize) -> (bool, SortVal) {
+fn sort_key(tgt: &Arc<PingTarget>, col: usize, timeout: Duration) -> (bool, SortVal) {
     use SortVal::*;
 
     /// Helper for the Option-valued RTT columns.
@@ -658,8 +658,12 @@ fn sort_key(tgt: &Arc<PingTarget>, col: usize) -> (bool, SortVal) {
         COL_RECV => (false, Num(data.recv as f64)),
         COL_LOSS => match data.sent {
             0 => (true, Num(0.0)),
-            // timed-out probes only, like the Loss column: in-flight ones aren't lost
-            s => (false, Num(data.lost.min(s) as f64 / s as f64)),
+            // same rule as the Loss column, see [loss_fraction]
+            s => {
+                // no send time reads as in flight, like StatsSnapshot's `now` default
+                let inflight: bool = data.last_sent.is_none_or(|t| t.elapsed() < timeout);
+                (false, Num(loss_fraction(s, data.recv, data.lost, inflight)))
+            }
         },
         COL_LAST => opt(data.rtts.last().ok().map(|v| v as f64)),
         COL_MEAN => opt(data.rtts.mean().ok()),
@@ -868,4 +872,41 @@ pub(crate) enum CmdResult {
     NotFound,
     Error,
     ByeBye,
+}
+
+/* -------------------------------------------------------------------------- */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pingdata::StatsSnapshot;
+    use std::net::Ipv4Addr;
+
+    /// The Loss sort key and the Loss column go through the same helper.
+    #[test]
+    fn loss_sort_key_matches_column() {
+        let addr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let tgt = Arc::new(PingTarget::new(addr, 60, 10, false));
+        let wait: Duration = Duration::from_secs(2);
+        let key = || match sort_key(&tgt, COL_LOSS, wait) {
+            (false, SortVal::Num(v)) => v,
+            _ => panic!("expected a numeric loss key"),
+        };
+        let shown = || StatsSnapshot::new_from(&tgt, wait).loss();
+        let set = |sent: u64, recv: u64, lost: u64, ago: Duration| {
+            let mut d = tgt.data.write();
+            (d.sent, d.recv, d.lost) = (sent, recv, lost);
+            d.last_sent = Some(Instant::now() - ago);
+        };
+
+        // latest probe in flight: only timed-out probes count
+        set(1000, 997, 1, Duration::ZERO);
+        assert_eq!(key(), shown());
+        assert_eq!(key(), 0.001);
+        // results that never arrived (e.g. stopped target): the unanswered
+        // ones count once nothing can be in flight
+        set(1000, 997, 1, wait * 2);
+        assert_eq!(key(), shown());
+        assert_eq!(key(), 0.003);
+    }
 }
