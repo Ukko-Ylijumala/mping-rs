@@ -7,7 +7,7 @@ Path MTU discovery with Don't-Fragment ICMP Echo Requests.
 
 Reuses the raw-socket machinery of [crate::hopcount]: the same socket
 creation, the "skip everything that isn't ours" receive discipline and the
-embedded-ident check on ICMP error messages. A probe is an Echo Request
+quoted-probe check on ICMP error messages. A probe is an Echo Request
 padded to a given total IP packet size with DF set. An Echo Reply means the
 size fits; a Fragmentation Needed (v4) / Packet Too Big (v6) error from a
 router means it doesn't, and usually says what does; silence means a router
@@ -17,8 +17,8 @@ the answer comes from bisection. See `doc/design/pmtu.md`.
 
 use crate::{
     hopcount::{
-        ICMP_HEADER_SIZE, IPV4_HEADER_MIN, IPV6_HEADER_SIZE, embedded_echo_v4, embedded_echo_v6,
-        make_socket, set_sockopt_int, time_left,
+        ICMP_HEADER_SIZE, IDENT_PMTU_BIT, IPV4_HEADER_MIN, IPV6_HEADER_SIZE, make_socket,
+        quotes_probe_v4, quotes_probe_v6, set_sockopt_int, time_left,
     },
     strings::*,
 };
@@ -40,6 +40,7 @@ use pnet_packet::{
         echo_request::MutableEchoRequestPacket as MutableEchoRequestPacketV6,
     },
 };
+use rand::random;
 #[cfg(target_os = "linux")]
 use socket2::{Domain, Protocol, Type};
 use socket2::{SockAddr, Socket};
@@ -49,11 +50,10 @@ use std::{
     fmt,
     io::ErrorKind,
     mem::MaybeUninit,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     time::{Duration, Instant},
 };
 
-const ID_VALUE: u16 = 0x4d54; // "MT" - distinct from hopcount's identifier, both may run at once
 const MIN_MTU_V4: u16 = 576; // RFC 1122 minimum reassembly buffer, the practical floor
 const MIN_MTU_V6: u16 = 1280; // RFC 8200 minimum link MTU
 const DEFAULT_MAX_MTU: u16 = 1500; // upper bound when the kernel can't tell us the route MTU
@@ -257,6 +257,9 @@ struct Prober {
     target: IpAddr,
     dest: SockAddr,
     v4: bool,
+    /// Random per run (top bit set, unlike hopcount's): concurrent runs must
+    /// not accept each other's replies or errors.
+    ident: u16,
     seq: u16,
     probes: u32,
     debug: bool,
@@ -272,6 +275,7 @@ impl Prober {
             target,
             dest: SocketAddr::new(target, 0).into(),
             v4,
+            ident: random::<u16>() | IDENT_PMTU_BIT,
             seq: 0,
             probes: 0,
             debug,
@@ -301,7 +305,7 @@ impl Prober {
         if self.v4 {
             let mut pkt = MutableEchoRequestPacket::new(&mut buf).ok_or(ERR_PACKET)?;
             pkt.set_icmp_type(IcmpTypes::EchoRequest);
-            pkt.set_identifier(ID_VALUE);
+            pkt.set_identifier(self.ident);
             pkt.set_sequence_number(self.seq);
             let checksum = icmp::checksum(&IcmpPacket::new(pkt.packet()).ok_or(ERR_CKSUM)?);
             pkt.set_checksum(checksum);
@@ -309,7 +313,7 @@ impl Prober {
             // checksum left to the kernel, as in hopcount (RFC 3542)
             let mut pkt = MutableEchoRequestPacketV6::new(&mut buf).ok_or(ERR_PACKET)?;
             pkt.set_icmpv6_type(Icmpv6Types::EchoRequest);
-            pkt.set_identifier(ID_VALUE);
+            pkt.set_identifier(self.ident);
             pkt.set_sequence_number(self.seq);
         }
         Ok(buf)
@@ -350,10 +354,9 @@ impl Prober {
             // SAFETY: recv_from initialized the first `n` bytes.
             let data: &[u8] = unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), n) };
             let from_target: bool = from.as_socket().is_some_and(|sa| sa.ip() == self.target);
-            let verdict: Option<ProbeResult> = if self.v4 {
-                classify_v4(self.seq, data, from_target)
-            } else {
-                classify_v6(self.seq, data, from_target)
+            let verdict: Option<ProbeResult> = match self.target {
+                IpAddr::V4(t) => classify_v4(t, self.ident, self.seq, data, from_target),
+                IpAddr::V6(t) => classify_v6(t, self.ident, self.seq, data, from_target),
             };
             if let Some(v) = verdict {
                 if self.debug {
@@ -365,9 +368,21 @@ impl Prober {
     }
 }
 
-/// Is this raw-socket datagram the verdict on our probe `seq`? IPv4 raw
-/// sockets deliver the IP header too; honor the IHL field.
-fn classify_v4(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> {
+/**
+Is this raw-socket datagram the verdict on probe `seq` of run `ident` towards
+`target`? IPv4 raw sockets deliver the IP header too; honor the IHL field.
+
+Errors must quote our identifier, sequence number *and* target: a router's
+Fragmentation Needed or Destination Unreachable for another target's probe
+reaches every raw ICMP socket on the host.
+*/
+fn classify_v4(
+    target: Ipv4Addr,
+    ident: u16,
+    seq: u16,
+    data: &[u8],
+    from_target: bool,
+) -> Option<ProbeResult> {
     let ihl: usize = ((*data.first()? & 0x0f) as usize) * 4;
     if ihl < IPV4_HEADER_MIN || data.len() < ihl + ICMP_HEADER_SIZE {
         return None;
@@ -377,13 +392,11 @@ fn classify_v4(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> 
     match resp.get_icmp_type() {
         IcmpTypes::EchoReply => {
             let reply = EchoReplyPacket::new(msg)?;
-            (from_target
-                && reply.get_identifier() == ID_VALUE
-                && reply.get_sequence_number() == seq)
+            (from_target && reply.get_identifier() == ident && reply.get_sequence_number() == seq)
                 .then_some(ProbeResult::Reply)
         }
         IcmpTypes::DestinationUnreachable => {
-            if embedded_echo_v4(msg) != Some((ID_VALUE, seq)) {
+            if !quotes_probe_v4(msg, target, ident, seq) {
                 return None;
             }
             if resp.get_icmp_code() == IcmpCodes::FragmentationRequiredAndDFFlagSet {
@@ -398,9 +411,14 @@ fn classify_v4(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> 
     }
 }
 
-/// Is this raw-socket datagram the verdict on our probe `seq`? IPv6 raw
-/// sockets deliver only the ICMPv6 message.
-fn classify_v6(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> {
+/// Same as [classify_v4] for IPv6, whose raw sockets deliver only the ICMPv6 message.
+fn classify_v6(
+    target: Ipv6Addr,
+    ident: u16,
+    seq: u16,
+    data: &[u8],
+    from_target: bool,
+) -> Option<ProbeResult> {
     if data.len() < ICMP_HEADER_SIZE {
         return None;
     }
@@ -408,13 +426,11 @@ fn classify_v6(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> 
     match resp.get_icmpv6_type() {
         Icmpv6Types::EchoReply => {
             let reply = EchoReplyPacketV6::new(data)?;
-            (from_target
-                && reply.get_identifier() == ID_VALUE
-                && reply.get_sequence_number() == seq)
+            (from_target && reply.get_identifier() == ident && reply.get_sequence_number() == seq)
                 .then_some(ProbeResult::Reply)
         }
         Icmpv6Types::PacketTooBig => {
-            if embedded_echo_v6(data) != Some((ID_VALUE, seq)) {
+            if !quotes_probe_v6(data, target, ident, seq) {
                 return None;
             }
             // RFC 4443: MTU of the constricting link in the 32 bits after the header
@@ -424,7 +440,7 @@ fn classify_v6(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> 
             ))
         }
         Icmpv6Types::DestinationUnreachable => {
-            (embedded_echo_v6(data) == Some((ID_VALUE, seq))).then_some(ProbeResult::Unreachable)
+            quotes_probe_v6(data, target, ident, seq).then_some(ProbeResult::Unreachable)
         }
         _ => None,
     }
@@ -435,110 +451,102 @@ fn classify_v6(seq: u16, data: &[u8], from_target: bool) -> Option<ProbeResult> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hopcount::test_packets::{echo, ip4_header, v4_error_msg, v6_error_msg};
 
     const SEQ: u16 = 7;
+    const IDENT: u16 = 0x8123;
+    const T4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+    const OTHER4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 2);
+    const T6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+    const OTHER6: Ipv6Addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 2);
 
-    /// 20-byte IPv4 header (no options) in front of an ICMP message.
+    /// IPv4 header (no options) in front of an ICMP message, as a raw socket delivers it.
     fn v4_datagram(icmp: &[u8]) -> Vec<u8> {
-        let mut d = vec![0u8; IPV4_HEADER_MIN];
-        d[0] = 0x45;
-        d[9] = 1; // protocol ICMP
+        let mut d = ip4_header(Ipv4Addr::UNSPECIFIED);
         d.extend_from_slice(icmp);
         d
     }
 
-    fn echo(kind: u8, ident: u16, seq: u16) -> Vec<u8> {
-        let mut m = vec![kind, 0, 0, 0];
-        m.extend_from_slice(&ident.to_be_bytes());
-        m.extend_from_slice(&seq.to_be_bytes());
-        m.extend_from_slice(&[0u8; 8]); // some payload
-        m
+    /// ICMPv4 Destination Unreachable `[3, code, csum, word]` quoting a probe to `dst`.
+    fn v4_error(code: u8, word: u32, dst: Ipv4Addr, ident: u16, seq: u16) -> Vec<u8> {
+        v4_datagram(&v4_error_msg(3, code, word, dst, &echo(8, ident, seq)))
     }
 
-    /// ICMPv4 error `[type, code, csum, word]` quoting our echo request.
-    fn v4_error(code: u8, word: u32, ident: u16, seq: u16) -> Vec<u8> {
-        let mut m = vec![3, code, 0, 0];
-        m.extend_from_slice(&word.to_be_bytes());
-        m.extend_from_slice(&v4_datagram(&echo(8, ident, seq)));
-        m
-    }
-
-    /// ICMPv6 error `[type, code, csum, word]` quoting our echo request.
-    fn v6_error(kind: u8, word: u32, ident: u16, seq: u16) -> Vec<u8> {
-        let mut m = vec![kind, 0, 0, 0];
-        m.extend_from_slice(&word.to_be_bytes());
-        let mut ip6 = [0u8; IPV6_HEADER_SIZE];
-        ip6[6] = 58; // next header ICMPv6
-        m.extend_from_slice(&ip6);
-        m.extend_from_slice(&echo(128, ident, seq));
-        m
+    /// ICMPv6 error `[type, code, csum, word]` quoting a probe to `dst`.
+    fn v6_error(kind: u8, word: u32, dst: Ipv6Addr, ident: u16, seq: u16) -> Vec<u8> {
+        v6_error_msg(kind, 0, word, dst, &echo(128, ident, seq))
     }
 
     #[test]
     fn classify_v4_replies_and_errors() {
-        let reply = v4_datagram(&echo(0, ID_VALUE, SEQ));
-        assert_eq!(classify_v4(SEQ, &reply, true), Some(ProbeResult::Reply));
-        assert_eq!(classify_v4(SEQ, &reply, false), None, "not from the target");
-        assert_eq!(classify_v4(SEQ + 1, &reply, true), None, "stale sequence");
-        let other = v4_datagram(&echo(0, 0xb00b, SEQ));
-        assert_eq!(classify_v4(SEQ, &other, true), None, "hopcount's reply");
-
-        let frag = v4_datagram(&v4_error(4, 1400, ID_VALUE, SEQ));
+        let classify =
+            |data: &[u8], from_target: bool| classify_v4(T4, IDENT, SEQ, data, from_target);
+        let reply = v4_datagram(&echo(0, IDENT, SEQ));
+        assert_eq!(classify(&reply, true), Some(ProbeResult::Reply));
+        assert_eq!(classify(&reply, false), None, "not from the target");
         assert_eq!(
-            classify_v4(SEQ, &frag, false),
+            classify_v4(T4, IDENT, SEQ + 1, &reply, true),
+            None,
+            "stale sequence"
+        );
+        let other = v4_datagram(&echo(0, IDENT & !IDENT_PMTU_BIT, SEQ));
+        assert_eq!(classify(&other, true), None, "hopcount's reply");
+
+        let frag = v4_error(4, 1400, T4, IDENT, SEQ);
+        assert_eq!(
+            classify(&frag, false),
             Some(ProbeResult::TooBig(Some(1400)))
         );
-        let frag0 = v4_datagram(&v4_error(4, 0, ID_VALUE, SEQ));
+        let frag0 = v4_error(4, 0, T4, IDENT, SEQ);
+        assert_eq!(classify(&frag0, false), Some(ProbeResult::TooBig(None)));
+        let unreach = v4_error(1, 0, T4, IDENT, SEQ);
+        assert_eq!(classify(&unreach, false), Some(ProbeResult::Unreachable));
+        let foreign = v4_error(4, 1400, T4, IDENT + 1, SEQ);
+        assert_eq!(classify(&foreign, false), None, "someone else's probe");
+        let stale = v4_error(4, 1400, T4, IDENT, SEQ - 1);
+        assert_eq!(classify(&stale, false), None, "error for an earlier probe");
+        // same ident and seq (another run, or a late error), but for another target
+        let other_frag = v4_error(4, 1400, OTHER4, IDENT, SEQ);
+        assert_eq!(classify(&other_frag, false), None, "other target's hint");
+        let other_unreach = v4_error(1, 0, OTHER4, IDENT, SEQ);
         assert_eq!(
-            classify_v4(SEQ, &frag0, false),
-            Some(ProbeResult::TooBig(None))
-        );
-        let unreach = v4_datagram(&v4_error(1, 0, ID_VALUE, SEQ));
-        assert_eq!(
-            classify_v4(SEQ, &unreach, false),
-            Some(ProbeResult::Unreachable)
-        );
-        let foreign = v4_datagram(&v4_error(4, 1400, 0xb00b, SEQ));
-        assert_eq!(
-            classify_v4(SEQ, &foreign, false),
+            classify(&other_unreach, false),
             None,
-            "someone else's probe"
-        );
-        let stale = v4_datagram(&v4_error(4, 1400, ID_VALUE, SEQ - 1));
-        assert_eq!(
-            classify_v4(SEQ, &stale, false),
-            None,
-            "error for an earlier probe"
+            "other target unreachable"
         );
 
-        assert_eq!(classify_v4(SEQ, &[], true), None);
-        assert_eq!(classify_v4(SEQ, &[0x45, 0, 0], true), None, "truncated");
+        assert_eq!(classify(&[], true), None);
+        assert_eq!(classify(&[0x45, 0, 0], true), None, "truncated");
     }
 
     #[test]
     fn classify_v6_replies_and_errors() {
-        let reply = echo(129, ID_VALUE, SEQ);
-        assert_eq!(classify_v6(SEQ, &reply, true), Some(ProbeResult::Reply));
-        assert_eq!(classify_v6(SEQ, &reply, false), None);
+        let classify =
+            |data: &[u8], from_target: bool| classify_v6(T6, IDENT, SEQ, data, from_target);
+        let reply = echo(129, IDENT, SEQ);
+        assert_eq!(classify(&reply, true), Some(ProbeResult::Reply));
+        assert_eq!(classify(&reply, false), None);
 
-        let too_big = v6_error(2, 1280, ID_VALUE, SEQ);
+        let too_big = v6_error(2, 1280, T6, IDENT, SEQ);
         assert_eq!(
-            classify_v6(SEQ, &too_big, false),
+            classify(&too_big, false),
             Some(ProbeResult::TooBig(Some(1280)))
         );
-        let huge = v6_error(2, 70_000, ID_VALUE, SEQ);
+        let huge = v6_error(2, 70_000, T6, IDENT, SEQ);
+        assert_eq!(classify(&huge, false), Some(ProbeResult::TooBig(None)));
+        let unreach = v6_error(1, 0, T6, IDENT, SEQ);
+        assert_eq!(classify(&unreach, false), Some(ProbeResult::Unreachable));
+        let foreign = v6_error(2, 1280, T6, IDENT + 1, SEQ);
+        assert_eq!(classify(&foreign, false), None);
+        let other_too_big = v6_error(2, 1280, OTHER6, IDENT, SEQ);
+        assert_eq!(classify(&other_too_big, false), None, "other target's hint");
+        let other_unreach = v6_error(1, 0, OTHER6, IDENT, SEQ);
         assert_eq!(
-            classify_v6(SEQ, &huge, false),
-            Some(ProbeResult::TooBig(None))
+            classify(&other_unreach, false),
+            None,
+            "other target unreachable"
         );
-        let unreach = v6_error(1, 0, ID_VALUE, SEQ);
-        assert_eq!(
-            classify_v6(SEQ, &unreach, false),
-            Some(ProbeResult::Unreachable)
-        );
-        let foreign = v6_error(2, 1280, 0xb00b, SEQ);
-        assert_eq!(classify_v6(SEQ, &foreign, false), None);
-        assert_eq!(classify_v6(SEQ, &[2, 0, 0], false), None, "truncated");
+        assert_eq!(classify(&[2, 0, 0], false), None, "truncated");
     }
 
     /// Run the search against a simulated path; returns (result, probe sizes sent).

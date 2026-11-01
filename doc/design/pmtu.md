@@ -7,9 +7,9 @@ and is refreshed with Enter like the other on-demand queries.
 
 The implementation (`src/pmtu.rs`) is a sibling of [hopcount](hopcount.md)
 and reuses its raw-socket machinery: `make_socket`, the "skip everything
-that isn't ours" receive discipline, `time_left`, and the embedded-echo
-check on ICMP error messages (`embedded_echo_v4/v6`, which now return the
-quoted `(identifier, sequence)` pair for both callers).
+that isn't ours" receive discipline, `time_left`, and the quoted-probe
+check on ICMP error messages (`quotes_probe_v4/v6`: quoted ICMP Echo
+Request with our identifier and sequence, towards our target).
 
 ## Probes
 
@@ -28,25 +28,33 @@ beyond which `send` fails with `EMSGSIZE` — treated as "too big, no hint").
 Plain `DO` mode would have the kernel answer from its cache without
 touching the wire, which is exactly what we don't want to measure.
 
-Each probe carries identifier `0x4d54` (distinct from hopcount's `0xb00b`,
-since Enter fires both at once on the same target) and a fresh sequence
-number. The receive loop (`Prober::probe` → `classify_v4/v6`) accepts
-exactly three things and skips everything else until the per-probe
-timeout:
+Each run picks a **random identifier** with the top bit set
+(`IDENT_PMTU_BIT`; hopcount's random identifiers have it clear, since
+Enter fires both at once on the same target and both start at sequence 1),
+and every probe a fresh sequence number counting up from 1. The receive
+loop (`Prober::probe` → `classify_v4/v6`) accepts exactly three things and
+skips everything else until the per-probe timeout:
 
 - **Echo Reply** from the target with our identifier *and the current
   sequence number* → `Reply`: this size fits.
 - **Fragmentation Needed** (v4: Destination Unreachable code 4) or
-  **Packet Too Big** (v6: type 2) whose quoted packet carries our
-  identifier and current sequence → `TooBig(next_hop_mtu)`. The MTU is the
-  low 16 bits of the second header word (RFC 1191) or the full word (RFC
-  4443); zero, or a v6 value over 65535, becomes "no hint".
-- Any other **Destination Unreachable** quoting our probe → `Unreachable`,
-  a hard error.
+  **Packet Too Big** (v6: type 2) whose quoted packet is our Echo Request
+  (identifier and current sequence) *towards our target* →
+  `TooBig(next_hop_mtu)`. The MTU is the low 16 bits of the second header
+  word (RFC 1191) or the full word (RFC 4443); zero, or a v6 value over
+  65535, becomes "no hint".
+- Any other **Destination Unreachable** quoting our probe to our target →
+  `Unreachable`, a hard error.
 
 Matching on the sequence number matters here more than in hopcount: a late
 error for an earlier, larger probe must not be mistaken for a verdict on
-the current one.
+the current one. Matching on the quoted destination (`quotes_probe_v4/v6`
+in `hopcount/mod.rs`) matters because every raw ICMP socket on the host
+receives every ICMP error: PMTU runs on two targets overlapping in time
+(Enter on A, then on B) both send seq 1 at the upper bound, so without it
+B's router hint or B's Destination Unreachable would steer or abort A's
+search. The random identifier alone covers the same-sequence case only
+probabilistically.
 
 An echo reply is as large as the probe, so the receive buffer is 64 KiB.
 
@@ -122,7 +130,9 @@ sweep, and the PMTU rarely changes.
 
 `cargo test pmtu` covers the packet classifiers (built by hand: echo
 replies, Fragmentation Needed with and without a next-hop MTU, Packet Too
-Big, unreachable, foreign and stale probes, truncated datagrams) and the
+Big, unreachable, foreign and stale probes, errors quoting another
+target's probe with the same identifier and sequence, truncated datagrams)
+and the
 search against simulated paths (router hint, no hint, black hole, bogus
 hints, IPv6 floor, silent target, broken floor, socket error, probe budget).
 The wire path itself needs raw sockets and a real network, so run
@@ -134,7 +144,8 @@ uplink is the classic 1492 / 1280 case) and press Enter.
 - `src/pmtu.rs` — `Pmtu`, `determine_pmtu`, `search`, `Prober`,
   `classify_v4/v6`, `set_dont_fragment`, `kernel_mtu`, tests.
 - `src/hopcount/mod.rs` — the shared `make_socket`, `time_left`,
-  `set_sockopt_int`, `embedded_echo_v4/v6` and header-size constants.
+  `set_sockopt_int`, `quotes_probe_v4/v6`, `IDENT_PMTU_BIT`, header-size
+  constants and the `test_packets` fixtures.
 - `src/pingdata.rs` — `PingTarget::pmtu` field, `determine_pmtu`, `pmtu()`.
 - `src/structs.rs` — `PMTU_PROBE_TIMEOUT`, the `spawn_blocking` in
   `update_target_info`.
